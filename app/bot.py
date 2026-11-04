@@ -24,6 +24,13 @@ async def send_telegram_message(chat_id: int, text: str, reply_markup: Optional[
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(url, json=payload)
+            if resp.status_code != 200:
+                print(f"[TELEGRAM ERROR {resp.status_code}]: {resp.text}")
+                # If markdown parsing fails due to unescaped special characters, retry in plain text
+                if "can't parse entities" in resp.text:
+                    payload.pop("parse_mode", None)
+                    retry_resp = await client.post(url, json=payload)
+                    return retry_resp.status_code == 200
             return resp.status_code == 200
     except Exception as e:
         print(f"Failed to send telegram message: {e}")

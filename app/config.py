@@ -2,9 +2,9 @@ import os
 from typing import List
 
 class Settings:
-    BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "mock_bot_token_for_dev")
-    BOT_USERNAME: str = os.getenv("TELEGRAM_BOT_USERNAME", "OrdinalLegacyEventBot")
-    MINI_APP_URL: str = os.getenv("MINI_APP_URL", "http://localhost:8000")
+    BOT_TOKEN: str = (os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("BOT_TOKEN") or "mock_bot_token_for_dev").strip("'\" ")
+    BOT_USERNAME: str = (os.getenv("TELEGRAM_BOT_USERNAME") or os.getenv("BOT_USERNAME") or "OrdinalLegacyEventBot").strip("'\" ")
+    MINI_APP_URL: str = (os.getenv("MINI_APP_URL") or "http://localhost:8000").strip("'\" ")
     
     _admin_ids_str: str = os.getenv("ADMIN_TELEGRAM_IDS", "123456789")
     ADMIN_IDS: List[int] = [int(i.strip()) for i in _admin_ids_str.split(",") if i.strip().isdigit()]

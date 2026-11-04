@@ -54,6 +54,20 @@ async def telegram_webhook(request: Request):
 def health_check():
     return {"status": "ok", "app": "Ordinal Legacy Event Bot", "version": "3.0.0"}
 
+@app.get("/debug")
+def debug_check():
+    from app.database import is_postgres
+    token_len = len(settings.BOT_TOKEN) if settings.BOT_TOKEN else 0
+    token_preview = (settings.BOT_TOKEN[:6] + "..." + settings.BOT_TOKEN[-4:]) if token_len > 12 else ("mock" if settings.BOT_TOKEN == "mock_bot_token_for_dev" else "short")
+    return {
+        "bot_token_configured": settings.BOT_TOKEN != "mock_bot_token_for_dev",
+        "bot_token_preview": token_preview,
+        "bot_username": settings.BOT_USERNAME,
+        "database_mode": "postgres" if is_postgres() else "sqlite",
+        "admin_ids_count": len(settings.ADMIN_IDS),
+        "mini_app_url": settings.MINI_APP_URL
+    }
+
 static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
 if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
