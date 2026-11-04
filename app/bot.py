@@ -26,11 +26,15 @@ async def send_telegram_message(chat_id: int, text: str, reply_markup: Optional[
             resp = await client.post(url, json=payload)
             if resp.status_code != 200:
                 print(f"[TELEGRAM ERROR {resp.status_code}]: {resp.text}")
-                # If markdown parsing fails due to unescaped special characters, retry in plain text
-                if "can't parse entities" in resp.text:
-                    payload.pop("parse_mode", None)
-                    retry_resp = await client.post(url, json=payload)
-                    return retry_resp.status_code == 200
+                # Fallback 1: remove parse_mode if entity parsing failed
+                payload.pop("parse_mode", None)
+                retry_resp = await client.post(url, json=payload)
+                if retry_resp.status_code != 200:
+                    # Fallback 2: remove reply_markup if web_app button URL invalid
+                    payload.pop("reply_markup", None)
+                    last_resp = await client.post(url, json=payload)
+                    return last_resp.status_code == 200
+                return retry_resp.status_code == 200
             return resp.status_code == 200
     except Exception as e:
         print(f"Failed to send telegram message: {e}")
@@ -86,7 +90,11 @@ async def handle_bot_message(message: Dict[str, Any]):
     
     username = from_user.get("username", "")
     first_name = from_user.get("first_name", "Lampbearer")
-    user = register_user_if_new(user_id, username, first_name)
+    try:
+        user = register_user_if_new(user_id, username, first_name)
+    except Exception as e:
+        print(f"[REGISTRATION ERROR]: {e}")
+        user = {"gharana_id": 1, "points_total": 0, "tier_level": 0, "diya_wicks": 10}
     
     if text.startswith("/start"):
         parts = text.split()

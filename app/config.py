@@ -4,7 +4,13 @@ from typing import List
 class Settings:
     BOT_TOKEN: str = (os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("BOT_TOKEN") or "mock_bot_token_for_dev").strip("'\" ")
     BOT_USERNAME: str = (os.getenv("TELEGRAM_BOT_USERNAME") or os.getenv("BOT_USERNAME") or "OrdinalLegacyEventBot").strip("'\" ")
-    MINI_APP_URL: str = (os.getenv("MINI_APP_URL") or "http://localhost:8000").strip("'\" ")
+    
+    _app_url = (os.getenv("MINI_APP_URL") or "https://ordinal-legacy-event-bot.vercel.app").strip("'\" ")
+    if "localhost" in _app_url and (os.getenv("VERCEL") or os.getenv("RENDER")):
+        _app_url = "https://ordinal-legacy-event-bot.vercel.app"
+    elif not _app_url.startswith("http://") and not _app_url.startswith("https://"):
+        _app_url = "https://" + _app_url
+    MINI_APP_URL: str = _app_url
     
     _admin_ids_str: str = os.getenv("ADMIN_TELEGRAM_IDS", "123456789")
     ADMIN_IDS: List[int] = [int(i.strip()) for i in _admin_ids_str.split(",") if i.strip().isdigit()]

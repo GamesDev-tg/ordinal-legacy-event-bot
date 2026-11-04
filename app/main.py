@@ -79,6 +79,18 @@ async def get_tg_webhook_info():
     except Exception as e:
         return {"error": str(e)}
 
+@app.get("/api/test_send")
+async def test_send(chat_id: int):
+    import httpx
+    url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": chat_id, "text": "🪔 *Deepotsav System Online!*\nBot connection is fully active.", "parse_mode": "Markdown"}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, json=payload)
+            return {"status_code": resp.status_code, "body": resp.json()}
+    except Exception as e:
+        return {"error": str(e)}
+
 static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
 if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
