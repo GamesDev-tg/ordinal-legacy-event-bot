@@ -36,6 +36,13 @@ class Settings:
     MIN_GAME_DURATION_SECONDS: int = int(os.getenv("MIN_GAME_DURATION_SECONDS", "12"))
     STAMINA_BANK_CAP: int = int(os.getenv("STAMINA_BANK_CAP", "10"))
     STAMINA_REGEN_MINUTES: int = int(os.getenv("STAMINA_REGEN_MINUTES", "15"))
+
+    GROUP_LINK_1: str = os.getenv("GROUP_LINK_1", "https://t.me/OrdinalLegacy")
+    GROUP_LINK_2: str = os.getenv("GROUP_LINK_2", "https://t.me/OrdinalLegacyChat")
+    GROUP_LINK_3: str = os.getenv("GROUP_LINK_3", "https://t.me/OrdinalLegacyNews")
+    GROUP_NAME_1: str = os.getenv("GROUP_NAME_1", "Ordinal Channel")
+    GROUP_NAME_2: str = os.getenv("GROUP_NAME_2", "Ordinal Discussion")
+    GROUP_NAME_3: str = os.getenv("GROUP_NAME_3", "Ordinal News")
     
     TIER_THRESHOLDS = {
         0: 0,

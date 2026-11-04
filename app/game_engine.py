@@ -75,19 +75,27 @@ def claim_shubh_refill(telegram_id: int) -> dict:
             
         current_wicks = user["diya_wicks"]
         new_wicks = min(settings.STAMINA_BANK_CAP, current_wicks + 5)
-        added = new_wicks - current_wicks
+        added_wicks = new_wicks - current_wicks
+        
+        bonus_points = 5
+        new_points = user["points_total"] + bonus_points
+        new_tier = calculate_tier(new_points)
         
         conn.execute(
-            "UPDATE users SET diya_wicks = ?, shubh_refill_date = ?, last_wick_regen = ? WHERE telegram_id = ?",
-            (new_wicks, today_str, now_str, telegram_id)
+            "UPDATE users SET diya_wicks = ?, points_total = ?, tier_level = ?, shubh_refill_date = ?, last_wick_regen = ? WHERE telegram_id = ?",
+            (new_wicks, new_points, new_tier, today_str, now_str, telegram_id)
         )
+        conn.execute("UPDATE community_state SET total_sparks = total_sparks + ? WHERE id = 1", (bonus_points,))
     conn.close()
     
     return {
         "success": True,
-        "wicks_added": added,
+        "wicks_added": added_wicks,
         "wicks_total": new_wicks,
-        "message": f"✨ Shubh Muhurat Blessing! Refilled +{added} Diya Wicks ({new_wicks}/{settings.STAMINA_BANK_CAP}). May your flame burn bright!"
+        "points_added": bonus_points,
+        "points_total": new_points,
+        "tier_level": new_tier,
+        "message": f"✨ Shubh Muhurat Blessing! Received +{added_wicks} Diya Wicks and +{bonus_points} Festive Sparks! Score: {new_points} Pts."
     }
 
 def start_game_session(telegram_id: int, game_type: int) -> dict:

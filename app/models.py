@@ -77,6 +77,9 @@ class ShubhRefillResponse(BaseModel):
     success: bool
     wicks_added: int
     wicks_total: int
+    points_added: int = 5
+    points_total: int = 0
+    tier_level: int = 0
     message: str
 
 class AdminAddPointsRequest(BaseModel):

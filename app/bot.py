@@ -70,8 +70,8 @@ def register_user_if_new(telegram_id: int, username: str, first_name: str) -> di
             assigned_gharana = counts[0]["id"] if counts else random.randint(1, 4)
             
             conn.execute(
-                '''INSERT INTO users (telegram_id, username, first_name, gharana_id, points_total, diya_wicks, tier_level)
-                   VALUES (?, ?, ?, ?, 0, 10, 0)''',
+                '''INSERT INTO users (telegram_id, username, first_name, gharana_id, points_total, diya_wicks, tier_level, joined_groups)
+                   VALUES (?, ?, ?, ?, 0, 10, 0, 0)''',
                 (telegram_id, username, first_name, assigned_gharana)
             )
             user = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
@@ -94,7 +94,47 @@ async def handle_bot_message(message: Dict[str, Any]):
         user = register_user_if_new(user_id, username, first_name)
     except Exception as e:
         print(f"[REGISTRATION ERROR]: {e}")
-        user = {"gharana_id": 1, "points_total": 0, "tier_level": 0, "diya_wicks": 10}
+        user = {"gharana_id": 1, "points_total": 0, "tier_level": 0, "diya_wicks": 10, "joined_groups": 1}
+
+    # Mandatory 3 Group Links Gate before entering the game
+    if not user.get("joined_groups", 0) and user_id not in settings.ADMIN_IDS and text != "/verify":
+        gate_text = (
+            f"🪔 *Welcome to Ordinal Legacy Maha Deepotsav, {first_name}!* 🪔\n\n"
+            f"Before entering the sacred arena, you must join our 3 official community groups:\n\n"
+            f"1️⃣ [{settings.GROUP_NAME_1}]({settings.GROUP_LINK_1})\n"
+            f"2️⃣ [{settings.GROUP_NAME_2}]({settings.GROUP_LINK_2})\n"
+            f"3️⃣ [{settings.GROUP_NAME_3}]({settings.GROUP_LINK_3})\n\n"
+            f"👉 Join all 3 groups above, then tap *Verify & Enter Arena* below!"
+        )
+        gate_keyboard = {
+            "inline_keyboard": [
+                [{"text": f"1️⃣ Join {settings.GROUP_NAME_1}", "url": settings.GROUP_LINK_1}],
+                [{"text": f"2️⃣ Join {settings.GROUP_NAME_2}", "url": settings.GROUP_LINK_2}],
+                [{"text": f"3️⃣ Join {settings.GROUP_NAME_3}", "url": settings.GROUP_LINK_3}],
+                [{"text": "✅ Verify & Enter Arena", "callback_data": "verify_groups"}]
+            ]
+        }
+        await send_telegram_message(chat_id, gate_text, gate_keyboard)
+        return
+
+    if text in ("/verify", "verify"):
+        conn = get_db_connection()
+        conn.execute("UPDATE users SET joined_groups = 1 WHERE telegram_id = ?", (user_id,))
+        u = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
+        conn.close()
+        await send_telegram_message(
+            chat_id,
+            f"✅ *Verification Confirmed! Welcome to the Deepotsav Arena!* 🎉\n\n"
+            f"Initiated into: *{settings.GHARANAS.get(u['gharana_id'], 'Surya Gharana')}*\n"
+            f"Tap below to begin:",
+            {
+                "inline_keyboard": [
+                    [{"text": "🪔 Enter Maha Deepotsav Arena", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
+                    [{"text": "✨ Claim Shubh Refill (+5 Wicks & Pts)", "callback_data": "cmd_shubh"}]
+                ]
+            }
+        )
+        return
     
     if text.startswith("/start"):
         parts = text.split()
@@ -645,7 +685,30 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
     if not user_id or not chat_id:
         return
 
-    if data == "cmd_shagun":
+    if data == "verify_groups":
+        conn = get_db_connection()
+        conn.execute("UPDATE users SET joined_groups = 1 WHERE telegram_id = ?", (user_id,))
+        u = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
+        conn.close()
+        
+        gid = u["gharana_id"] if u else 1
+        g_name = settings.GHARANAS.get(gid, "Surya Gharana")
+        await send_telegram_message(
+            chat_id,
+            f"✅ *Verification Confirmed! Welcome to the Arena!* 🎉\n\n"
+            f"You are officially initiated into the *{g_name}*!\n"
+            f"Tap below to launch the festival arena:",
+            {
+                "inline_keyboard": [
+                    [{"text": "🪔 Enter Maha Deepotsav Arena", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
+                    [{"text": "✨ Claim Shubh Refill (+5 Wicks & Pts)", "callback_data": "cmd_shubh"}],
+                    [{"text": "🎁 My Shagun Invite Link", "callback_data": "cmd_shagun"}]
+                ]
+            }
+        )
+        return
+
+    elif data == "cmd_shagun":
         invite_link = f"https://t.me/{settings.BOT_USERNAME}?start=shagun_{user_id}"
         shagun_msg = (
             f"🎁 *Your Diwali Shagun Invite Link:*\n`{invite_link}`\n\n"

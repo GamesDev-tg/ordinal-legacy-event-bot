@@ -80,9 +80,8 @@ class ChakriGame {
         this.spawnBurst(cx, cy, this.score);
 
         const elapsed = Date.now() - this.startTime;
-        // Anti-cheat ensures minimum 12.0 seconds elapsed before finish is accepted
-        const remainingWait = Math.max(3000, 12600 - elapsed);
-        
+        // Blueprint GDD 12.0s duration window with continuous firework celebrations
+        const remainingWait = Math.max(2000, 12200 - elapsed);
         setTimeout(() => {
             this.stop();
             this.onGameOver(this.score, Date.now() - this.startTime);
@@ -215,6 +214,13 @@ class ChakriGame {
         ctx.textBaseline = 'middle';
         ctx.fillText('🪔', cx, cy);
 
+        // Continuous festive fireworks after ignition
+        if (this.ignited && Math.random() < 0.18) {
+            const bx = cx + (Math.random() - 0.5) * (w * 0.7);
+            const by = cy - 40 + (Math.random() - 0.5) * (h * 0.4);
+            this.spawnBurst(bx, by, this.score);
+        }
+
         // Render explosion burst particles
         for (let i = this.particles.length - 1; i >= 0; i--) {
             const p = this.particles[i];
@@ -246,25 +252,6 @@ class ChakriGame {
         }
 
         requestAnimationFrame(this.animate.bind(this));
-    }
-}
-window.ChakriGame = ChakriGame;
-            ctx.fillStyle = p.color;
-            ctx.fill();
-        }
-
-        ctx.font = '16px sans-serif';
-        ctx.textAlign = 'center';
-        if (!this.ignited) {
-            ctx.fillStyle = '#F59E0B';
-            ctx.fillText('Tap IGNITE inside the Golden Deepak Zone!', cx, h - 35);
-        } else {
-            ctx.fillStyle = this.score === 3 ? '#10B981' : (this.score === 2 ? '#F59E0B' : '#94A3B8');
-            ctx.font = 'bold 22px sans-serif';
-            ctx.fillText(this.score === 3 ? 'FLAWLESS IGNITION! (+3 Pts)' : (this.score === 2 ? 'GREAT LAUNCH! (+2 Pts)' : 'SAFE SPARK! (+1 Pt)'), cx, h - 35);
-        }
-
-        requestAnimationFrame(this.animate);
     }
 }
 window.ChakriGame = ChakriGame;

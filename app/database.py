@@ -95,6 +95,7 @@ def get_db_connection():
             raw_conn = psycopg2.connect(db_url, sslmode="require")
         else:
             raw_conn = psycopg2.connect(db_url)
+        raw_conn.autocommit = True
         return PostgresConnectionWrapper(raw_conn)
     else:
         conn = sqlite3.connect(settings.DATABASE_PATH)
@@ -166,6 +167,7 @@ def init_postgres_db():
         );
 
         ALTER TABLE users ADD COLUMN IF NOT EXISTS shubh_refill_date TEXT;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS joined_groups INTEGER DEFAULT 0;
         ''')
         
         row = conn.execute("SELECT COUNT(*) as count FROM community_state").fetchone()
@@ -249,6 +251,10 @@ def init_sqlite_db():
         # Ensure backward compatibility for existing SQLite databases
         try:
             conn.execute("ALTER TABLE users ADD COLUMN shubh_refill_date TEXT;")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN joined_groups INTEGER DEFAULT 0;")
         except Exception:
             pass
     conn.close()

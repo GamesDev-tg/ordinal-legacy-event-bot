@@ -46,7 +46,7 @@ def process_referral_claim(referrer_id: int, referred_id: int) -> dict:
         if not referred_user:
             counts = conn.execute('''
                 SELECT g.id, COUNT(u.id) as count 
-                FROM (SELECT 1 as id UNION SELECT 2 UNION SELECT 3 UNION SELECT 4) g
+                FROM (SELECT 1 as id UNION SELECT 2 UNION SELECT 3 UNION SELECT 4) as g
                 LEFT JOIN users u ON u.gharana_id = g.id
                 GROUP BY g.id ORDER BY count ASC, g.id ASC
             ''').fetchall()
