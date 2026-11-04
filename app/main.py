@@ -68,6 +68,17 @@ def debug_check():
         "mini_app_url": settings.MINI_APP_URL
     }
 
+@app.get("/api/webhook_info")
+async def get_tg_webhook_info():
+    import httpx
+    url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/getWebhookInfo"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url)
+            return resp.json()
+    except Exception as e:
+        return {"error": str(e)}
+
 static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
 if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
