@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Header, HTTPException
 from typing import Optional
+from app.config import settings
 from app.models import GameStartRequest, GameStartResponse, GameFinishRequest, GameFinishResponse, ShubhRefillResponse
 from app.game_engine import start_game_session, finish_game_session, claim_shubh_refill
 from app.auth import verify_telegram_init_data
@@ -19,10 +20,12 @@ def extract_telegram_id(authorization: Optional[str], x_telegram_id: Optional[st
         raise HTTPException(status_code=401, detail="Unauthorized: Valid Telegram User ID required.")
 
     conn = get_db_connection()
-    user = conn.execute("SELECT id FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
+    user = conn.execute("SELECT id, joined_groups FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
     conn.close()
     if not user:
         raise HTTPException(status_code=403, detail="Unauthorized: You must first start the bot on Telegram to play and contribute sparks.")
+    if not user["joined_groups"] and settings.BOT_TOKEN != "mock_bot_token_for_dev":
+        raise HTTPException(status_code=403, detail="Unauthorized: You must join all 3 official community groups and verify in the bot first!")
 
     return user_id
 

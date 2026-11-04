@@ -50,6 +50,12 @@ async def telegram_webhook(request: Request):
         print(f"Error handling webhook update: {e}")
         return {"ok": False, "error": str(e)}
 
+@app.get("/api/sync_commands")
+async def api_sync_commands():
+    from app.bot import sync_telegram_bot_commands
+    ok = await sync_telegram_bot_commands()
+    return {"ok": ok, "message": "Bot commands synchronized with Telegram BotFather" if ok else "Failed to sync"}
+
 @app.get("/health")
 def health_check():
     return {"status": "ok", "app": "Ordinal Legacy Event Bot", "version": "3.0.0"}

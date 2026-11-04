@@ -379,7 +379,15 @@ async function onGameFinished(rawScore, durationMs) {
 
             if (resData.tier_unlocked) {
                 window.festivalAudio?.playSuccessChime();
-                showCelebrationModal("TIER UNLOCKED! 🏆", `Congratulations! You have ascended to ${resData.tier_name} (Tier ${resData.new_tier_level})! Your Diwali blessings and reward shares have increased.`);
+                const tierRewards = {
+                    1: "🪙 Coins",
+                    2: "🔮 Pearl",
+                    3: "🎟 Ticket",
+                    4: "🧪 Enchant",
+                    5: "🐾 Pet (+ All Rewards: 🪙 Coins, 🔮 Pearl, 🎟 Ticket, 🧪 Enchant, 🐾 Pet)"
+                };
+                const rew = tierRewards[resData.new_tier_level] || "Festive Rewards";
+                showCelebrationModal("TIER UNLOCKED! 🏆", `Congratulations! You have ascended to ${resData.tier_name} (Tier ${resData.new_tier_level})! Unlocked Reward: ${rew}!`);
             } else if (resData.community_total >= 200000) {
                 window.festivalAudio?.playSuccessChime();
                 showCelebrationModal("MAHA AKHAND JYOTI IGNITED! 🪔🎆", "Sacred Victory! The community has achieved 200,000 Sparks! The Akhand Diya burns eternally, unlocking treasury distributions!");

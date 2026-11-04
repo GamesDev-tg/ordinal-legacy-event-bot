@@ -20,6 +20,7 @@ class TestBotAndAPI(unittest.TestCase):
         cls.test_db = os.path.join(tempfile.gettempdir(), f"test_bot_{random.randint(10000, 99999)}.db")
         settings.DATABASE_PATH = cls.test_db
         settings.ADMIN_IDS = [999001]
+        settings.BOT_TOKEN = "mock_bot_token_for_dev"
         init_db()
 
     @classmethod
@@ -111,6 +112,30 @@ class TestBotAndAPI(unittest.TestCase):
         self.assertEqual(u["diya_wicks"], 8)
         self.assertEqual(u["points_total"], res2["new_pts"])
         conn.close()
+
+    def test_mydata_and_tier_rewards_ladder(self):
+        from app.database import calculate_tier, get_tier_name, get_tier_reward
+        self.assertEqual(calculate_tier(0), 0)
+        self.assertEqual(calculate_tier(250), 1)
+        self.assertEqual(calculate_tier(700), 2)
+        self.assertEqual(calculate_tier(1350), 3)
+        self.assertEqual(calculate_tier(2100), 4)
+        self.assertEqual(calculate_tier(3000), 5)
+
+        self.assertIn("Coins", get_tier_reward(1))
+        self.assertIn("Pearl", get_tier_reward(2))
+        self.assertIn("Ticket", get_tier_reward(3))
+        self.assertIn("Enchant", get_tier_reward(4))
+        self.assertIn("Pet", get_tier_reward(5))
+
+        conn = get_db_connection()
+        conn.execute("UPDATE users SET points_total = 3000, tier_level = 5, joined_groups = 1 WHERE telegram_id = ?", (self.user_id,))
+        conn.commit()
+        u = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (self.user_id,)).fetchone()
+        conn.close()
+        self.assertEqual(u["points_total"], 3000)
+        self.assertEqual(u["tier_level"], 5)
+        self.assertEqual(u["joined_groups"], 1)
 
 if __name__ == "__main__":
     unittest.main()

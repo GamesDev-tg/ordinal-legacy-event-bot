@@ -14,7 +14,10 @@ from app.game_engine import claim_shubh_refill, update_user_stamina
 
 async def send_telegram_message(chat_id: int, text: str, reply_markup: Optional[Dict[str, Any]] = None):
     if settings.BOT_TOKEN == "mock_bot_token_for_dev":
-        print(f"[MOCK BOT] -> Chat {chat_id}: {text}")
+        try:
+            print(f"[MOCK BOT] -> Chat {chat_id}: {text}")
+        except Exception:
+            pass
         return True
     
     url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage"
@@ -55,6 +58,39 @@ async def send_telegram_document(chat_id: int, file_bytes: bytes, filename: str,
             return resp.status_code == 200
     except Exception as e:
         print(f"Failed to send telegram document: {e}")
+        return False
+
+async def sync_telegram_bot_commands() -> bool:
+    """
+    Registers all player commands with Telegram BotFather API using setMyCommands.
+    Keeps admin commands private so normal players only see official festival features.
+    """
+    if settings.BOT_TOKEN == "mock_bot_token_for_dev":
+        return True
+    
+    commands = [
+        {"command": "start", "description": "Launch festival arena & start event"},
+        {"command": "play", "description": "Choose & play mini-games (Chat/App)"},
+        {"command": "chakri", "description": "Spin Chakri Whirl in chat (1-3 pts)"},
+        {"command": "rangoli", "description": "Draw Rangoli pattern in chat (1-3 pts)"},
+        {"command": "mithai", "description": "Feast on Mithai in chat (1-3 pts)"},
+        {"command": "mydata", "description": "View your complete stats & tier rewards"},
+        {"command": "status", "description": "View community Akhand Diya sparks"},
+        {"command": "shubh", "description": "Claim daily Shubh Muhurat (+5 wicks & pts)"},
+        {"command": "shagun", "description": "Get companion referral invite link"},
+        {"command": "house", "description": "View your Gharana standing & rank"},
+        {"command": "top", "description": "View top 10 lampbearers on leaderboard"},
+        {"command": "gharanas", "description": "View all 4 Gharana house standings"},
+        {"command": "tiers", "description": "View milestone ladder & rewards (Coins, Pearl...)"},
+        {"command": "help", "description": "Show festival guide & all commands"}
+    ]
+    url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/setMyCommands"
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, json={"commands": commands})
+            return resp.status_code == 200 and resp.json().get("ok", False)
+    except Exception as e:
+        print(f"Failed to set bot commands: {e}")
         return False
 
 async def check_telegram_membership(user_id: int, chat_identifier: str) -> Optional[bool]:
@@ -130,13 +166,16 @@ def execute_in_chat_game(user_id: int, game_type: int) -> dict:
     conn = get_db_connection()
     with conn:
         update_user_stamina(conn, user_id)
-        u = conn.execute("SELECT diya_wicks, points_total, tier_level, gharana_id FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
+        u = conn.execute("SELECT diya_wicks, points_total, tier_level, gharana_id, joined_groups FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
         if not u:
             conn.close()
             return {"error": "User not found. Send /start first!"}
+        if not u["joined_groups"] and settings.BOT_TOKEN != "mock_bot_token_for_dev":
+            conn.close()
+            return {"error": "You must join all 3 official community groups and verify first! Send /start."}
         if u["diya_wicks"] < 1:
             conn.close()
-            return {"error": "Out of Diya Wicks! Claim your daily /shubh refill or wait for regeneration."}
+            return {"error": "Out of Diya Wicks! Claim your daily /shubh refill or wait 3 mins for regeneration."}
 
         # Deduct 1 wick
         conn.execute("UPDATE users SET diya_wicks = diya_wicks - 1 WHERE telegram_id = ?", (user_id,))
@@ -389,8 +428,10 @@ async def handle_bot_message(message: Dict[str, Any]):
                 [{"text": "🌀 Chakri", "callback_data": "play_chakri"},
                  {"text": "🌸 Rangoli", "callback_data": "play_rangoli"},
                  {"text": "🍬 Mithai", "callback_data": "play_mithai"}],
+                [{"text": "👤 My Dossier & Rewards", "callback_data": "cmd_mydata"},
+                 {"text": "🎁 Rewards Ladder", "callback_data": "cmd_tiers"}],
                 [{"text": "🎁 My Shagun Invite Link", "callback_data": "cmd_shagun"},
-                 {"text": "✨ Shubh Refill (+5 Wicks)", "callback_data": "cmd_shubh"}],
+                 {"text": "✨ Shubh Refill (+5 Wicks & Pts)", "callback_data": "cmd_shubh"}],
                 [{"text": "📊 Community Progress", "callback_data": "cmd_status"},
                  {"text": "🏰 Gharanas Leaderboard", "callback_data": "cmd_gharanas"}]
             ]
@@ -401,7 +442,7 @@ async def handle_bot_message(message: Dict[str, Any]):
     elif text == "/play":
         play_text = (
             f"🎮 *Maha Deepotsav Festival Arena: Choose How to Play!*\n\n"
-            f"Every run consumes *1 Diya Wick* (max 10, regenerates 1 every 15m).\n"
+            f"Every run consumes *1 Diya Wick* (max 10, regenerates 1 every 3m).\n"
             f"Earn *1 to 3 hard sparks* per run to ignite the 200,000 Akhand Diya!\n\n"
             f"Select an in-chat game or launch the full Mini-App:"
         )
@@ -412,7 +453,7 @@ async def handle_bot_message(message: Dict[str, Any]):
                  {"text": "🌸 Rangoli Pattern (In-Chat)", "callback_data": "play_rangoli"}],
                 [{"text": "🍬 Mithai Feast (In-Chat)", "callback_data": "play_mithai"}],
                 [{"text": "✨ Claim Shubh Refill (+5)", "callback_data": "cmd_shubh"},
-                 {"text": "📊 My Profile", "callback_data": "cmd_status"}]
+                 {"text": "👤 My Data & Rewards", "callback_data": "cmd_mydata"}]
             ]
         }
         await send_telegram_message(chat_id, play_text, play_kb)
@@ -895,15 +936,104 @@ async def handle_bot_message(message: Dict[str, Any]):
 
     elif text == "/tiers":
         ladder_text = (
-            f"🏆 *Maha Deepotsav Reward Tiers:*\n\n"
-            f"• *Tier 0: Diya Spark (0 Pts)* — Welcome badge\n"
-            f"• *Tier 1: Diya Sevak (100 Pts)* — Bronze frame & stickers\n"
-            f"• *Tier 2: Rangoli Artisan (220 Pts)* — Silver flame avatar & raffle\n"
-            f"• *Tier 3: Spark Master (380 Pts)* — Gold aura & guaranteed airdrop\n"
-            f"• *Tier 4: Deep Mahant (550 Pts)* — Platinum halo & VIP role\n"
-            f"• *Tier 5: Akhand Sovereign (750+ Pts)* — Sovereign Mukut & Ordinals (Top 50)"
+            f"🏆 *Maha Deepotsav Milestone Rewards:*\n\n"
+            f"• *Tier 0: Diya Spark (0–249 Pts)* — Welcome Badge\n"
+            f"• *Tier 1: Diya Sevak (250 Pts)* — 🪙 Coins\n"
+            f"• *Tier 2: Rangoli Artisan (700 Pts)* — 🔮 Pearl\n"
+            f"• *Tier 3: Spark Master (1,350 Pts)* — 🎟 Ticket\n"
+            f"• *Tier 4: Deep Mahant (2,100 Pts)* — 🧪 Enchant\n"
+            f"• *Tier 5: Akhand Sovereign (3,000+ Pts)* — 🐾 Pet (+ All Rewards: 🪙 Coins, 🔮 Pearl, 🎟 Ticket, 🧪 Enchant, 🐾 Pet)\n\n"
+            f"_Earn 1 to 3 hard sparks per mini-game run to ascend the ladder!_"
         )
         await send_telegram_message(chat_id, ladder_text)
+        return
+
+    elif text in ("/mydata", "/profile", "/data"):
+        conn = get_db_connection()
+        update_user_stamina(conn, user_id)
+        u = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
+        
+        comp_row = conn.execute(
+            '''SELECT u.first_name, u.username, u.tier_level
+               FROM referrals r
+               JOIN users u ON u.telegram_id = (
+                   CASE WHEN r.referrer_id = ? THEN r.referred_id ELSE r.referrer_id END
+               )
+               WHERE (r.referrer_id = ? OR r.referred_id = ?) AND r.is_companion = 1''',
+            (user_id, user_id, user_id)
+        ).fetchone()
+        
+        total_refs = conn.execute("SELECT COUNT(*) as c FROM referrals WHERE referrer_id = ?", (user_id,)).fetchone()["c"]
+        total_runs = conn.execute("SELECT COUNT(*) as c FROM game_sessions WHERE telegram_id = ? AND is_valid = 1", (user_id,)).fetchone()["c"]
+        three_pts = conn.execute("SELECT COUNT(*) as c FROM game_sessions WHERE telegram_id = ? AND score_awarded = 3 AND is_valid = 1", (user_id,)).fetchone()["c"]
+        two_pts = conn.execute("SELECT COUNT(*) as c FROM game_sessions WHERE telegram_id = ? AND score_awarded = 2 AND is_valid = 1", (user_id,)).fetchone()["c"]
+        one_pt = conn.execute("SELECT COUNT(*) as c FROM game_sessions WHERE telegram_id = ? AND score_awarded = 1 AND is_valid = 1", (user_id,)).fetchone()["c"]
+        conn.close()
+        
+        tier = u["tier_level"]
+        pts = u["points_total"]
+        tier_name = get_tier_name(tier)
+        g_name = settings.GHARANAS.get(u["gharana_id"], "Surya Gharana")
+        
+        # Build reward progression
+        rewards_status = []
+        for t in [1, 2, 3, 4, 5]:
+            req_pts = settings.TIER_THRESHOLDS[t]
+            rew_sym = settings.TIER_REWARDS[t]
+            if pts >= req_pts:
+                rewards_status.append(f"• {rew_sym}: ✅ *Unlocked*")
+            else:
+                diff = req_pts - pts
+                rewards_status.append(f"• {rew_sym}: 🔒 _({diff:,} more pts needed)_")
+        rew_text = "\n".join(rewards_status)
+        
+        comp_str = f"*{comp_row['first_name'] or comp_row['username']}*" if comp_row else "_None yet (Use /shagun)_"
+        today_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+        shubh_status = "✅ Claimed today" if u["shubh_refill_date"] == today_str else "✨ Available now (/shubh)"
+        
+        mydata_msg = (
+            f"👤 *PLAYER EVENT DOSSIER: {first_name}*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🆔 *Telegram ID*: `{user_id}`\n"
+            f"🏷 *Username*: @{username or 'N/A'}\n"
+            f"🏰 *Initiated House*: *{g_name}*\n"
+            f"🛡 *Official Gate*: {'✅ Verified Member' if u['joined_groups'] else '⚠️ Unverified'}\n\n"
+            f"🔥 *Sparks Contributed*: *{pts:,} Sparks*\n"
+            f"🏆 *Current Rank Tier*: *{tier_name} (Tier {tier})*\n\n"
+            f"🎁 *Reward Milestones:*\n"
+            f"{rew_text}\n\n"
+            f"🪔 *Diya Wicks*: *{u['diya_wicks']}/10*\n"
+            f"⚡ *Stamina Speed*: 1 wick every 3 minutes\n"
+            f"✨ *Daily Shubh Muhurat*: {shubh_status}\n\n"
+            f"🎮 *Festival Gameplay:*\n"
+            f"• Completed Runs: *{total_runs}*\n"
+            f"  - Flawless (3 Pts): `{three_pts}`\n"
+            f"  - Skilled (2 Pts): `{two_pts}`\n"
+            f"  - Base (1 Pt): `{one_pt}`\n\n"
+            f"🤝 *Community Bonds:*\n"
+            f"• Diya Companion: {comp_str}\n"
+            f"• Friends Invited: *{total_refs}* ({u['referral_points_earned']}/{settings.MAX_REFERRAL_POINTS} pts)"
+        )
+        kb = {
+            "inline_keyboard": [
+                [{"text": "🎮 Play Mini-Games", "callback_data": "menu_play"},
+                 {"text": "🪔 Launch Mini-App", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
+                [{"text": "🎁 Invite Friends", "callback_data": "cmd_shagun"},
+                 {"text": "✨ Daily Refill", "callback_data": "cmd_shubh"}]
+            ]
+        }
+        await send_telegram_message(chat_id, mydata_msg, kb)
+        return
+
+    elif text == "/syncbot":
+        if user_id not in settings.ADMIN_IDS:
+            await send_telegram_message(chat_id, "⛔ *Unauthorized*: Admin privileges required.")
+            return
+        ok = await sync_telegram_bot_commands()
+        if ok:
+            await send_telegram_message(chat_id, "✅ *Telegram Bot Commands Synchronized!* All 14 player commands are now visible in the Telegram menu button.")
+        else:
+            await send_telegram_message(chat_id, "⚠️ Failed to sync commands. Check bot token or server logs.")
         return
 
     else:
@@ -915,6 +1045,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"/rangoli — Draw Rangoli in chat (1 wick, 1-3 pts)\n"
             f"/mithai — Feast on Mithai in chat (1 wick, 1-3 pts)\n\n"
             f"🌟 *Event & Profile:*\n"
+            f"/mydata — View your complete score, stats & unlocked rewards\n"
             f"/start — Launch festival arena and mini-games\n"
             f"/status — View your points, stamina wicks, and flame stage\n"
             f"/house — View your Gharana house motto, ranking, and avg score\n"
@@ -923,7 +1054,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"/shubh — Claim your daily Shubh Muhurat refill (+5 wicks & pts)\n"
             f"/widget — View or generate the pinned channel Akhand Diya widget\n"
             f"/gharanas — View live Gharana house standings\n"
-            f"/tiers — View individual milestone rewards\n"
+            f"/tiers — View milestone ladder & rewards (Coins, Pearl...)\n"
             f"/findtier <0-5> — View players in a specific reward tier\n"
             f"/user <id/@username> — Inspect user profile details\n"
             f"/stats — View global event metrics and statistics\n"
@@ -932,6 +1063,7 @@ async def handle_bot_message(message: Dict[str, Any]):
         if user_id in settings.ADMIN_IDS:
             help_text += (
                 f"\n👑 *Admin Commands:*\n"
+                f"`/syncbot` — Synchronize public commands with Telegram BotFather\n"
                 f"`/backup` — Download complete database snapshot (.json)\n"
                 f"`/resetevent` — Reset scores & sparks for new event cycle\n"
                 f"`/query SELECT ...` — Query database\n"
@@ -1019,6 +1151,9 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
         await send_telegram_message(chat_id, shagun_msg)
     elif data == "cmd_status":
         fake_msg = {"chat": {"id": chat_id}, "from": from_user, "text": "/status"}
+        await handle_bot_message(fake_msg)
+    elif data == "cmd_mydata":
+        fake_msg = {"chat": {"id": chat_id}, "from": from_user, "text": "/mydata"}
         await handle_bot_message(fake_msg)
     elif data == "cmd_shubh":
         try:

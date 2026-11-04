@@ -120,6 +120,7 @@ def init_postgres_db():
             tier_level INTEGER DEFAULT 0 CHECK (tier_level BETWEEN 0 AND 5),
             referral_points_earned INTEGER DEFAULT 0,
             shubh_refill_date TEXT,
+            joined_groups INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -194,6 +195,7 @@ def init_sqlite_db():
             tier_level INTEGER DEFAULT 0 CHECK (tier_level BETWEEN 0 AND 5),
             referral_points_earned INTEGER DEFAULT 0,
             shubh_refill_date TEXT,
+            joined_groups INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -281,6 +283,9 @@ def get_tier_name(tier: int) -> str:
         5: "Akhand Jyoti Sovereign"
     }
     return names.get(tier, "Diya Spark")
+
+def get_tier_reward(tier: int) -> str:
+    return settings.TIER_REWARDS.get(tier, "Welcome Badge")
 
 def get_stage_info(sparks: int) -> tuple[int, str]:
     if sparks >= 350000:

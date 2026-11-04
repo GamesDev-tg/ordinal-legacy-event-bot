@@ -33,24 +33,33 @@ class Settings:
     
     GLOBAL_MILESTONE_TARGET: int = int(os.getenv("GLOBAL_MILESTONE_TARGET", "200000"))
     MAX_REFERRAL_POINTS: int = int(os.getenv("MAX_REFERRAL_POINTS", "15"))
-    MIN_GAME_DURATION_SECONDS: int = int(os.getenv("MIN_GAME_DURATION_SECONDS", "12"))
+    MIN_GAME_DURATION_SECONDS: int = int(os.getenv("MIN_GAME_DURATION_SECONDS", "5"))
     STAMINA_BANK_CAP: int = int(os.getenv("STAMINA_BANK_CAP", "10"))
-    STAMINA_REGEN_MINUTES: int = int(os.getenv("STAMINA_REGEN_MINUTES", "15"))
+    STAMINA_REGEN_MINUTES: int = int(os.getenv("STAMINA_REGEN_MINUTES", "3"))
 
-    GROUP_LINK_1: str = os.getenv("GROUP_LINK_1", "https://t.me/OrdinalLegacy")
-    GROUP_LINK_2: str = os.getenv("GROUP_LINK_2", "https://t.me/OrdinalLegacyChat")
-    GROUP_LINK_3: str = os.getenv("GROUP_LINK_3", "https://t.me/OrdinalLegacyNews")
-    GROUP_NAME_1: str = os.getenv("GROUP_NAME_1", "Ordinal Channel")
-    GROUP_NAME_2: str = os.getenv("GROUP_NAME_2", "Ordinal Discussion")
-    GROUP_NAME_3: str = os.getenv("GROUP_NAME_3", "Ordinal News")
+    GROUP_LINK_1: str = os.getenv("GROUP_LINK_1", "https://t.me/Ordinal_Legacy")
+    GROUP_LINK_2: str = os.getenv("GROUP_LINK_2", "https://t.me/Ol_Chat")
+    GROUP_LINK_3: str = os.getenv("GROUP_LINK_3", "https://t.me/Ordinal_Legacy_Chat")
+    GROUP_NAME_1: str = os.getenv("GROUP_NAME_1", "Discussion Group (@Ordinal_Legacy)")
+    GROUP_NAME_2: str = os.getenv("GROUP_NAME_2", "Bot Features (@Ol_Chat)")
+    GROUP_NAME_3: str = os.getenv("GROUP_NAME_3", "Event Discussion (@Ordinal_Legacy_Chat)")
     
     TIER_THRESHOLDS = {
         0: 0,
-        1: 100,
-        2: 220,
-        3: 380,
-        4: 550,
-        5: 750
+        1: 250,
+        2: 700,
+        3: 1350,
+        4: 2100,
+        5: 3000
+    }
+    
+    TIER_REWARDS = {
+        0: "Welcome Badge",
+        1: "🪙 Coins",
+        2: "🔮 Pearl",
+        3: "🎟 Ticket",
+        4: "🧪 Enchant",
+        5: "🐾 Pet (All Rewards: 🪙 Coins + 🔮 Pearl + 🎟 Ticket + 🧪 Enchant + 🐾 Pet)"
     }
     
     GHARANAS = {

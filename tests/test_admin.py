@@ -48,7 +48,7 @@ class TestAdmin(unittest.TestCase):
         res = api_admin_add_points(req)
         self.assertTrue(res.success)
         self.assertEqual(res.new_total, 250)
-        self.assertEqual(res.new_tier, 2)
+        self.assertEqual(res.new_tier, 1)
 
     def test_unauthorized_admin_rejected(self):
         req = AdminAddPointsRequest(
