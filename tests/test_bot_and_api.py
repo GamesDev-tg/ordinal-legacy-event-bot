@@ -91,5 +91,26 @@ class TestBotAndAPI(unittest.TestCase):
         self.assertGreaterEqual(total_users, 1)
         conn.close()
 
+    def test_execute_in_chat_game_flow(self):
+        from app.bot import execute_in_chat_game
+        # Execute Chakri game (game_type 1)
+        res = execute_in_chat_game(self.user_id, 1)
+        self.assertTrue(res.get("success"))
+        self.assertIn(res["score"], [1, 2, 3])
+        self.assertEqual(res["new_wicks"], 9)
+        self.assertGreaterEqual(res["community_total"], res["score"])
+
+        # Execute Rangoli game (game_type 2)
+        res2 = execute_in_chat_game(self.user_id, 2)
+        self.assertTrue(res2.get("success"))
+        self.assertEqual(res2["new_wicks"], 8)
+
+        # Verify DB persisted
+        conn = get_db_connection()
+        u = conn.execute("SELECT points_total, diya_wicks FROM users WHERE telegram_id = ?", (self.user_id,)).fetchone()
+        self.assertEqual(u["diya_wicks"], 8)
+        self.assertEqual(u["points_total"], res2["new_pts"])
+        conn.close()
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,7 @@
 import random
 import json
 import datetime
+import secrets
 import httpx
 from typing import Dict, Any, Optional
 from app.config import settings
@@ -56,6 +57,53 @@ async def send_telegram_document(chat_id: int, file_bytes: bytes, filename: str,
         print(f"Failed to send telegram document: {e}")
         return False
 
+async def check_telegram_membership(user_id: int, chat_identifier: str) -> Optional[bool]:
+    """
+    Check if user is a member/admin/creator of a Telegram channel or group.
+    Returns:
+      True: Confirmed member
+      False: Confirmed non-member (left/kicked)
+      None: Cannot determine (e.g. mock token, network issue, or bot not admin)
+    """
+    if settings.BOT_TOKEN == "mock_bot_token_for_dev":
+        return True
+    
+    chat_handle = chat_identifier
+    if "t.me/" in chat_identifier:
+        chat_handle = "@" + chat_identifier.split("t.me/")[-1].strip("/")
+    
+    url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/getChatMember"
+    params = {"chat_id": chat_handle, "user_id": user_id}
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            resp = await client.get(url, params=params)
+            data = resp.json()
+            if data.get("ok"):
+                status = data.get("result", {}).get("status")
+                return status in ("creator", "administrator", "member", "restricted")
+            else:
+                print(f"[MEMBERSHIP CHECK INFO] {chat_handle}: {data.get('description')}")
+                return None
+    except Exception as e:
+        print(f"[MEMBERSHIP CHECK EXCEPTION]: {e}")
+        return None
+
+async def verify_user_all_groups(user_id: int) -> tuple[bool, list]:
+    groups = [
+        (settings.GROUP_NAME_1, settings.GROUP_LINK_1),
+        (settings.GROUP_NAME_2, settings.GROUP_LINK_2),
+        (settings.GROUP_NAME_3, settings.GROUP_LINK_3),
+    ]
+    unjoined = []
+    for name, link in groups:
+        is_member = await check_telegram_membership(user_id, link)
+        if is_member is False:
+            unjoined.append((name, link))
+    
+    if unjoined:
+        return False, unjoined
+    return True, []
+
 def register_user_if_new(telegram_id: int, username: str, first_name: str) -> dict:
     conn = get_db_connection()
     with conn:
@@ -78,6 +126,150 @@ def register_user_if_new(telegram_id: int, username: str, first_name: str) -> di
     conn.close()
     return dict(user)
 
+def execute_in_chat_game(user_id: int, game_type: int) -> dict:
+    conn = get_db_connection()
+    with conn:
+        update_user_stamina(conn, user_id)
+        u = conn.execute("SELECT diya_wicks, points_total, tier_level, gharana_id FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
+        if not u:
+            conn.close()
+            return {"error": "User not found. Send /start first!"}
+        if u["diya_wicks"] < 1:
+            conn.close()
+            return {"error": "Out of Diya Wicks! Claim your daily /shubh refill or wait for regeneration."}
+
+        # Deduct 1 wick
+        conn.execute("UPDATE users SET diya_wicks = diya_wicks - 1 WHERE telegram_id = ?", (user_id,))
+        
+        # Fair scoring: 3 points (45%), 2 points (40%), 1 point (15%)
+        roll = random.random()
+        score = 3 if roll < 0.45 else (2 if roll < 0.85 else 1)
+        
+        new_pts = u["points_total"] + score
+        new_tier = calculate_tier(new_pts)
+        
+        conn.execute(
+            "UPDATE users SET points_total = ?, tier_level = ? WHERE telegram_id = ?",
+            (new_pts, new_tier, user_id)
+        )
+        conn.execute("UPDATE community_state SET total_sparks = total_sparks + ? WHERE id = 1", (score,))
+        
+        # Record game session
+        sess_id = f"bot_{secrets.token_hex(8)}"
+        nonce = secrets.token_hex(8)
+        conn.execute(
+            '''INSERT INTO game_sessions (id, telegram_id, game_type, seed, nonce, score_awarded, duration_ms, is_valid)
+               VALUES (?, ?, ?, 'bot_in_chat', ?, ?, 15000, 1)''',
+            (sess_id, user_id, game_type, nonce, score)
+        )
+        
+        comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
+        comm_total = comm["total_sparks"] if comm else 0
+        new_wicks = u["diya_wicks"] - 1
+    conn.close()
+    
+    return {
+        "success": True,
+        "score": score,
+        "new_pts": new_pts,
+        "new_tier": new_tier,
+        "tier_name": get_tier_name(new_tier),
+        "new_wicks": new_wicks,
+        "community_total": comm_total
+    }
+
+async def run_in_chat_chakri(chat_id: int, user_id: int):
+    res = execute_in_chat_game(user_id, 1)
+    if "error" in res:
+        await send_telegram_message(
+            chat_id,
+            f"⚠️ *{res['error']}*",
+            {"inline_keyboard": [[{"text": "✨ Claim Shubh Refill (+5 Wicks & Pts)", "callback_data": "cmd_shubh"}]]}
+        )
+        return
+    score = res["score"]
+    sparks = "✨" * (score * 4)
+    msg = (
+        f"🌀 *CHAKRI WHIRL: SPARK HARVEST!* 🌀\n\n"
+        f"You placed the Sacred Golden Ground Chakri on the courtyard stone.\n"
+        f"💥 *FZZZZZZT!* It spins at blazing speed, throwing golden flares into the night sky!\n"
+        f"{sparks}\n\n"
+        f"🏆 *Score Awarded*: `+{score} Hard Sparks`\n"
+        f"👤 *Your Total*: *{res['new_pts']} Pts* ({res['tier_name']})\n"
+        f"🪔 *Diya Wicks Remaining*: *{res['new_wicks']}/10*\n"
+        f"🔥 *Community Akhand Diya*: `{res['community_total']:,} Sparks`"
+    )
+    kb = {
+        "inline_keyboard": [
+            [{"text": "🌀 Spin Chakri Again", "callback_data": "play_chakri"},
+             {"text": "🌸 Draw Rangoli", "callback_data": "play_rangoli"}],
+            [{"text": "🍬 Taste Mithai", "callback_data": "play_mithai"},
+             {"text": "🪔 Mini-App Arena", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
+            [{"text": "📊 View My Status", "callback_data": "cmd_status"}]
+        ]
+    }
+    await send_telegram_message(chat_id, msg, kb)
+
+async def run_in_chat_rangoli(chat_id: int, user_id: int):
+    res = execute_in_chat_game(user_id, 2)
+    if "error" in res:
+        await send_telegram_message(
+            chat_id,
+            f"⚠️ *{res['error']}*",
+            {"inline_keyboard": [[{"text": "✨ Claim Shubh Refill (+5 Wicks & Pts)", "callback_data": "cmd_shubh"}]]}
+        )
+        return
+    score = res["score"]
+    msg = (
+        f"🌸 *RANGOLI COLOR SYMPHONY!* 🌸\n\n"
+        f"You traced the eight-fold lotus pattern with vibrant herbal powders: Vermilion, Haldi & Indigo!\n"
+        f"🪔 The divine diya illuminates the courtyard in sacred geometric harmony.\n\n"
+        f"🏆 *Score Awarded*: `+{score} Hard Sparks`\n"
+        f"👤 *Your Total*: *{res['new_pts']} Pts* ({res['tier_name']})\n"
+        f"🪔 *Diya Wicks Remaining*: *{res['new_wicks']}/10*\n"
+        f"🔥 *Community Akhand Diya*: `{res['community_total']:,} Sparks`"
+    )
+    kb = {
+        "inline_keyboard": [
+            [{"text": "🌸 Draw Rangoli Again", "callback_data": "play_rangoli"},
+             {"text": "🌀 Spin Chakri", "callback_data": "play_chakri"}],
+            [{"text": "🍬 Taste Mithai", "callback_data": "play_mithai"},
+             {"text": "🪔 Mini-App Arena", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
+            [{"text": "📊 View My Status", "callback_data": "cmd_status"}]
+        ]
+    }
+    await send_telegram_message(chat_id, msg, kb)
+
+async def run_in_chat_mithai(chat_id: int, user_id: int):
+    res = execute_in_chat_game(user_id, 3)
+    if "error" in res:
+        await send_telegram_message(
+            chat_id,
+            f"⚠️ *{res['error']}*",
+            {"inline_keyboard": [[{"text": "✨ Claim Shubh Refill (+5 Wicks & Pts)", "callback_data": "cmd_shubh"}]]}
+        )
+        return
+    score = res["score"]
+    msg = (
+        f"🍬 *MITHAI DROP FEAST!* 🍬\n\n"
+        f"You gathered the auspicious Diwali Prasad: Motichoor Laddoos, Kaju Katlis & Gulab Jamuns!\n"
+        f"✨ Sweet blessings and prosperity shower upon your Gharana.\n\n"
+        f"🏆 *Score Awarded*: `+{score} Hard Sparks`\n"
+        f"👤 *Your Total*: *{res['new_pts']} Pts* ({res['tier_name']})\n"
+        f"🪔 *Diya Wicks Remaining*: *{res['new_wicks']}/10*\n"
+        f"🔥 *Community Akhand Diya*: `{res['community_total']:,} Sparks`"
+    )
+    kb = {
+        "inline_keyboard": [
+            [{"text": "🍬 Feast Mithai Again", "callback_data": "play_mithai"},
+             {"text": "🌀 Spin Chakri", "callback_data": "play_chakri"}],
+            [{"text": "🌸 Draw Rangoli", "callback_data": "play_rangoli"},
+             {"text": "🪔 Mini-App Arena", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
+            [{"text": "📊 View My Status", "callback_data": "cmd_status"}]
+        ]
+    }
+    await send_telegram_message(chat_id, msg, kb)
+
 async def handle_bot_message(message: Dict[str, Any]):
     chat = message.get("chat", {})
     chat_id = chat.get("id")
@@ -94,10 +286,18 @@ async def handle_bot_message(message: Dict[str, Any]):
         user = register_user_if_new(user_id, username, first_name)
     except Exception as e:
         print(f"[REGISTRATION ERROR]: {e}")
-        user = {"gharana_id": 1, "points_total": 0, "tier_level": 0, "diya_wicks": 10, "joined_groups": 1}
+        user = {"gharana_id": 1, "points_total": 0, "tier_level": 0, "diya_wicks": 10, "joined_groups": 0}
 
-    # Mandatory 3 Group Links Gate before entering the game
-    if not user.get("joined_groups", 0) and user_id not in settings.ADMIN_IDS and text != "/verify":
+    # Reset gate test command
+    if text in ("/resetgate", "/testgate"):
+        conn = get_db_connection()
+        conn.execute("UPDATE users SET joined_groups = 0 WHERE telegram_id = ?", (user_id,))
+        conn.close()
+        await send_telegram_message(chat_id, "🔄 Group verification gate reset to 0! Send /start now to see the 3 group join buttons.")
+        return
+
+    # Mandatory 3 Group Links Gate before entering the game (Applies to all users)
+    if not user.get("joined_groups", 0) and text not in ("/verify", "verify"):
         gate_text = (
             f"🪔 *Welcome to Ordinal Legacy Maha Deepotsav, {first_name}!* 🪔\n\n"
             f"Before entering the sacred arena, you must join our 3 official community groups:\n\n"
@@ -118,18 +318,42 @@ async def handle_bot_message(message: Dict[str, Any]):
         return
 
     if text in ("/verify", "verify"):
+        is_ok, unjoined = await verify_user_all_groups(user_id)
+        if not is_ok:
+            unjoined_items = "\n".join([f"• [{name}]({link})" for name, link in unjoined])
+            warn_text = (
+                f"⚠️ *Verification Incomplete!*\n\n"
+                f"We couldn't confirm your membership in:\n"
+                f"{unjoined_items}\n\n"
+                f"👉 Please join the group(s) above, then tap *Verify & Enter Arena* again!"
+            )
+            kb = {
+                "inline_keyboard": [
+                    [{"text": f"👉 Join {name}", "url": link}] for name, link in unjoined
+                ] + [[{"text": "✅ Verify & Enter Arena", "callback_data": "verify_groups"}]]
+            }
+            await send_telegram_message(chat_id, warn_text, kb)
+            return
+
         conn = get_db_connection()
-        conn.execute("UPDATE users SET joined_groups = 1 WHERE telegram_id = ?", (user_id,))
-        u = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
+        with conn:
+            conn.execute("UPDATE users SET joined_groups = 1 WHERE telegram_id = ?", (user_id,))
+            u = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
         conn.close()
         await send_telegram_message(
             chat_id,
             f"✅ *Verification Confirmed! Welcome to the Deepotsav Arena!* 🎉\n\n"
             f"Initiated into: *{settings.GHARANAS.get(u['gharana_id'], 'Surya Gharana')}*\n"
-            f"Tap below to begin:",
+            f"• Points: *{u['points_total']} Pts*\n"
+            f"• Wicks: *{u['diya_wicks']}/10*\n\n"
+            f"Choose how you want to play:",
             {
                 "inline_keyboard": [
-                    [{"text": "🪔 Enter Maha Deepotsav Arena", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
+                    [{"text": "🪔 Enter Maha Deepotsav Arena (Mini-App)", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
+                    [{"text": "🎮 Play Mini-Games in Chat", "callback_data": "menu_play"}],
+                    [{"text": "🌀 Chakri", "callback_data": "play_chakri"},
+                     {"text": "🌸 Rangoli", "callback_data": "play_rangoli"},
+                     {"text": "🍬 Mithai", "callback_data": "play_mithai"}],
                     [{"text": "✨ Claim Shubh Refill (+5 Wicks & Pts)", "callback_data": "cmd_shubh"}]
                 ]
             }
@@ -160,7 +384,11 @@ async def handle_bot_message(message: Dict[str, Any]):
         webapp_url = f"{settings.MINI_APP_URL}?tg_id={user_id}"
         keyboard = {
             "inline_keyboard": [
-                [{"text": "🪔 Enter Maha Deepotsav Arena", "web_app": {"url": webapp_url}}],
+                [{"text": "🪔 Enter Maha Deepotsav Arena (Mini-App)", "web_app": {"url": webapp_url}}],
+                [{"text": "🎮 Play Mini-Games in Chat", "callback_data": "menu_play"}],
+                [{"text": "🌀 Chakri", "callback_data": "play_chakri"},
+                 {"text": "🌸 Rangoli", "callback_data": "play_rangoli"},
+                 {"text": "🍬 Mithai", "callback_data": "play_mithai"}],
                 [{"text": "🎁 My Shagun Invite Link", "callback_data": "cmd_shagun"},
                  {"text": "✨ Shubh Refill (+5 Wicks)", "callback_data": "cmd_shubh"}],
                 [{"text": "📊 Community Progress", "callback_data": "cmd_status"},
@@ -168,6 +396,38 @@ async def handle_bot_message(message: Dict[str, Any]):
             ]
         }
         await send_telegram_message(chat_id, welcome_text, keyboard)
+        return
+
+    elif text == "/play":
+        play_text = (
+            f"🎮 *Maha Deepotsav Festival Arena: Choose How to Play!*\n\n"
+            f"Every run consumes *1 Diya Wick* (max 10, regenerates 1 every 15m).\n"
+            f"Earn *1 to 3 hard sparks* per run to ignite the 200,000 Akhand Diya!\n\n"
+            f"Select an in-chat game or launch the full Mini-App:"
+        )
+        play_kb = {
+            "inline_keyboard": [
+                [{"text": "🪔 Launch Mini-App Arena", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
+                [{"text": "🌀 Chakri Whirl (In-Chat)", "callback_data": "play_chakri"},
+                 {"text": "🌸 Rangoli Pattern (In-Chat)", "callback_data": "play_rangoli"}],
+                [{"text": "🍬 Mithai Feast (In-Chat)", "callback_data": "play_mithai"}],
+                [{"text": "✨ Claim Shubh Refill (+5)", "callback_data": "cmd_shubh"},
+                 {"text": "📊 My Profile", "callback_data": "cmd_status"}]
+            ]
+        }
+        await send_telegram_message(chat_id, play_text, play_kb)
+        return
+
+    elif text == "/chakri":
+        await run_in_chat_chakri(chat_id, user_id)
+        return
+
+    elif text == "/rangoli":
+        await run_in_chat_rangoli(chat_id, user_id)
+        return
+
+    elif text == "/mithai":
+        await run_in_chat_mithai(chat_id, user_id)
         return
 
     elif text == "/status":
@@ -649,12 +909,18 @@ async def handle_bot_message(message: Dict[str, Any]):
     else:
         help_text = (
             f"🪔 *Ordinal Legacy Event Bot Commands:*\n\n"
+            f"🎮 *Festival Games:*\n"
+            f"/play — Choose games menu (Chat or Mini-App)\n"
+            f"/chakri — Spin Chakri Whirl in chat (1 wick, 1-3 pts)\n"
+            f"/rangoli — Draw Rangoli in chat (1 wick, 1-3 pts)\n"
+            f"/mithai — Feast on Mithai in chat (1 wick, 1-3 pts)\n\n"
+            f"🌟 *Event & Profile:*\n"
             f"/start — Launch festival arena and mini-games\n"
             f"/status — View your points, stamina wicks, and flame stage\n"
             f"/house — View your Gharana house motto, ranking, and avg score\n"
             f"/top — View Top 10 Lampbearers on the leaderboard\n"
             f"/shagun — Get your companion referral link\n"
-            f"/shubh — Claim your daily Shubh Muhurat refill (+5 wicks)\n"
+            f"/shubh — Claim your daily Shubh Muhurat refill (+5 wicks & pts)\n"
             f"/widget — View or generate the pinned channel Akhand Diya widget\n"
             f"/gharanas — View live Gharana house standings\n"
             f"/tiers — View individual milestone rewards\n"
@@ -686,9 +952,27 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
         return
 
     if data == "verify_groups":
+        is_ok, unjoined = await verify_user_all_groups(user_id)
+        if not is_ok:
+            unjoined_items = "\n".join([f"• [{name}]({link})" for name, link in unjoined])
+            warn_text = (
+                f"⚠️ *Verification Incomplete!*\n\n"
+                f"We couldn't confirm your membership in:\n"
+                f"{unjoined_items}\n\n"
+                f"👉 Please join the group(s) above, then tap *Verify & Enter Arena* again!"
+            )
+            kb = {
+                "inline_keyboard": [
+                    [{"text": f"👉 Join {name}", "url": link}] for name, link in unjoined
+                ] + [[{"text": "✅ Verify & Enter Arena", "callback_data": "verify_groups"}]]
+            }
+            await send_telegram_message(chat_id, warn_text, kb)
+            return
+
         conn = get_db_connection()
-        conn.execute("UPDATE users SET joined_groups = 1 WHERE telegram_id = ?", (user_id,))
-        u = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
+        with conn:
+            conn.execute("UPDATE users SET joined_groups = 1 WHERE telegram_id = ?", (user_id,))
+            u = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
         conn.close()
         
         gid = u["gharana_id"] if u else 1
@@ -697,16 +981,32 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
             chat_id,
             f"✅ *Verification Confirmed! Welcome to the Arena!* 🎉\n\n"
             f"You are officially initiated into the *{g_name}*!\n"
-            f"Tap below to launch the festival arena:",
+            f"• Points: *{u['points_total']} Pts*\n"
+            f"• Wicks: *{u['diya_wicks']}/10*\n\n"
+            f"Choose how you want to play:",
             {
                 "inline_keyboard": [
-                    [{"text": "🪔 Enter Maha Deepotsav Arena", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
+                    [{"text": "🪔 Enter Maha Deepotsav Arena (Mini-App)", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
+                    [{"text": "🎮 Play Mini-Games in Chat", "callback_data": "menu_play"}],
+                    [{"text": "🌀 Chakri", "callback_data": "play_chakri"},
+                     {"text": "🌸 Rangoli", "callback_data": "play_rangoli"},
+                     {"text": "🍬 Mithai", "callback_data": "play_mithai"}],
                     [{"text": "✨ Claim Shubh Refill (+5 Wicks & Pts)", "callback_data": "cmd_shubh"}],
                     [{"text": "🎁 My Shagun Invite Link", "callback_data": "cmd_shagun"}]
                 ]
             }
         )
         return
+
+    elif data == "menu_play":
+        fake_msg = {"chat": {"id": chat_id}, "from": from_user, "text": "/play"}
+        await handle_bot_message(fake_msg)
+    elif data == "play_chakri":
+        await run_in_chat_chakri(chat_id, user_id)
+    elif data == "play_rangoli":
+        await run_in_chat_rangoli(chat_id, user_id)
+    elif data == "play_mithai":
+        await run_in_chat_mithai(chat_id, user_id)
 
     elif data == "cmd_shagun":
         invite_link = f"https://t.me/{settings.BOT_USERNAME}?start=shagun_{user_id}"
