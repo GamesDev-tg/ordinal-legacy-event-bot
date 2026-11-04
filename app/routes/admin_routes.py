@@ -1,8 +1,13 @@
+import datetime
 from fastapi import APIRouter, HTTPException, Response
 from typing import List
-from app.models import AdminAddPointsRequest, AdminAddPointsResponse, RewardExportRow, AdminQueryRequest, AdminQueryResponse, AdminTierUsersResponse
+from app.models import (
+    AdminAddPointsRequest, AdminAddPointsResponse, RewardExportRow,
+    AdminQueryRequest, AdminQueryResponse, AdminTierUsersResponse,
+    AdminResetEventRequest, AdminResetEventResponse, AdminBackupResponse
+)
 from app.config import settings
-from app.database import get_db_connection, calculate_tier, get_tier_name
+from app.database import get_db_connection, calculate_tier, get_tier_name, generate_full_backup, reset_event_data
 
 router = APIRouter(prefix="/api/admin", tags=["Admin Operations"])
 
@@ -291,3 +296,33 @@ def api_admin_stats(admin_id: int):
         "bonded_companions": companions_count,
         "wick_gifts_exchanged": gifts_count
     }
+
+@router.post("/reset_event", response_model=AdminResetEventResponse)
+def api_admin_reset_event(req: AdminResetEventRequest):
+    check_admin(req.admin_telegram_id)
+    if not req.confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Confirmation required! Pass confirm=true to verify you want to reset all event scores and wicks."
+        )
+    generate_full_backup()
+    res = reset_event_data()
+    return AdminResetEventResponse(
+        success=True,
+        message=res["message"],
+        timestamp=datetime.datetime.now(datetime.timezone.utc).isoformat()
+    )
+
+@router.get("/backup", response_model=AdminBackupResponse)
+def api_admin_backup(admin_id: int):
+    check_admin(admin_id)
+    snap = generate_full_backup()
+    return AdminBackupResponse(
+        success=True,
+        total_users=snap["total_users"],
+        total_referrals=snap["total_referrals"],
+        total_games=snap["total_games"],
+        community_sparks=snap["community_sparks"],
+        timestamp_utc=snap["timestamp_utc"],
+        backup_data=snap["data"]
+    )

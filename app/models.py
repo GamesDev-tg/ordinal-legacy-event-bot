@@ -130,3 +130,21 @@ class AdminTierUsersResponse(BaseModel):
     tier_name: str
     total_users: int
     users: List[Dict[str, Any]]
+
+class AdminResetEventRequest(BaseModel):
+    admin_telegram_id: int
+    confirm: bool = False
+
+class AdminResetEventResponse(BaseModel):
+    success: bool
+    message: str
+    timestamp: str
+
+class AdminBackupResponse(BaseModel):
+    success: bool
+    total_users: int
+    total_referrals: int
+    total_games: int
+    community_sparks: int
+    timestamp_utc: str
+    backup_data: Dict[str, Any]

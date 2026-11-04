@@ -288,3 +288,63 @@ def get_stage_info(sparks: int) -> tuple[int, str]:
     elif sparks >= 25000:
         return 1, "Stage 1: Pratham Jyoti (The First Spark)"
     return 0, "Stage 0: Lighting the Wick"
+
+def generate_full_backup() -> dict:
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        
+        # 1. Users
+        cur.execute("SELECT * FROM users ORDER BY id ASC")
+        users = [dict(r) for r in cur.fetchall()]
+        
+        # 2. Referrals
+        cur.execute("SELECT * FROM referrals ORDER BY id ASC")
+        referrals = [dict(r) for r in cur.fetchall()]
+        
+        # 3. Community state
+        cur.execute("SELECT * FROM community_state")
+        community = [dict(r) for r in cur.fetchall()]
+        
+        # 4. Game sessions
+        cur.execute("SELECT * FROM game_sessions ORDER BY created_at DESC")
+        game_sessions = [dict(r) for r in cur.fetchall()]
+        
+        # 5. Partner gifts
+        cur.execute("SELECT * FROM partner_wick_gifts ORDER BY id ASC")
+        gifts = [dict(r) for r in cur.fetchall()]
+        
+        return {
+            "backup_version": "1.0",
+            "timestamp_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "total_users": len(users),
+            "total_referrals": len(referrals),
+            "total_games": len(game_sessions),
+            "community_sparks": community[0]["total_sparks"] if community else 0,
+            "data": {
+                "users": users,
+                "referrals": referrals,
+                "community_state": community,
+                "game_sessions": game_sessions,
+                "partner_wick_gifts": gifts
+            }
+        }
+    finally:
+        conn.close()
+
+def reset_event_data() -> dict:
+    conn = get_db_connection()
+    with conn:
+        conn.execute('''
+            UPDATE users 
+            SET points_total = 0, 
+                tier_level = 0, 
+                diya_wicks = 10, 
+                referral_points_earned = 0, 
+                shubh_refill_date = NULL
+        ''')
+        conn.execute("UPDATE community_state SET total_sparks = 0, current_stage = 0 WHERE id = 1")
+        conn.execute("DELETE FROM game_sessions")
+        conn.execute("DELETE FROM partner_wick_gifts")
+    conn.close()
+    return {"success": True, "message": "Event data reset successfully."}

@@ -1,8 +1,13 @@
 import random
+import json
+import datetime
 import httpx
 from typing import Dict, Any, Optional
 from app.config import settings
-from app.database import get_db_connection, calculate_tier, get_tier_name, get_stage_info
+from app.database import (
+    get_db_connection, calculate_tier, get_tier_name, get_stage_info,
+    generate_full_backup, reset_event_data
+)
 from app.referral_engine import process_referral_claim
 from app.game_engine import claim_shubh_refill, update_user_stamina
 
@@ -22,6 +27,22 @@ async def send_telegram_message(chat_id: int, text: str, reply_markup: Optional[
             return resp.status_code == 200
     except Exception as e:
         print(f"Failed to send telegram message: {e}")
+        return False
+
+async def send_telegram_document(chat_id: int, file_bytes: bytes, filename: str, caption: str):
+    if settings.BOT_TOKEN == "mock_bot_token_for_dev":
+        print(f"[MOCK BOT] -> Document {filename} to {chat_id}")
+        return True
+    
+    url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendDocument"
+    files = {"document": (filename, file_bytes, "application/json")}
+    data = {"chat_id": str(chat_id), "caption": caption, "parse_mode": "Markdown"}
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(url, data=data, files=files)
+            return resp.status_code == 200
+    except Exception as e:
+        print(f"Failed to send telegram document: {e}")
         return False
 
 def register_user_if_new(telegram_id: int, username: str, first_name: str) -> dict:
@@ -421,6 +442,69 @@ async def handle_bot_message(message: Dict[str, Any]):
         await send_telegram_message(chat_id, f"✅ Restored full Diya Wicks (10/10) for `{target_id}` ({u['first_name']}).")
         return
 
+    elif text == "/backup":
+        if user_id not in settings.ADMIN_IDS:
+            await send_telegram_message(chat_id, "⛔ *Unauthorized*: Admin privileges required.")
+            return
+        snap = generate_full_backup()
+        json_bytes = json.dumps(snap, default=str, indent=2).encode("utf-8")
+        now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S")
+        filename = f"ordinal_event_backup_{now_str}.json"
+        caption = (
+            f"📦 *Ordinal Event Complete Database Backup*\n\n"
+            f"• *Timestamp*: `{snap['timestamp_utc']}`\n"
+            f"• *Registered Users*: `{snap['total_users']:,}`\n"
+            f"• *Referral Bonds*: `{snap['total_referrals']:,}`\n"
+            f"• *Game Sessions*: `{snap['total_games']:,}`\n"
+            f"• *Akhand Sparks*: `{snap['community_sparks']:,}`\n\n"
+            f"🛡️ _Complete JSON snapshot generated with zero data loss._"
+        )
+        sent = await send_telegram_document(chat_id, json_bytes, filename, caption)
+        if not sent:
+            await send_telegram_message(chat_id, "⚠️ Backup generated but failed to transmit document. Check server logs.")
+        return
+
+    elif text.startswith("/resetevent"):
+        if user_id not in settings.ADMIN_IDS:
+            await send_telegram_message(chat_id, "⛔ *Unauthorized*: Admin privileges required.")
+            return
+        parts = text.split()
+        if len(parts) < 2 or parts[1].upper() != "CONFIRM":
+            warn_msg = (
+                f"⚠️ *CAUTION: Event Reset Requested!*\n\n"
+                f"This will reset all player scores to 0, refill wicks to 10, clear game session history, "
+                f"and reset community milestone sparks to Stage 0 for a brand new event run.\n\n"
+                f"_All user registrations and Gharana house memberships will be preserved._\n\n"
+                f"👉 To execute, type:\n`/resetevent CONFIRM`"
+            )
+            await send_telegram_message(chat_id, warn_msg)
+            return
+
+        # Automatic safety backup first
+        snap = generate_full_backup()
+        json_bytes = json.dumps(snap, default=str, indent=2).encode("utf-8")
+        now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S")
+        await send_telegram_document(
+            chat_id,
+            json_bytes,
+            f"pre_reset_backup_{now_str}.json",
+            "🛡️ *Pre-Reset Safety Backup Attached*\n_Snapshot saved before event scores were reset._"
+        )
+
+        # Perform reset
+        reset_event_data()
+        await send_telegram_message(
+            chat_id,
+            f"🔄 *Event Reset Complete!*\n\n"
+            f"• All player scores reset to *0 Pts* (Tier 0: Diya Spark)\n"
+            f"• All player Diya Wicks reset to *10/10*\n"
+            f"• Daily Shubh Refills reset for all users\n"
+            f"• Community Akhand Diya reset to *0 Sparks (Stage 0)*\n"
+            f"• Gameplay history cleared for fresh event cycle\n\n"
+            f"✨ The new event arena is ready for participants!"
+        )
+        return
+
     elif text == "/stats":
         conn = get_db_connection()
         total_users = conn.execute("SELECT COUNT(*) as c FROM users").fetchone()["c"]
@@ -527,6 +611,8 @@ async def handle_bot_message(message: Dict[str, Any]):
         if user_id in settings.ADMIN_IDS:
             help_text += (
                 f"\n👑 *Admin Commands:*\n"
+                f"`/backup` — Download complete database snapshot (.json)\n"
+                f"`/resetevent` — Reset scores & sparks for new event cycle\n"
                 f"`/query SELECT ...` — Query database\n"
                 f"`/query UPDATE ...` — Update database values\n"
                 f"`/add <user_id> <points>` — Manually adjust points\n"

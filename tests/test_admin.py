@@ -10,8 +10,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.config import settings
 from app.database import get_db_connection, init_db
 from app.bot import register_user_if_new
-from app.routes.admin_routes import api_admin_add_points, api_tier_distribution, api_export_rewards, api_admin_query, api_users_by_tier, api_admin_reset_wicks, api_admin_stats
-from app.models import AdminAddPointsRequest, AdminQueryRequest
+from app.routes.admin_routes import (
+    api_admin_add_points, api_tier_distribution, api_export_rewards,
+    api_admin_query, api_users_by_tier, api_admin_reset_wicks, api_admin_stats,
+    api_admin_reset_event, api_admin_backup
+)
+from app.models import AdminAddPointsRequest, AdminQueryRequest, AdminResetEventRequest
 
 class TestAdmin(unittest.TestCase):
     @classmethod
@@ -113,6 +117,38 @@ class TestAdmin(unittest.TestCase):
         self.assertIn("total_users", res)
         self.assertIn("community_sparks", res)
         self.assertIn("progress_pct", res)
+
+    def test_admin_backup(self):
+        res = api_admin_backup(self.admin_id)
+        self.assertTrue(res.success)
+        self.assertGreaterEqual(res.total_users, 1)
+        self.assertIn("users", res.backup_data)
+        self.assertIn("community_state", res.backup_data)
+
+    def test_admin_reset_event(self):
+        # First ensure target user has some points
+        req = AdminAddPointsRequest(admin_telegram_id=self.admin_id, target_telegram_id=self.target_user, points_to_add=150)
+        api_admin_add_points(req)
+
+        # Unconfirmed reset should fail
+        with self.assertRaises(HTTPException):
+            api_admin_reset_event(AdminResetEventRequest(admin_telegram_id=self.admin_id, confirm=False))
+
+        # Confirmed reset should succeed
+        res = api_admin_reset_event(AdminResetEventRequest(admin_telegram_id=self.admin_id, confirm=True))
+        self.assertTrue(res.success)
+
+        # Verify target user points are 0 and wicks are 10
+        conn = get_db_connection()
+        user = conn.execute("SELECT points_total, diya_wicks, tier_level FROM users WHERE telegram_id = ?", (self.target_user,)).fetchone()
+        comm = conn.execute("SELECT total_sparks, current_stage FROM community_state WHERE id = 1").fetchone()
+        conn.close()
+
+        self.assertEqual(user["points_total"], 0)
+        self.assertEqual(user["tier_level"], 0)
+        self.assertEqual(user["diya_wicks"], 10)
+        self.assertEqual(comm["total_sparks"], 0)
+        self.assertEqual(comm["current_stage"], 0)
 
 if __name__ == "__main__":
     unittest.main()
