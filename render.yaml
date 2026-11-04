@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: ordinal-legacy-event-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_USERNAME
+        sync: false
+      - key: MINI_APP_URL
+        sync: false
+      - key: ADMIN_TELEGRAM_IDS
+        value: "123456789"
+      - key: DATABASE_PATH
+        value: "ordinal_event.db"

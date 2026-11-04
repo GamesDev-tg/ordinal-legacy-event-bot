@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Ordinal Legacy — Maha Deepotsav</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+    <header class="festival-header">
+        <div class="brand-title">
+            <span>🪔</span>
+            <span>ORDINAL LEGACY</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
+            <button id="audio-toggle-btn" style="background:transparent; border:none; font-size:1.2rem; cursor:pointer;">🔊</button>
+            <div class="stamina-badge">
+                <span>🔥</span>
+                <span id="user-wicks">10/10</span>
+                <span id="wick-regen-timer" style="font-size:0.7rem; color:#FDE047; margin-left:4px;"></span>
+            </div>
+        </div>
+    </header>
+
+    <main id="tab-arena" class="tab-view">
+        <div class="akhand-diya-card">
+            <div class="diya-flame-icon">🪔</div>
+            <div id="stage-badge" class="stage-badge">Stage 0: Lighting the Wick</div>
+            <div class="milestone-title">Maha Akhand Jyoti</div>
+            <div class="sparks-count" id="sparks-display">0 Sparks</div>
+            <div class="progress-track">
+                <div class="progress-fill" id="flame-progress"></div>
+            </div>
+            <div class="progress-labels">
+                <span>Community Progress</span>
+                <span id="progress-pct">0%</span>
+                <span>200,000 Target</span>
+            </div>
+        </div>
+
+        <div class="shubh-refill-card" id="shubh-card">
+            <div style="display:flex; align-items:center; gap:12px;">
+                <span style="font-size:1.8rem;">✨</span>
+                <div>
+                    <div style="font-weight:700; color:var(--gold); font-size:0.9rem;">Shubh Muhurat Refill</div>
+                    <div style="font-size:0.75rem; color:#94A3B8;" id="shubh-status-txt">Daily +5 Diya Wicks Blessing</div>
+                </div>
+            </div>
+            <button class="play-action-btn" id="shubh-action-btn" onclick="claimShubhRefill()">CLAIM +5</button>
+        </div>
+
+        <div class="user-profile-strip">
+            <div class="user-tag">
+                <span class="user-name" id="user-name">Lampbearer</span>
+                <span class="user-tier" id="user-tier-label">Diya Spark (Tier 0)</span>
+            </div>
+            <div class="user-score-box">
+                <div class="user-score-val" id="user-points">0 Pts</div>
+                <div style="font-size:0.7rem; color:#94A3B8;" id="user-gharana">Surya Gharana</div>
+            </div>
+        </div>
+
+        <div class="companion-card" id="companion-container"></div>
+
+        <div class="section-heading">
+            <span>Festive Mini-Games (1–3 Pts)</span>
+            <span style="font-size:0.75rem; color:#F59E0B;">Cost: 1 Wick</span>
+        </div>
+
+        <div class="game-grid">
+            <div class="game-card" onclick="launchMiniGame(1)">
+                <div class="game-icon-frame">🚀</div>
+                <div class="game-info">
+                    <div class="game-name">Chakri Whirl & Rocket</div>
+                    <div class="game-desc">Precision timing wheel • 1 to 3 sparks</div>
+                </div>
+                <button class="play-action-btn">PLAY</button>
+            </div>
+
+            <div class="game-card" onclick="launchMiniGame(2)">
+                <div class="game-icon-frame">🌸</div>
+                <div class="game-info">
+                    <div class="game-name">Rangoli Color Symphony</div>
+                    <div class="game-desc">Sacred petal memory sequence • 1 to 3 sparks</div>
+                </div>
+                <button class="play-action-btn">PLAY</button>
+            </div>
+
+            <div class="game-card" onclick="launchMiniGame(3)">
+                <div class="game-icon-frame">🍬</div>
+                <div class="game-info">
+                    <div class="game-name">Mithai Drop Catcher</div>
+                    <div class="game-desc">20s sweet catch & hazard dodge • 1 to 3 sparks</div>
+                </div>
+                <button class="play-action-btn">PLAY</button>
+            </div>
+        </div>
+    </main>
+
+    <main id="tab-community" class="tab-view" style="display:none; padding:16px;">
+        <div class="section-heading" style="padding-left:4px;">
+            <span>Gharana Leaderboards (Avg Points)</span>
+        </div>
+        <p style="font-size:0.8rem; color:#94A3B8; margin-bottom:14px; padding-left:4px;">
+            All 4 houses cooperate for the 200k Akhand Diya while competing for the highest member average!
+        </p>
+        <div id="gharana-list"></div>
+    </main>
+
+    <main id="tab-shagun" class="tab-view" style="display:none; padding:16px;">
+        <div class="akhand-diya-card" style="margin:0 0 16px 0;">
+            <div style="font-size:2.5rem;">🎁</div>
+            <div class="milestone-title">Diwali Shagun Invite</div>
+            <p style="font-size:0.82rem; color:#94A3B8; margin:8px 0 16px 0;">
+                Invite friends to ignite the Akhand Diya!
+            </p>
+            <button class="play-action-btn" style="width:100%; padding:12px; margin-bottom:8px;" onclick="copyShagunLink()">
+                📋 COPY YOUR SHAGUN LINK
+            </button>
+            <button class="share-tg-btn" onclick="shareShagunOnTelegram()">
+                📲 SHARE ON TELEGRAM
+            </button>
+        </div>
+
+        <div class="user-profile-strip" style="margin:0 0 12px 0;">
+            <div class="user-tag">
+                <span class="user-name">Referral Points Earned</span>
+                <span style="font-size:0.75rem; color:#94A3B8;">Max cap: 15 points</span>
+            </div>
+            <div class="user-score-box">
+                <span class="user-score-val" id="ref-points-count">0/15 Pts</span>
+            </div>
+        </div>
+
+        <div class="user-profile-strip" style="margin:0 0 12px 0;">
+            <div class="user-tag">
+                <span class="user-name">Total Friends Invited</span>
+                <span style="font-size:0.75rem; color:#94A3B8;">Active contributors</span>
+            </div>
+            <div class="user-score-box">
+                <span class="user-score-val" id="total-refs-count">0 Friends</span>
+            </div>
+        </div>
+
+        <div style="background:var(--bg-card); padding:16px; border-radius:var(--radius-md); font-size:0.8rem; color:#94A3B8; line-height:1.5;">
+            <b style="color:var(--gold);">How It Works:</b><br>
+            • Your <b>first active friend</b> becomes your official <b>Diya Companion</b>.<br>
+            • Companions can send each other <b>1 free Diya Wick daily</b>.<br>
+            • Additional friends award <b>+1 point each</b> (minimum points) up to 15 points max.
+        </div>
+    </main>
+
+    <main id="tab-tiers" class="tab-view" style="display:none; padding:16px;">
+        <div class="section-heading" style="padding-left:4px;">
+            <span>Individual Milestone Ladder</span>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:10px;" id="tier-ladder-container">
+            <div class="tier-item-card" data-tier="5">
+                <div class="user-tag">
+                    <span class="user-name">👑 Tier 5: Akhand Sovereign (750+ Pts)</span>
+                    <span style="font-size:0.75rem; color:#F59E0B;">Sovereign Mukut + Rare Ordinals (Top 50) + 4 Airdrop Shares</span>
+                </div>
+                <span class="tier-status-pill" id="tier-pill-5">🔒</span>
+            </div>
+            <div class="tier-item-card" data-tier="4">
+                <div class="user-tag">
+                    <span class="user-name">💎 Tier 4: Deep Mahant (550 Pts)</span>
+                    <span style="font-size:0.75rem; color:#F59E0B;">Platinum Animated Halo + 2 Airdrop Shares + VIP Role</span>
+                </div>
+                <span class="tier-status-pill" id="tier-pill-4">🔒</span>
+            </div>
+            <div class="tier-item-card" data-tier="3">
+                <div class="user-tag">
+                    <span class="user-name">✨ Tier 3: Spark Master (380 Pts)</span>
+                    <span style="font-size:0.75rem; color:#F59E0B;">Gold Radiating Aura + 1 Guaranteed Airdrop Share</span>
+                </div>
+                <span class="tier-status-pill" id="tier-pill-3">🔒</span>
+            </div>
+            <div class="tier-item-card" data-tier="2">
+                <div class="user-tag">
+                    <span class="user-name">🌸 Tier 2: Rangoli Artisan (220 Pts)</span>
+                    <span style="font-size:0.75rem; color:#F59E0B;">Silver Flame Avatar + Community Raffle Entry</span>
+                </div>
+                <span class="tier-status-pill" id="tier-pill-2">🔒</span>
+            </div>
+            <div class="tier-item-card" data-tier="1">
+                <div class="user-tag">
+                    <span class="user-name">🪔 Tier 1: Diya Sevak (100 Pts)</span>
+                    <span style="font-size:0.75rem; color:#F59E0B;">Bronze Profile Frame + Custom Telegram Sticker Pack</span>
+                </div>
+                <span class="tier-status-pill" id="tier-pill-1">🔒</span>
+            </div>
+            <div class="tier-item-card" data-tier="0">
+                <div class="user-tag">
+                    <span class="user-name">🌟 Tier 0: Diya Spark (0–99 Pts)</span>
+                    <span style="font-size:0.75rem; color:#94A3B8;">Welcome Badge • Initiation Completed</span>
+                </div>
+                <span class="tier-status-pill" id="tier-pill-0">✅</span>
+            </div>
+        </div>
+    </main>
+
+    <nav class="bottom-nav">
+        <div class="nav-item active" data-tab="arena">
+            <span class="nav-icon">🪔</span>
+            <span>Arena</span>
+        </div>
+        <div class="nav-item" data-tab="community">
+            <span class="nav-icon">🏰</span>
+            <span>Gharanas</span>
+        </div>
+        <div class="nav-item" data-tab="shagun">
+            <span class="nav-icon">🎁</span>
+            <span>Shagun</span>
+        </div>
+        <div class="nav-item" data-tab="tiers">
+            <span class="nav-icon">🏆</span>
+            <span>Tiers</span>
+        </div>
+    </nav>
+
+    <div id="game-overlay" class="game-modal-overlay">
+        <div class="game-modal-header">
+            <div style="font-weight:700; color:var(--gold);" id="game-modal-title">Mini-Game Arena</div>
+            <button class="close-game-btn" onclick="closeGameModal()">&times;</button>
+        </div>
+        <div class="canvas-container">
+            <canvas id="game-canvas"></canvas>
+        </div>
+        <div style="padding:16px; background:#11141A; text-align:center;">
+            <button id="game-action-btn" class="play-action-btn" style="width:100%; padding:14px; font-size:1.1rem;" onclick="handleGameActionButton()">
+                IGNITE!
+            </button>
+        </div>
+    </div>
+
+    <!-- Celebration Modal -->
+    <div id="celebration-modal" class="celebration-modal" onclick="closeCelebrationModal()">
+        <div class="celebration-box" onclick="event.stopPropagation()">
+            <div style="font-size:3.5rem; margin-bottom:8px;">🎆</div>
+            <h2 id="celebration-title" style="color:var(--gold); margin-bottom:8px;">CONGRATULATIONS!</h2>
+            <p id="celebration-msg" style="color:#CBD5E1; font-size:0.9rem; margin-bottom:16px; line-height:1.4;"></p>
+            <button class="play-action-btn" style="width:100%; padding:10px;" onclick="closeCelebrationModal()">DIVINE BLESSINGS 🙏</button>
+        </div>
+    </div>
+
+    <script src="/static/js/audio.js"></script>
+    <script src="/static/js/chakri_game.js"></script>
+    <script src="/static/js/rangoli_game.js"></script>
+    <script src="/static/js/mithai_game.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

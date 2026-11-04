@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    container_name: ordinal_legacy_bot
+    ports:
+      - "8000:8000"
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-mock_bot_token_for_dev}
+      - TELEGRAM_BOT_USERNAME=${TELEGRAM_BOT_USERNAME:-OrdinalLegacyEventBot}
+      - MINI_APP_URL=${MINI_APP_URL:-http://localhost:8000}
+      - ADMIN_TELEGRAM_IDS=${ADMIN_TELEGRAM_IDS:-123456789}
+      - DATABASE_PATH=/app/data/ordinal_event.db
+    volumes:
+      - bot_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  bot_data:

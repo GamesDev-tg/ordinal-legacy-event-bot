@@ -1,0 +1,118 @@
+import unittest
+import sys
+import os
+import random
+from fastapi import HTTPException
+
+import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from app.config import settings
+from app.database import get_db_connection, init_db
+from app.bot import register_user_if_new
+from app.routes.admin_routes import api_admin_add_points, api_tier_distribution, api_export_rewards, api_admin_query, api_users_by_tier, api_admin_reset_wicks, api_admin_stats
+from app.models import AdminAddPointsRequest, AdminQueryRequest
+
+class TestAdmin(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.test_db = os.path.join(tempfile.gettempdir(), f"test_admin_{random.randint(10000, 99999)}.db")
+        settings.DATABASE_PATH = cls.test_db
+        settings.ADMIN_IDS = [999001]
+        init_db()
+
+    @classmethod
+    def tearDownClass(cls):
+        if os.path.exists(cls.test_db):
+            try:
+                os.remove(cls.test_db)
+            except Exception:
+                pass
+
+    def setUp(self):
+        self.admin_id = 999001
+        self.non_admin_id = 999002
+        self.target_user = random.randint(100000, 900000)
+        register_user_if_new(self.target_user, f"target_{self.target_user}", "Target")
+
+    def test_admin_add_points_and_tier_update(self):
+        req = AdminAddPointsRequest(
+            admin_telegram_id=self.admin_id,
+            target_telegram_id=self.target_user,
+            points_to_add=250
+        )
+        res = api_admin_add_points(req)
+        self.assertTrue(res.success)
+        self.assertEqual(res.new_total, 250)
+        self.assertEqual(res.new_tier, 2)
+
+    def test_unauthorized_admin_rejected(self):
+        req = AdminAddPointsRequest(
+            admin_telegram_id=self.non_admin_id,
+            target_telegram_id=self.target_user,
+            points_to_add=50
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            api_admin_add_points(req)
+        self.assertEqual(ctx.exception.status_code, 403)
+
+    def test_tier_distribution_and_export(self):
+        dist = api_tier_distribution(self.admin_id)
+        self.assertTrue(dist["success"])
+        self.assertGreaterEqual(len(dist["distribution"]), 1)
+
+        rewards = api_export_rewards(self.admin_id)
+        self.assertGreaterEqual(len(rewards), 1)
+
+    def test_admin_query_select(self):
+        req = AdminQueryRequest(
+            admin_telegram_id=self.admin_id,
+            query="SELECT telegram_id, points_total FROM users WHERE telegram_id = " + str(self.target_user)
+        )
+        res = api_admin_query(req)
+        self.assertTrue(res.success)
+        self.assertEqual(res.query_type, "SELECT")
+        self.assertIn("telegram_id", res.columns)
+        self.assertEqual(len(res.data), 1)
+        self.assertEqual(res.data[0]["telegram_id"], self.target_user)
+
+    def test_admin_query_update(self):
+        req = AdminQueryRequest(
+            admin_telegram_id=self.admin_id,
+            query=f"UPDATE users SET diya_wicks = 7 WHERE telegram_id = {self.target_user}"
+        )
+        res = api_admin_query(req)
+        self.assertTrue(res.success)
+        self.assertEqual(res.query_type, "UPDATE")
+        self.assertEqual(res.rows_affected, 1)
+
+    def test_admin_query_blocked_keywords(self):
+        req = AdminQueryRequest(
+            admin_telegram_id=self.admin_id,
+            query="DROP TABLE users;"
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            api_admin_query(req)
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("Only SELECT and UPDATE", ctx.exception.detail)
+
+    def test_admin_users_by_tier(self):
+        res = api_users_by_tier(self.admin_id, tier_level=0)
+        self.assertTrue(res.success)
+        self.assertEqual(res.tier_level, 0)
+        self.assertGreaterEqual(res.total_users, 1)
+
+    def test_admin_reset_wicks(self):
+        res = api_admin_reset_wicks(self.admin_id, self.target_user)
+        self.assertTrue(res["success"])
+        self.assertEqual(res["wicks"], settings.STAMINA_BANK_CAP)
+
+    def test_admin_stats(self):
+        res = api_admin_stats(self.admin_id)
+        self.assertTrue(res["success"])
+        self.assertIn("total_users", res)
+        self.assertIn("community_sparks", res)
+        self.assertIn("progress_pct", res)
+
+if __name__ == "__main__":
+    unittest.main()
