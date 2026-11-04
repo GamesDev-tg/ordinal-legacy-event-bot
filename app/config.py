@@ -11,8 +11,19 @@ class Settings:
     
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8000"))
-    _raw_db: str = (os.getenv("DATABASE_PATH") or os.getenv("DATABASE_URL") or "ordinal_event.db").strip("'\" ")
-    DATABASE_PATH: str = _raw_db
+    
+    _db_url: str = os.getenv("DATABASE_URL", "").strip("'\" ")
+    _db_path: str = os.getenv("DATABASE_PATH", "").strip("'\" ")
+    if _db_url and (_db_url.startswith("postgres://") or _db_url.startswith("postgresql://")):
+        DATABASE_PATH: str = _db_url
+    elif _db_path and (_db_path.startswith("postgres://") or _db_path.startswith("postgresql://")):
+        DATABASE_PATH: str = _db_path
+    elif _db_url:
+        DATABASE_PATH: str = _db_url
+    elif _db_path:
+        DATABASE_PATH: str = _db_path
+    else:
+        DATABASE_PATH: str = "ordinal_event.db"
     
     GLOBAL_MILESTONE_TARGET: int = int(os.getenv("GLOBAL_MILESTONE_TARGET", "200000"))
     MAX_REFERRAL_POINTS: int = int(os.getenv("MAX_REFERRAL_POINTS", "15"))
