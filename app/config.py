@@ -11,7 +11,8 @@ class Settings:
     
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8000"))
-    DATABASE_PATH: str = os.getenv("DATABASE_PATH", "ordinal_event.db")
+    _raw_db: str = (os.getenv("DATABASE_PATH") or os.getenv("DATABASE_URL") or "ordinal_event.db").strip("'\" ")
+    DATABASE_PATH: str = _raw_db
     
     GLOBAL_MILESTONE_TARGET: int = int(os.getenv("GLOBAL_MILESTONE_TARGET", "200000"))
     MAX_REFERRAL_POINTS: int = int(os.getenv("MAX_REFERRAL_POINTS", "15"))

@@ -102,10 +102,10 @@ def send_companion_wick_gift(sender_id: int) -> dict:
         if existing:
             raise HTTPException(status_code=400, detail="You have already sent a gift wick to your companion today!")
             
-        conn.execute(
-            "UPDATE users SET diya_wicks = MIN(?, diya_wicks + 1) WHERE telegram_id = ?",
-            (settings.STAMINA_BANK_CAP, partner_id)
-        )
+        p_user = conn.execute("SELECT diya_wicks FROM users WHERE telegram_id = ?", (partner_id,)).fetchone()
+        cur_wicks = p_user["diya_wicks"] if p_user else 0
+        new_wicks = min(settings.STAMINA_BANK_CAP, cur_wicks + 1)
+        conn.execute("UPDATE users SET diya_wicks = ? WHERE telegram_id = ?", (new_wicks, partner_id))
         conn.execute(
             "INSERT INTO partner_wick_gifts (sender_id, receiver_id, gift_date) VALUES (?, ?, ?)",
             (sender_id, partner_id, today_str)

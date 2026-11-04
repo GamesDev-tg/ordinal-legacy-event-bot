@@ -31,7 +31,7 @@ def register_user_if_new(telegram_id: int, username: str, first_name: str) -> di
         if not user:
             counts = conn.execute('''
                 SELECT g.id, COUNT(u.id) as count 
-                FROM (SELECT 1 as id UNION SELECT 2 UNION SELECT 3 UNION SELECT 4) g
+                FROM (SELECT 1 as id UNION SELECT 2 UNION SELECT 3 UNION SELECT 4) as g
                 LEFT JOIN users u ON u.gharana_id = g.id
                 GROUP BY g.id ORDER BY count ASC, g.id ASC
             ''').fetchall()
@@ -233,15 +233,18 @@ async def handle_bot_message(message: Dict[str, Any]):
             new_tier = calculate_tier(new_pts)
             
             conn.execute("UPDATE users SET points_total = ?, tier_level = ? WHERE telegram_id = ?", (new_pts, new_tier, target_id))
-            conn.execute("UPDATE community_state SET total_sparks = MAX(0, total_sparks + ?) WHERE id = 1", (pts,))
-            comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
+            comm_row = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
+            cur_comm = comm_row["total_sparks"] if comm_row else 0
+            new_comm = max(0, cur_comm + pts)
+            conn.execute("UPDATE community_state SET total_sparks = ? WHERE id = 1", (new_comm,))
+            comm_total = new_comm
         conn.close()
         
         await send_telegram_message(
             chat_id,
             f"✅ *Admin Update*: Added {pts} points to `{target_id}`.\n"
             f"• New User Score: *{new_pts}* ({get_tier_name(new_tier)})\n"
-            f"• Community Total: *{comm['total_sparks']:,} Sparks*"
+            f"• Community Total: *{comm_total:,} Sparks*"
         )
         return
 

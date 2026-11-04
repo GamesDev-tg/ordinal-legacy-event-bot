@@ -24,10 +24,10 @@ def api_admin_add_points(req: AdminAddPointsRequest):
         new_tier = calculate_tier(new_total)
         
         conn.execute("UPDATE users SET points_total = ?, tier_level = ? WHERE telegram_id = ?", (new_total, new_tier, req.target_telegram_id))
-        conn.execute("UPDATE community_state SET total_sparks = MAX(0, total_sparks + ?) WHERE id = 1", (req.points_to_add,))
-        
         comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
-        comm_total = comm["total_sparks"]
+        cur_comm = comm["total_sparks"] if comm else 0
+        comm_total = max(0, cur_comm + req.points_to_add)
+        conn.execute("UPDATE community_state SET total_sparks = ? WHERE id = 1", (comm_total,))
     conn.close()
     
     return AdminAddPointsResponse(
