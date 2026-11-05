@@ -125,8 +125,8 @@ class TestBotAndAPI(unittest.TestCase):
         self.assertIn("Coins", get_tier_reward(1))
         self.assertIn("Pearl", get_tier_reward(2))
         self.assertIn("Ticket", get_tier_reward(3))
-        self.assertIn("Enchant", get_tier_reward(4))
-        self.assertIn("Pet", get_tier_reward(5))
+        self.assertIn("Pet", get_tier_reward(4))
+        self.assertIn("All Rewards", get_tier_reward(5))
 
         conn = get_db_connection()
         conn.execute("UPDATE users SET points_total = 3000, tier_level = 5, joined_groups = 1 WHERE telegram_id = ?", (self.user_id,))

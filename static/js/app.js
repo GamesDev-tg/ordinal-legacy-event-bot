@@ -362,10 +362,12 @@ async function onGameFinished(rawScore, durationMs) {
                 session_id: currentSession.session_id,
                 nonce: currentSession.nonce,
                 raw_score: rawScore,
-                duration_ms: durationMs
+                duration_ms: Math.max(1200, durationMs)
             })
         });
         const resData = await resp.json();
+        closeGameModal();
+
         if (resData.success) {
             currentUser.points_total = resData.new_user_total;
             currentUser.tier_level = resData.new_tier_level;
@@ -383,18 +385,27 @@ async function onGameFinished(rawScore, durationMs) {
                     1: "🪙 Coins",
                     2: "🔮 Pearl",
                     3: "🎟 Ticket",
-                    4: "🧪 Enchant",
-                    5: "🐾 Pet (+ All Rewards: 🪙 Coins, 🔮 Pearl, 🎟 Ticket, 🧪 Enchant, 🐾 Pet)"
+                    4: "🐾 Pet",
+                    5: "All Rewards: 🪙 Coins + 🔮 Pearl + 🎟 Ticket + 🐾 Pet"
                 };
                 const rew = tierRewards[resData.new_tier_level] || "Festive Rewards";
-                showCelebrationModal("TIER UNLOCKED! 🏆", `Congratulations! You have ascended to ${resData.tier_name} (Tier ${resData.new_tier_level})! Unlocked Reward: ${rew}!`);
+                showCelebrationModal("TIER UNLOCKED! 🏆", `Congratulations! You ascended to ${resData.tier_name} (Tier ${resData.new_tier_level})!\n\nUnlocked Reward: ${rew}!`);
             } else if (resData.community_total >= 200000) {
                 window.festivalAudio?.playSuccessChime();
-                showCelebrationModal("MAHA AKHAND JYOTI IGNITED! 🪔🎆", "Sacred Victory! The community has achieved 200,000 Sparks! The Akhand Diya burns eternally, unlocking treasury distributions!");
+                showCelebrationModal("MAHA AKHAND JYOTI IGNITED! 🪔🎆", "Sacred Victory! The community has achieved 200,000 Sparks! The Akhand Diya burns eternally!");
+            } else {
+                window.festivalAudio?.playSuccessChime();
+                showCelebrationModal(
+                    "FESTIVE SPARKS EARNED! 🪔",
+                    `Awesome Run! You contributed +${resData.points_awarded || rawScore} Sparks to the Akhand Diya!\n\n• Your Score: ${resData.new_user_total} Pts\n• Community Total: ${resData.community_total.toLocaleString()} Sparks`
+                );
             }
+        } else {
+            alert(resData.detail || "Error saving score");
         }
     } catch (e) {
         console.error("Score submit error", e);
+        closeGameModal();
     }
 }
 

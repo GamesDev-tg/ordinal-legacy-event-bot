@@ -48,6 +48,8 @@ class ChakriGame {
 
     handleTap() {
         if (!this.running || this.ignited) return;
+        if (Date.now() - (this.lastTapTime || 0) < 400) return;
+        this.lastTapTime = Date.now();
         this.ignited = true;
         
         const norm = this.angle % (Math.PI * 2);
@@ -79,13 +81,11 @@ class ChakriGame {
         const cy = this.canvas.height / 2 - 20;
         this.spawnBurst(cx, cy, this.score);
 
-        const elapsed = Date.now() - this.startTime;
-        // Blueprint GDD 12.0s duration window with continuous firework celebrations
-        const remainingWait = Math.max(2000, 12200 - elapsed);
+        // Responsive festive burst celebration
         setTimeout(() => {
             this.stop();
-            this.onGameOver(this.score, Date.now() - this.startTime);
-        }, remainingWait);
+            this.onGameOver(this.score, Math.max(1200, Date.now() - this.startTime));
+        }, 1800);
     }
 
     spawnBurst(x, y, tier) {

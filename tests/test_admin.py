@@ -181,5 +181,21 @@ class TestAdmin(unittest.TestCase):
         restored = restore_from_backup_data(backup)
         self.assertTrue(restored["success"])
 
+    def test_purge_dummy_data(self):
+        from app.database import purge_dummy_data
+        conn = get_db_connection()
+        # insert a dummy user
+        conn.execute("INSERT OR IGNORE INTO users (telegram_id, username, first_name) VALUES (111222, 'test_dummy', 'Test Dummy')")
+        conn.commit()
+        conn.close()
+
+        res = purge_dummy_data()
+        self.assertTrue(res["success"])
+
+        conn = get_db_connection()
+        dummy = conn.execute("SELECT * FROM users WHERE telegram_id = 111222").fetchone()
+        conn.close()
+        self.assertIsNone(dummy)
+
 if __name__ == "__main__":
     unittest.main()

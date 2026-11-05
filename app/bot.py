@@ -9,7 +9,8 @@ from app.database import (
     get_db_connection, calculate_tier, get_tier_name, get_stage_info,
     generate_full_backup, reset_event_data, get_all_admin_ids, add_admin_id,
     remove_admin_id, get_effective_logs_chat_id, get_effective_backup_chat_id,
-    set_system_setting, get_system_setting, restore_from_backup_data
+    set_system_setting, get_system_setting, restore_from_backup_data,
+    purge_dummy_data
 )
 from app.referral_engine import process_referral_claim
 from app.game_engine import claim_shubh_refill, update_user_stamina
@@ -17,14 +18,20 @@ from app.game_engine import claim_shubh_refill, update_user_stamina
 def is_admin(user_id: int) -> bool:
     return user_id in get_all_admin_ids()
 
-async def send_bot_log(text: str):
+def send_bot_log_sync(text: str):
     print(f"[BOT LOG]: {text}")
     logs_chat = get_effective_logs_chat_id()
     if logs_chat and settings.BOT_TOKEN != "mock_bot_token_for_dev":
         try:
-            await send_telegram_message(logs_chat, f"📋 *[EVENT BOT LOG]*\n{text}")
+            url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage"
+            payload = {"chat_id": logs_chat, "text": f"📋 *[EVENT BOT LOG]*\n{text}", "parse_mode": "Markdown"}
+            with httpx.Client(timeout=4.0) as client:
+                client.post(url, json=payload)
         except Exception as e:
             print(f"[BOT LOG ERROR]: {e}")
+
+async def send_bot_log(text: str):
+    send_bot_log_sync(text)
 
 async def dispatch_backup_snapshot(reason: str = "Manual Admin Snapshot", target_chat_id: Optional[int] = None) -> bool:
     snap = generate_full_backup()
@@ -242,7 +249,7 @@ def execute_in_chat_game(user_id: int, game_type: int) -> dict:
             u = conn.execute("SELECT diya_wicks, points_total, tier_level, gharana_id, joined_groups FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
             if not u:
                 return {"error": "User not found. Send /start first!"}
-            if not u["joined_groups"] and settings.BOT_TOKEN != "mock_bot_token_for_dev":
+            if not u["joined_groups"] and not is_admin(user_id) and settings.BOT_TOKEN != "mock_bot_token_for_dev":
                 return {"error": "You must join all 3 official community groups and verify first! Send /start."}
             if u["diya_wicks"] < 1:
                 return {"error": "Out of Diya Wicks! Claim your daily /shubh refill or wait 3 mins for regeneration."}
@@ -326,6 +333,7 @@ async def run_in_chat_chakri(chat_id: int, user_id: int):
             ]
         }
         await send_telegram_message(chat_id, msg, kb)
+        await send_bot_log(f"🌀 Player `{user_id}` spun Chakri Whirl (+{score} Sparks). Total: {res['new_pts']} Pts | Community: {res['community_total']:,} Sparks")
     except Exception as e:
         await send_telegram_message(chat_id, f"⚠️ *Error playing Chakri*: {str(e)}")
 
@@ -359,6 +367,7 @@ async def run_in_chat_rangoli(chat_id: int, user_id: int):
             ]
         }
         await send_telegram_message(chat_id, msg, kb)
+        await send_bot_log(f"🌸 Player `{user_id}` traced Rangoli (+{score} Sparks). Total: {res['new_pts']} Pts | Community: {res['community_total']:,} Sparks")
     except Exception as e:
         await send_telegram_message(chat_id, f"⚠️ *Error playing Rangoli*: {str(e)}")
 
@@ -392,6 +401,7 @@ async def run_in_chat_mithai(chat_id: int, user_id: int):
             ]
         }
         await send_telegram_message(chat_id, msg, kb)
+        await send_bot_log(f"🍬 Player `{user_id}` caught Mithai (+{score} Sparks). Total: {res['new_pts']} Pts | Community: {res['community_total']:,} Sparks")
     except Exception as e:
         await send_telegram_message(chat_id, f"⚠️ *Error playing Mithai*: {str(e)}")
 
@@ -789,6 +799,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"• `/admins` — View list of administrators\n\n"
             f"⚙️ *Database & Maintenance:*\n"
             f"• `/query <SQL>` — Execute raw SQL query (Admin Only)\n"
+            f"• `/cleandummy` — Purge mock/test accounts before launch\n"
             f"• `/exportrewards` — Export player rewards breakdown\n"
             f"• `/resetevent CONFIRM` — Reset event (auto-backup first)\n"
             f"• `/syncbot` — Synchronize public commands in BotFather"
@@ -1314,6 +1325,22 @@ async def handle_bot_message(message: Dict[str, Any]):
         await send_bot_log(f"🔄 *Event Reset Executed* by Admin `{user_id}`. Safety backup snapshot was dispatched.")
         return
 
+    elif text in ("/cleandummy", "/purgedummy"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+        await send_telegram_message(chat_id, "⏳ Purging all mock/test accounts and dummy sessions from database...")
+        res = purge_dummy_data()
+        await send_telegram_message(
+            chat_id,
+            f"🧹 *Dummy Accounts Purged Successfully!*\n\n"
+            f"• Real Lampbearers Preserved: *{res['remaining_users']}*\n"
+            f"• Valid Akhand Jyoti Sparks: *{res['sparks']:,} Sparks*\n"
+            f"• All test and mock user records removed for official launch."
+        )
+        await send_bot_log(f"🧹 Admin `{user_id}` executed `/cleandummy`. Remaining players: {res['remaining_users']}.")
+        return
+
     elif text == "/stats":
         conn = get_db_connection()
         total_users = conn.execute("SELECT COUNT(*) as c FROM users").fetchone()["c"]
@@ -1396,8 +1423,8 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"• *Tier 1: Diya Sevak (250 Pts)* — 🪙 Coins\n"
             f"• *Tier 2: Rangoli Artisan (700 Pts)* — 🔮 Pearl\n"
             f"• *Tier 3: Spark Master (1,350 Pts)* — 🎟 Ticket\n"
-            f"• *Tier 4: Deep Mahant (2,100 Pts)* — 🧪 Enchant\n"
-            f"• *Tier 5: Akhand Sovereign (3,000+ Pts)* — 🐾 Pet (+ All Rewards: 🪙 Coins, 🔮 Pearl, 🎟 Ticket, 🧪 Enchant, 🐾 Pet)\n\n"
+            f"• *Tier 4: Deep Mahant (2,100 Pts)* — 🐾 Pet\n"
+            f"• *Tier 5: Akhand Sovereign (3,000+ Pts)* — All Rewards: 🪙 Coins + 🔮 Pearl + 🎟 Ticket + 🐾 Pet\n\n"
             f"_Earn 1 to 3 hard sparks per mini-game run to ascend the ladder!_"
         )
         await send_telegram_message(chat_id, ladder_text)

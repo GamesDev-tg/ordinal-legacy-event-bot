@@ -23,8 +23,14 @@ def extract_telegram_id(authorization: Optional[str], x_telegram_id: Optional[st
     user = conn.execute("SELECT id, joined_groups FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
     conn.close()
     if not user:
-        raise HTTPException(status_code=403, detail="Unauthorized: You must first start the bot on Telegram to play and contribute sparks.")
-    if not user["joined_groups"] and settings.BOT_TOKEN != "mock_bot_token_for_dev":
+        from app.bot import register_user_if_new
+        register_user_if_new(user_id, f"player_{user_id}", f"Player_{user_id}")
+        conn = get_db_connection()
+        user = conn.execute("SELECT id, joined_groups FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
+        conn.close()
+
+    from app.bot import is_admin
+    if not user["joined_groups"] and not is_admin(user_id) and settings.BOT_TOKEN != "mock_bot_token_for_dev":
         raise HTTPException(status_code=403, detail="Unauthorized: You must join all 3 official community groups and verify in the bot first!")
 
     return user_id
@@ -45,8 +51,12 @@ def api_game_finish(
     authorization: Optional[str] = Header(None),
     x_telegram_id: Optional[str] = Header(None)
 ):
+    from app.bot import send_bot_log_sync
     user_id = extract_telegram_id(authorization, x_telegram_id)
     res = finish_game_session(user_id, req.session_id, req.nonce, req.raw_score, req.duration_ms)
+    send_bot_log_sync(f"🎮 Player `{user_id}` completed mini-game run (+{res['points_awarded']} Sparks). Total: *{res['new_user_total']} Pts* | Community: *{res['community_total']:,} Sparks*")
+    if res.get("tier_unlocked"):
+        send_bot_log_sync(f"🏆 *TIER ASCENSION*: Player `{user_id}` unlocked *{res['tier_name']}* (Tier {res['new_tier_level']})!")
     return GameFinishResponse(**res)
 
 @router.post("/shubh_refill", response_model=ShubhRefillResponse)
@@ -54,6 +64,8 @@ def api_shubh_refill(
     authorization: Optional[str] = Header(None),
     x_telegram_id: Optional[str] = Header(None)
 ):
+    from app.bot import send_bot_log_sync
     user_id = extract_telegram_id(authorization, x_telegram_id)
     res = claim_shubh_refill(user_id)
+    send_bot_log_sync(f"✨ Player `{user_id}` claimed Shubh Muhurat Blessing (+5 wicks & pts). Score: *{res['points_total']} Pts*")
     return ShubhRefillResponse(**res)

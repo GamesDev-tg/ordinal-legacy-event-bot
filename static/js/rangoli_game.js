@@ -87,6 +87,8 @@ class RangoliGame {
 
     handleClick(e) {
         if (!this.running || this.state !== 'playing') return;
+        if (Date.now() - (this.lastClickTime || 0) < 250) return;
+        this.lastClickTime = Date.now();
         if (e && e.preventDefault && e.type === 'touchstart') e.preventDefault();
 
         const rect = this.canvas.getBoundingClientRect();
@@ -169,13 +171,10 @@ class RangoliGame {
             }
         }
 
-        const elapsed = Date.now() - this.startTime;
-        const remainingWait = Math.max(2500, 12600 - elapsed);
-
         setTimeout(() => {
             this.stop();
-            this.onGameOver(this.score, Date.now() - this.startTime);
-        }, remainingWait);
+            this.onGameOver(this.score, Math.max(1500, Date.now() - this.startTime));
+        }, 1500);
     }
 
     drawLotusPetal(cx, cy, angle, length, width, fillStyle, strokeStyle, lineWidth = 2) {

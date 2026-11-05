@@ -534,3 +534,42 @@ def restore_from_backup_data(backup_data: dict) -> dict:
         "referrals_restored": refs_restored,
         "games_restored": games_restored
     }
+
+def purge_dummy_data() -> dict:
+    conn = get_db_connection()
+    with conn:
+        # Keep real admin (1257427765) and any real users with genuine Telegram IDs (> 8 digits)
+        conn.execute('''
+            DELETE FROM users 
+            WHERE telegram_id != 1257427765 
+              AND (
+                  username LIKE 'test_%' 
+                  OR username LIKE 'target_%' 
+                  OR username LIKE 'dev_%' 
+                  OR username LIKE 'mock_%'
+                  OR first_name LIKE 'Target%' 
+                  OR first_name LIKE 'Test%' 
+                  OR first_name LIKE 'DiwaliPlayer_%'
+                  OR telegram_id < 10000000
+              )
+        ''')
+        # Clean referrals that point to deleted users
+        conn.execute('''
+            DELETE FROM referrals 
+            WHERE referrer_id NOT IN (SELECT telegram_id FROM users) 
+               OR referred_id NOT IN (SELECT telegram_id FROM users)
+        ''')
+        # Clean game sessions of deleted users
+        conn.execute('''
+            DELETE FROM game_sessions 
+            WHERE telegram_id NOT IN (SELECT telegram_id FROM users)
+        ''')
+        # Recalculate community sparks from remaining valid user scores
+        row = conn.execute("SELECT COALESCE(SUM(points_total), 0) as s FROM users").fetchone()
+        valid_sparks = row["s"] if row else 0
+        from app.database import get_stage_info
+        stage, _ = get_stage_info(valid_sparks)
+        conn.execute("UPDATE community_state SET total_sparks = ?, current_stage = ? WHERE id = 1", (valid_sparks, stage))
+        users_count = conn.execute("SELECT COUNT(*) as c FROM users").fetchone()["c"]
+    conn.close()
+    return {"success": True, "remaining_users": users_count, "sparks": valid_sparks}

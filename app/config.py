@@ -33,7 +33,7 @@ class Settings:
     
     GLOBAL_MILESTONE_TARGET: int = int(os.getenv("GLOBAL_MILESTONE_TARGET", "200000"))
     MAX_REFERRAL_POINTS: int = int(os.getenv("MAX_REFERRAL_POINTS", "15"))
-    MIN_GAME_DURATION_SECONDS: int = int(os.getenv("MIN_GAME_DURATION_SECONDS", "5"))
+    MIN_GAME_DURATION_SECONDS: int = int(os.getenv("MIN_GAME_DURATION_SECONDS", "3"))
     STAMINA_BANK_CAP: int = int(os.getenv("STAMINA_BANK_CAP", "10"))
     STAMINA_REGEN_MINUTES: int = int(os.getenv("STAMINA_REGEN_MINUTES", "3"))
 
@@ -61,8 +61,8 @@ class Settings:
         1: "🪙 Coins",
         2: "🔮 Pearl",
         3: "🎟 Ticket",
-        4: "🧪 Enchant",
-        5: "🐾 Pet (All Rewards: 🪙 Coins + 🔮 Pearl + 🎟 Ticket + 🧪 Enchant + 🐾 Pet)"
+        4: "🐾 Pet",
+        5: "All Rewards: 🪙 Coins + 🔮 Pearl + 🎟 Ticket + 🐾 Pet"
     }
     
     GHARANAS = {
