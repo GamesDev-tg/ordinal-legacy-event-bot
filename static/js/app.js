@@ -128,14 +128,14 @@ function updateUI(authData) {
     document.getElementById('flame-progress').style.width = `${pct}%`;
     document.getElementById('progress-pct').innerText = `${pct}%`;
 
-    // Community Milestone Stage Name
+    // Community Milestone 5 Segments of 200k Sparks
     const stageNames = {
-        0: "Stage 0: Lighting the Wick",
-        1: "Stage 1: Pratham Jyoti (The First Spark)",
-        2: "Stage 2: Shubh Rangoli Radiance",
-        3: "Stage 3: Deepotsav Halfway Glow",
-        4: "Stage 4: Maha Akhand Jyoti (Core Goal)",
-        5: "Stage 5: Ananta Utsav (Overdrive)"
+        0: "Stage 0: Lighting the Wick (0 / 40k to Coins)",
+        1: "Stage 1: Segment 1 (🪙 Coins Cleared!)",
+        2: "Stage 2: Segment 2 (🔮 Pearls Cleared!)",
+        3: "Stage 3: Segment 3 (🎟 Tickets Cleared!)",
+        4: "Stage 4: Segment 4 (🐾 Pets Cleared!)",
+        5: "Stage 5: Maha Akhand Jyoti (🏆 All Rewards Cleared!)"
     };
     const stageBadge = document.getElementById('stage-badge');
     if (stageBadge) {
@@ -358,7 +358,11 @@ async function launchMiniGame(gameType) {
         });
         const sessionData = await resp.json();
         if (!resp.ok) {
-            alert(sessionData.detail || "Failed to start game");
+            if (sessionData.detail && sessionData.detail.captcha_required) {
+                showCaptchaModal(sessionData.detail, () => launchMiniGame(gameType));
+                return;
+            }
+            alert(typeof sessionData.detail === 'string' ? sessionData.detail : (sessionData.detail?.message || "Failed to start game"));
             return;
         }
 
@@ -538,5 +542,60 @@ async function loadCommunityLeaderboard() {
         `).join('');
     } catch (e) {
         console.error("Failed to load community state", e);
+    }
+}
+
+function showCaptchaModal(captchaData, onSuccess) {
+    const modal = document.getElementById('celebration-modal');
+    const title = document.getElementById('celebration-title');
+    const text = document.getElementById('celebration-text');
+    if (!modal || !title || !text) {
+        alert(captchaData.message || "Please verify you are human in Telegram bot chat!");
+        return;
+    }
+    title.innerText = "SACRED JYOTI CHECK 🔒";
+    
+    let optsHtml = '<div style="display:flex; flex-direction:column; gap:8px; margin-top:14px;">';
+    captchaData.options.forEach((opt, idx) => {
+        optsHtml += `<button class="claim-shubh-btn" style="padding:10px; font-size:0.85rem; background:#1E293B; border:1px solid #F59E0B; cursor:pointer;" onclick="submitCaptchaVerification(${idx}, '${captchaData.token}')">${opt}</button>`;
+    });
+    optsHtml += '</div>';
+
+    text.innerHTML = `
+        <div style="font-size:0.9rem; line-height:1.4; color:#E2E8F0; margin-bottom:10px;">
+            ${captchaData.question.replace(/\n/g, '<br/>')}
+        </div>
+        ${optsHtml}
+    `;
+    modal.classList.add('active');
+    window._pendingCaptchaSuccess = onSuccess;
+}
+
+async function submitCaptchaVerification(answerIdx, token) {
+    try {
+        const resp = await fetch('/api/game/captcha_verify', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': authHeader,
+                'x-telegram-id': String(currentUser.telegram_id)
+            },
+            body: JSON.stringify({ answer_index: answerIdx, token: token })
+        });
+        const data = await resp.json();
+        if (resp.ok && data.success) {
+            closeCelebrationModal();
+            alert("✨ Sacred Jyoti Verification Passed!");
+            if (typeof window._pendingCaptchaSuccess === 'function') {
+                const cb = window._pendingCaptchaSuccess;
+                window._pendingCaptchaSuccess = null;
+                cb();
+            }
+        } else {
+            alert(data.message || "Incorrect verification answer. Please try again.");
+            closeCelebrationModal();
+        }
+    } catch (e) {
+        alert("Verification failed. Please retry.");
     }
 }

@@ -354,17 +354,17 @@ def get_tier_reward(tier: int) -> str:
     return settings.TIER_REWARDS.get(tier, "Welcome Badge")
 
 def get_stage_info(sparks: int) -> tuple[int, str]:
-    if sparks >= 350000:
-        return 5, "Stage 5: Ananta Utsav (Overdrive)"
-    elif sparks >= 200000:
-        return 4, "Stage 4: Maha Akhand Jyoti (Core Goal)"
-    elif sparks >= 100000:
-        return 3, "Stage 3: Deepotsav Halfway Illumination"
-    elif sparks >= 50000:
-        return 2, "Stage 2: Shubh Rangoli Radiance"
-    elif sparks >= 25000:
-        return 1, "Stage 1: Pratham Jyoti (The First Spark)"
-    return 0, "Stage 0: Lighting the Wick"
+    if sparks >= 200000:
+        return 5, "Stage 5: Maha Akhand Jyoti (All 5 Segments Cleared: 🪙 Coins + 🔮 Pearls + 🎟 Tickets + 🐾 Pets!)"
+    elif sparks >= 160000:
+        return 4, "Stage 4: Segment 4 Cleared (🐾 Pets Reward Unlocked for All!)"
+    elif sparks >= 120000:
+        return 3, "Stage 3: Segment 3 Cleared (🎟 Tickets Reward Unlocked for All!)"
+    elif sparks >= 80000:
+        return 2, "Stage 2: Segment 2 Cleared (🔮 Pearls Reward Unlocked for All!)"
+    elif sparks >= 40000:
+        return 1, "Stage 1: Segment 1 Cleared (🪙 Coins Reward Unlocked for All!)"
+    return 0, "Stage 0: Lighting the Wick (0 / 40,000 Sparks to Clear 🪙 Coins)"
 
 def generate_full_backup() -> dict:
     conn = get_db_connection()

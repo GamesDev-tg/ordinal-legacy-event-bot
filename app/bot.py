@@ -16,6 +16,7 @@ from app.database import (
 )
 from app.referral_engine import process_referral_claim
 from app.game_engine import claim_shubh_refill, update_user_stamina
+from app.cache import get_cache, set_cache, delete_cache
 
 def is_admin(user_id: int) -> bool:
     return user_id in get_all_admin_ids()
@@ -397,7 +398,30 @@ def execute_in_chat_game(user_id: int, game_type: int) -> dict:
     finally:
         conn.close()
 
+async def send_captcha_prompt(chat_id: int, user_id: int, reason: str = ""):
+    from app.captcha_engine import get_or_create_captcha
+    challenge = get_or_create_captcha(user_id)
+    token = challenge["token"]
+    opts = challenge["options"]
+    row1 = [
+        {"text": opts[0], "callback_data": f"cpa:{user_id}:0:{token}"},
+        {"text": opts[1], "callback_data": f"cpa:{user_id}:1:{token}"}
+    ]
+    row2 = [
+        {"text": opts[2], "callback_data": f"cpa:{user_id}:2:{token}"},
+        {"text": opts[3], "callback_data": f"cpa:{user_id}:3:{token}"}
+    ]
+    header = "🔒 *Sacred Jyoti Human Verification*\n\n"
+    if reason:
+        header += f"_{reason}_\n\n"
+    header += f"{challenge['question']}\n\n👉 *Tap the correct option below to verify human presence:*"
+    await send_telegram_message(chat_id, header, {"inline_keyboard": [row1, row2]})
+
 async def run_in_chat_chakri(chat_id: int, user_id: int):
+    from app.captcha_engine import is_user_captcha_locked, record_game_play_and_check_captcha
+    if is_user_captcha_locked(user_id):
+        await send_captcha_prompt(chat_id, user_id, "Automated action prevention: Please verify human presence.")
+        return
     try:
         res = execute_in_chat_game(user_id, 1)
         if "error" in res:
@@ -430,10 +454,16 @@ async def run_in_chat_chakri(chat_id: int, user_id: int):
         }
         await send_telegram_message(chat_id, msg, kb)
         await send_bot_log(f"🌀 Player `{user_id}` spun Chakri Whirl (+{score} Sparks). Total: {res['new_pts']} Pts | Community: {res['community_total']:,} Sparks")
+        if record_game_play_and_check_captcha(user_id):
+            await send_captcha_prompt(chat_id, user_id, "Routine security check: Please solve this sacred verification before your next turn:")
     except Exception as e:
         await send_telegram_message(chat_id, f"⚠️ *Error playing Chakri*: {str(e)}")
 
 async def run_in_chat_rangoli(chat_id: int, user_id: int):
+    from app.captcha_engine import is_user_captcha_locked, record_game_play_and_check_captcha
+    if is_user_captcha_locked(user_id):
+        await send_captcha_prompt(chat_id, user_id, "Automated action prevention: Please verify human presence.")
+        return
     try:
         res = execute_in_chat_game(user_id, 2)
         if "error" in res:
@@ -464,10 +494,16 @@ async def run_in_chat_rangoli(chat_id: int, user_id: int):
         }
         await send_telegram_message(chat_id, msg, kb)
         await send_bot_log(f"🌸 Player `{user_id}` traced Rangoli (+{score} Sparks). Total: {res['new_pts']} Pts | Community: {res['community_total']:,} Sparks")
+        if record_game_play_and_check_captcha(user_id):
+            await send_captcha_prompt(chat_id, user_id, "Routine security check: Please solve this sacred verification before your next turn:")
     except Exception as e:
         await send_telegram_message(chat_id, f"⚠️ *Error playing Rangoli*: {str(e)}")
 
 async def run_in_chat_mithai(chat_id: int, user_id: int):
+    from app.captcha_engine import is_user_captcha_locked, record_game_play_and_check_captcha
+    if is_user_captcha_locked(user_id):
+        await send_captcha_prompt(chat_id, user_id, "Automated action prevention: Please verify human presence.")
+        return
     try:
         res = execute_in_chat_game(user_id, 3)
         if "error" in res:
@@ -498,6 +534,8 @@ async def run_in_chat_mithai(chat_id: int, user_id: int):
         }
         await send_telegram_message(chat_id, msg, kb)
         await send_bot_log(f"🍬 Player `{user_id}` caught Mithai (+{score} Sparks). Total: {res['new_pts']} Pts | Community: {res['community_total']:,} Sparks")
+        if record_game_play_and_check_captcha(user_id):
+            await send_captcha_prompt(chat_id, user_id, "Routine security check: Please solve this sacred verification before your next turn:")
     except Exception as e:
         await send_telegram_message(chat_id, f"⚠️ *Error playing Mithai*: {str(e)}")
 
@@ -546,7 +584,7 @@ async def handle_bot_message(message: Dict[str, Any]):
     # All personal, interactive, game, help, and admin commands are directed to DM to avoid spamming groups.
     if not is_private and text.startswith("/"):
         cmd_head = text.split()[0].lower()
-        ALLOWED_GROUP_COMMANDS = {"/top", "/topusers", "/status", "/gharanas", "/leaderboard", "/tiers", "/stats"}
+        ALLOWED_GROUP_COMMANDS = {"/top", "/topusers", "/status", "/gharanas", "/leaderboard", "/tiers", "/stats", "/captcha", "/testcaptcha"}
         if cmd_head not in ALLOWED_GROUP_COMMANDS:
             bot_user = settings.BOT_USERNAME or "OrdinalLegacyEventBot"
             await send_telegram_message(
@@ -688,7 +726,8 @@ async def handle_bot_message(message: Dict[str, Any]):
     allowed_unverified = (
         "/verify", "verify", "/help", "/commands", "/menu", "/tiers",
         "/status", "/mydata", "/profile", "/data", "/top", "/topusers",
-        "/gharanas", "/leaderboard", "/stats", "/shagun", "/bind"
+        "/gharanas", "/leaderboard", "/stats", "/shagun", "/bind",
+        "/captcha", "/testcaptcha", "/verifyhuman"
     )
 
     # Mandatory 3 Group Links Gate before entering the game (Applies to all users unless admin or running info commands)
@@ -803,6 +842,10 @@ async def handle_bot_message(message: Dict[str, Any]):
         return
 
     elif text == "/play":
+        from app.captcha_engine import is_user_captcha_locked
+        if is_user_captcha_locked(user_id):
+            await send_captcha_prompt(chat_id, user_id, "Automated action prevention: Please verify human presence before entering the arena.")
+            return
         play_text = (
             f"🎮 *Maha Deepotsav Festival Arena: Choose How to Play!*\n\n"
             f"Every run consumes *1 Diya Wick* (max 10, regenerates 1 every 1–3 mins randomly).\n"
@@ -832,6 +875,10 @@ async def handle_bot_message(message: Dict[str, Any]):
 
     elif text == "/mithai":
         await run_in_chat_mithai(chat_id, user_id)
+        return
+
+    elif text in ("/captcha", "/testcaptcha", "/verifyhuman"):
+        await send_captcha_prompt(chat_id, user_id, "Sacred Jyoti Verification Self-Test:")
         return
 
     elif text == "/status":
@@ -911,6 +958,11 @@ async def handle_bot_message(message: Dict[str, Any]):
         return
 
     elif text in ("/widget", "/akhand"):
+        cached_w = get_cache("bot_cmd_widget")
+        if cached_w:
+            webapp_url = f"{settings.MINI_APP_URL}?tg_id={user_id}"
+            await send_telegram_message(chat_id, cached_w, {"inline_keyboard": [[{"text": "🪔 Enter Festival Arena & Light the Flame", "web_app": {"url": webapp_url}}]]})
+            return
         conn = get_db_connection()
         comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
         users_count = conn.execute("SELECT COUNT(*) as c FROM users").fetchone()["c"]
@@ -942,6 +994,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"⚡ *Play 3 Diwali Mini-Games* | Earn hard 1–3 points\n"
             f"🤝 *Bind a Diya Companion* for daily wick gifts!"
         )
+        set_cache("bot_cmd_widget", widget_msg, ttl_seconds=10.0)
         webapp_url = f"{settings.MINI_APP_URL}?tg_id={user_id}"
         keyboard = {
             "inline_keyboard": [
@@ -952,6 +1005,10 @@ async def handle_bot_message(message: Dict[str, Any]):
         return
 
     elif text in ("/gharanas", "/leaderboard"):
+        cached_g = get_cache("bot_cmd_gharanas")
+        if cached_g:
+            await send_telegram_message(chat_id, cached_g)
+            return
         conn = get_db_connection()
         rows = conn.execute('''
             SELECT u.gharana_id, COUNT(u.id) as members, SUM(u.points_total) as pts, AVG(u.points_total) as avg_pts
@@ -966,6 +1023,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             avg_p = round(float(r["avg_pts"] or 0), 1)
             msg += f"*{idx}. {g_name}*\n   • Avg: *{avg_p} Pts* | Total: `{r['pts'] or 0:,} Sparks` | Members: {r['members']}\n\n"
         msg += "_All houses cooperate to ignite the 200,000 Akhand Diya while vying for house honor!_"
+        set_cache("bot_cmd_gharanas", msg, ttl_seconds=10.0)
         await send_telegram_message(chat_id, msg)
         return
 
@@ -1013,6 +1071,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"• `/setgharana <id> <1-4>` — Transfer Gharana (1=Surya, 2=Agni, 3=Chandra, 4=Vayu)\n"
             f"• `/bypassverify <id>` — Manually grant group verification\n"
             f"• `/unverify <id>` — Reset verification status to unverified\n"
+            f"• `/setcaptcha <id>` — Force human verification captcha on player\n"
             f"• `/deleteuser <id>` — Delete unwanted/test user record\n\n"
             f"📢 *Broadcast & Milestones:*\n"
             f"• `/broadcast <msg>` — Send announcement to all players\n"
@@ -1325,6 +1384,18 @@ async def handle_bot_message(message: Dict[str, Any]):
         await send_bot_log(f"🛡️ Admin `{user_id}` unverified user `{target_uid}`.")
         return
 
+    elif text.startswith("/setcaptcha"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+        parts = text.split()
+        target_uid = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else user_id
+        from app.captcha_engine import lock_user_captcha
+        lock_user_captcha(target_uid)
+        await send_telegram_message(chat_id, f"🔒 Captcha lock activated on player `{target_uid}`.")
+        await send_captcha_prompt(target_uid, target_uid, "Security Verification Triggered by Admin:")
+        return
+
     elif text.startswith("/deleteuser"):
         if not is_admin(user_id):
             await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
@@ -1516,6 +1587,10 @@ async def handle_bot_message(message: Dict[str, Any]):
         return
 
     elif text in ("/top", "/topusers"):
+        cached_t = get_cache("bot_cmd_top")
+        if cached_t:
+            await send_telegram_message(chat_id, cached_t)
+            return
         conn = get_db_connection()
         rows = conn.execute('''
             SELECT telegram_id, username, first_name, gharana_id, points_total, tier_level
@@ -1532,6 +1607,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             safe_name = str(raw_name).replace("_", "\\_").replace("*", "\\*")
             g_name = settings.GHARANAS.get(r['gharana_id'], "")
             msg += f"{medals[idx]} *#{idx+1}. {safe_name}* — *{r['points_total']} Pts*\n   _{get_tier_name(r['tier_level'])} • {g_name}_\n\n"
+        set_cache("bot_cmd_top", msg, ttl_seconds=10.0)
         await send_telegram_message(chat_id, msg)
         return
 
@@ -1711,6 +1787,10 @@ async def handle_bot_message(message: Dict[str, Any]):
         return
 
     elif text == "/stats":
+        cached_s = get_cache("bot_cmd_stats")
+        if cached_s:
+            await send_telegram_message(chat_id, cached_s)
+            return
         conn = get_db_connection()
         total_users = conn.execute("SELECT COUNT(*) as c FROM users").fetchone()["c"]
         comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
@@ -1740,6 +1820,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"🤝 *Bonded Companions*: `{companions:,}` pairs\n"
             f"🎁 *Companion Wicks Exchanged*: `{wick_gifts:,}`\n"
         )
+        set_cache("bot_cmd_stats", stats_msg, ttl_seconds=10.0)
         await send_telegram_message(chat_id, stats_msg)
         return
 
@@ -1787,13 +1868,20 @@ async def handle_bot_message(message: Dict[str, Any]):
 
     elif text == "/tiers":
         ladder_text = (
-            f"🏆 *Maha Deepotsav Milestone Rewards:*\n\n"
-            f"• *Tier 0: Diya Spark (0–249 Pts)* — Welcome Badge\n"
-            f"• *Tier 1: Diya Sevak (250 Pts)* — 🪙 Coins\n"
-            f"• *Tier 2: Rangoli Artisan (700 Pts)* — 🔮 Pearl\n"
-            f"• *Tier 3: Spark Master (1,350 Pts)* — 🎟 Ticket\n"
-            f"• *Tier 4: Deep Mahant (2,100 Pts)* — 🐾 Pet\n"
-            f"• *Tier 5: Akhand Sovereign (3,000+ Pts)* — All Rewards: 🪙 Coins + 🔮 Pearl + 🎟 Ticket + 🐾 Pet\n\n"
+            f"🏆 *Maha Deepotsav Milestone Rewards Ladder*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🌟 *Tier 0: Diya Spark (0–499 Pts)* — Welcome Badge\n"
+            f"🪙 *Tier 1: Diya Sevak (500 Pts)* — 🪙 Coins\n"
+            f"🔮 *Tier 2: Rangoli Artisan (1,500 Pts)* — 🔮 Pearl\n"
+            f"🎟 *Tier 3: Spark Master (2,750 Pts)* — 🎟 Ticket\n"
+            f"🐾 *Tier 4: Deep Mahant (4,000 Pts)* — 🐾 Pet\n"
+            f"👑 *Tier 5: Akhand Sovereign (5,000+ Pts)* — 🏆 ALL REWARDS: 🪙 Coins + 🔮 Pearl + 🎟 Ticket + 🐾 Pet!\n\n"
+            f"🔥 *Community 200,000 Sparks (5 Segments):*\n"
+            f"• 40,000 Sparks — Segment 1 Clears 🪙 Coins\n"
+            f"• 80,000 Sparks — Segment 2 Clears 🔮 Pearls\n"
+            f"• 120,000 Sparks — Segment 3 Clears 🎟 Tickets\n"
+            f"• 160,000 Sparks — Segment 4 Clears 🐾 Pets\n"
+            f"• 200,000 Sparks — Segment 5 Clears All Combined Rewards!\n\n"
             f"_Earn 1 to 3 hard sparks per mini-game run to ascend the ladder!_"
         )
         await send_telegram_message(chat_id, ladder_text)
@@ -2046,3 +2134,17 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
     elif action == "cmd_tiers":
         fake_msg = {"chat": {"id": chat_id}, "from": from_user, "text": "/tiers"}
         await handle_bot_message(fake_msg)
+    elif action == "cpa":
+        # parts: ["cpa", <user_id>, <ans_idx>, <token>]
+        if len(parts) >= 4:
+            ans_idx = int(parts[2])
+            tok = parts[3]
+            from app.captcha_engine import verify_captcha_answer
+            ok, msg = verify_captcha_answer(user_id, ans_idx, tok)
+            if ok:
+                await send_telegram_message(chat_id, f"✅ *Sacred Jyoti Check Passed!* 🎉\n\nYou are verified as a human Lampbearer. You can now freely play all mini-games!")
+                await send_bot_log(f"✅ Player `{user_id}` successfully solved Sacred Jyoti Captcha.")
+            else:
+                await send_telegram_message(chat_id, f"❌ *Incorrect Answer!* Try this fresh check:")
+                await send_captcha_prompt(chat_id, user_id, "Anti-Automation Verification Retry:")
+        return

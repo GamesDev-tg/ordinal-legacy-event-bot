@@ -116,11 +116,11 @@ class TestBotAndAPI(unittest.TestCase):
     def test_mydata_and_tier_rewards_ladder(self):
         from app.database import calculate_tier, get_tier_name, get_tier_reward
         self.assertEqual(calculate_tier(0), 0)
-        self.assertEqual(calculate_tier(250), 1)
-        self.assertEqual(calculate_tier(700), 2)
-        self.assertEqual(calculate_tier(1350), 3)
-        self.assertEqual(calculate_tier(2100), 4)
-        self.assertEqual(calculate_tier(3000), 5)
+        self.assertEqual(calculate_tier(500), 1)
+        self.assertEqual(calculate_tier(1500), 2)
+        self.assertEqual(calculate_tier(2750), 3)
+        self.assertEqual(calculate_tier(4000), 4)
+        self.assertEqual(calculate_tier(5000), 5)
 
         self.assertIn("Coins", get_tier_reward(1))
         self.assertIn("Pearl", get_tier_reward(2))

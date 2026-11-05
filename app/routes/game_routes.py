@@ -41,9 +41,35 @@ def api_game_start(
     authorization: Optional[str] = Header(None),
     x_telegram_id: Optional[str] = Header(None)
 ):
+    from app.captcha_engine import is_user_captcha_locked, get_or_create_captcha
     user_id = extract_telegram_id(authorization, x_telegram_id)
+    if is_user_captcha_locked(user_id):
+        ch = get_or_create_captcha(user_id)
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "captcha_required": True,
+                "message": "Sacred Jyoti Verification Required: Verify human presence before continuing.",
+                "question": ch["question"],
+                "options": ch["options"],
+                "token": ch["token"]
+            }
+        )
     res = start_game_session(user_id, req.game_type)
     return GameStartResponse(**res)
+
+@router.post("/captcha_verify")
+def api_captcha_verify(
+    req: dict,
+    authorization: Optional[str] = Header(None),
+    x_telegram_id: Optional[str] = Header(None)
+):
+    from app.captcha_engine import verify_captcha_answer
+    user_id = extract_telegram_id(authorization, x_telegram_id)
+    answer_idx = int(req.get("answer_index", -1))
+    token = req.get("token")
+    ok, msg = verify_captcha_answer(user_id, answer_idx, token)
+    return {"success": ok, "message": msg}
 
 @router.post("/finish", response_model=GameFinishResponse)
 def api_game_finish(
@@ -53,9 +79,15 @@ def api_game_finish(
 ):
     from app.bot import send_bot_log_sync
     from app.cache import delete_cache
+    from app.captcha_engine import record_game_play_and_check_captcha
     user_id = extract_telegram_id(authorization, x_telegram_id)
     res = finish_game_session(user_id, req.session_id, req.nonce, req.raw_score, req.duration_ms)
     delete_cache("api_community_state")
+    delete_cache("bot_cmd_top")
+    delete_cache("bot_cmd_stats")
+    delete_cache("bot_cmd_gharanas")
+    delete_cache("bot_cmd_widget")
+    record_game_play_and_check_captcha(user_id)
     send_bot_log_sync(f"🎮 Player `{user_id}` completed mini-game run (+{res['points_awarded']} Sparks). Total: *{res['new_user_total']} Pts* | Community: *{res['community_total']:,} Sparks*")
     if res.get("tier_unlocked"):
         send_bot_log_sync(f"🏆 *TIER ASCENSION*: Player `{user_id}` unlocked *{res['tier_name']}* (Tier {res['new_tier_level']})!")
