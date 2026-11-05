@@ -48,9 +48,23 @@ class PostgresCursorWrapper:
     def close(self):
         self._cur.close()
 
+_pg_pool = None
+
+def get_pg_pool():
+    global _pg_pool
+    if _pg_pool is None or getattr(_pg_pool, "closed", True):
+        import psycopg2.pool
+        db_url = settings.DATABASE_PATH
+        kwargs = {}
+        if "sslmode" not in db_url and ("supabase.co" in db_url or "pooler.supabase.com" in db_url):
+            kwargs["sslmode"] = "require"
+        _pg_pool = psycopg2.pool.ThreadedConnectionPool(1, 20, db_url, **kwargs)
+    return _pg_pool
+
 class PostgresConnectionWrapper:
-    def __init__(self, raw_conn):
+    def __init__(self, raw_conn, from_pool: bool = False):
         self._conn = raw_conn
+        self._from_pool = from_pool
 
     def execute(self, sql: str, params=None):
         cur = self.cursor()
@@ -82,6 +96,14 @@ class PostgresConnectionWrapper:
             pass
 
     def close(self):
+        if self._from_pool:
+            try:
+                pool = get_pg_pool()
+                if pool and not getattr(pool, "closed", True):
+                    pool.putconn(self._conn)
+                    return
+            except Exception:
+                pass
         try:
             self._conn.close()
         except Exception:
@@ -101,13 +123,22 @@ def get_db_connection():
         import psycopg2
         import psycopg2.extras
         db_url = settings.DATABASE_PATH
-        # Ensure sslmode=require for cloud providers like Supabase if not specified
-        if "sslmode" not in db_url and ("supabase.co" in db_url or "pooler.supabase.com" in db_url):
-            raw_conn = psycopg2.connect(db_url, sslmode="require")
-        else:
-            raw_conn = psycopg2.connect(db_url)
-        raw_conn.autocommit = True
-        return PostgresConnectionWrapper(raw_conn)
+        try:
+            pool = get_pg_pool()
+            raw_conn = pool.getconn()
+            # If connection was dropped by server, reset or fetch fresh
+            if getattr(raw_conn, "closed", 0) != 0:
+                raw_conn = pool.getconn()
+            raw_conn.autocommit = True
+            return PostgresConnectionWrapper(raw_conn, from_pool=True)
+        except Exception:
+            # Fallback to direct connection if pool is busy
+            kwargs = {}
+            if "sslmode" not in db_url and ("supabase.co" in db_url or "pooler.supabase.com" in db_url):
+                kwargs["sslmode"] = "require"
+            raw_conn = psycopg2.connect(db_url, **kwargs)
+            raw_conn.autocommit = True
+            return PostgresConnectionWrapper(raw_conn, from_pool=False)
     else:
         conn = sqlite3.connect(settings.DATABASE_PATH)
         conn.row_factory = sqlite3.Row
@@ -186,6 +217,13 @@ def init_postgres_db():
 
         ALTER TABLE users ADD COLUMN IF NOT EXISTS shubh_refill_date TEXT;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS joined_groups INTEGER DEFAULT 0;
+
+        CREATE INDEX IF NOT EXISTS idx_users_points ON users (points_total DESC);
+        CREATE INDEX IF NOT EXISTS idx_users_tier ON users (tier_level);
+        CREATE INDEX IF NOT EXISTS idx_users_gharana ON users (gharana_id);
+        CREATE INDEX IF NOT EXISTS idx_referrals_referrer ON referrals (referrer_id);
+        CREATE INDEX IF NOT EXISTS idx_referrals_referred ON referrals (referred_id);
+        CREATE INDEX IF NOT EXISTS idx_game_sessions_tgid ON game_sessions (telegram_id);
         ''')
         
         row = conn.execute("SELECT COUNT(*) as count FROM community_state").fetchone()

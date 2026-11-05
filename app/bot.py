@@ -799,10 +799,12 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"• `/resetwicks <id>` — Refill user to 10/10 wicks\n"
             f"• `/setgharana <id> <1-4>` — Transfer Gharana (1=Surya, 2=Agni, 3=Chandra, 4=Vayu)\n"
             f"• `/bypassverify <id>` — Manually grant group verification\n"
-            f"• `/unverify <id>` — Reset verification status to unverified\n\n"
+            f"• `/unverify <id>` — Reset verification status to unverified\n"
+            f"• `/deleteuser <id>` — Delete unwanted/test user record\n\n"
             f"📢 *Broadcast & Milestones:*\n"
             f"• `/broadcast <msg>` — Send announcement to all players\n"
-            f"• `/setsparks <num>` — Set Akhand Jyoti community sparks\n\n"
+            f"• `/setsparks <num>` — Set Akhand Jyoti community sparks\n"
+            f"• `/settarget <num>` — Change community target goal (e.g. 50k, 100k)\n\n"
             f"🛡️ *Logs & Data Recovery Groups:*\n"
             f"• `/setlogschat <chat_id>` — Set Bot Logs Telegram Group\n"
             f"• `/setbackupchat <chat_id>` — Set Bot Recovery Telegram Group\n"
@@ -1060,6 +1062,32 @@ async def handle_bot_message(message: Dict[str, Any]):
         conn.close()
         await send_telegram_message(chat_id, f"🔥 *Akhand Diya Sparks Updated*: `{new_sparks:,}` Sparks ({stage_name}).")
         await send_bot_log(f"🔥 Admin `{user_id}` set community sparks to `{new_sparks:,}`.")
+        return
+
+    elif text.startswith("/settarget"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+        parts = text.split()
+        if len(parts) != 2 or not parts[1].isdigit() or int(parts[1]) <= 0:
+            await send_telegram_message(chat_id, "Usage: `/settarget <target_sparks>`\nExample: `/settarget 100000` or `/settarget 50000`")
+            return
+        new_target = int(parts[1])
+        conn = get_db_connection()
+        with conn:
+            conn.execute("UPDATE community_state SET target_sparks = ? WHERE id = 1", (new_target,))
+            row = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
+            cur_sparks = row["total_sparks"] if row else 0
+        conn.close()
+        pct = min(100.0, (cur_sparks / new_target) * 100)
+        await send_telegram_message(
+            chat_id,
+            f"🎯 *Community Akhand Jyoti Target Updated!*\n\n"
+            f"• New Target: *{new_target:,} Sparks*\n"
+            f"• Current Progress: *{cur_sparks:,} / {new_target:,} Sparks* ({pct:.1f}%)\n\n"
+            f"✨ All mini-app progress tracks and status commands are now synced to this target!"
+        )
+        await send_bot_log(f"🎯 Sudo `{user_id}` updated community target to `{new_target:,}` Sparks.")
         return
 
     elif text.startswith("/unverify"):
