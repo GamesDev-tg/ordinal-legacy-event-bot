@@ -1,0 +1,76 @@
+import os
+import json
+import time
+import tempfile
+import threading
+from typing import Any, Optional, Dict
+
+CACHE_FILE_PATH = os.path.join(tempfile.gettempdir(), "ordinal_event_cache.json")
+_MEMORY_CACHE: Dict[str, Dict[str, Any]] = {}
+_CACHE_LOCK = threading.Lock()
+
+# Load any existing cache from temp file on startup
+try:
+    if os.path.exists(CACHE_FILE_PATH):
+        with open(CACHE_FILE_PATH, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+            now = time.time()
+            for k, v in loaded.items():
+                if isinstance(v, dict) and v.get("expires_at", 0) > now:
+                    _MEMORY_CACHE[k] = v
+except Exception:
+    pass
+
+def _sync_to_disk():
+    try:
+        now = time.time()
+        with _CACHE_LOCK:
+            data = {k: v for k, v in _MEMORY_CACHE.items() if isinstance(v, dict) and v.get("expires_at", 0) > now}
+        temp_file = CACHE_FILE_PATH + f".tmp_{os.getpid()}"
+        with open(temp_file, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.replace(temp_file, CACHE_FILE_PATH)
+    except Exception:
+        pass
+
+def get_cache(key: str, default: Any = None) -> Any:
+    """
+    Retrieves a cached value from high-speed in-memory cache or temp cache file.
+    Returns default if expired or not found.
+    """
+    now = time.time()
+    with _CACHE_LOCK:
+        entry = _MEMORY_CACHE.get(key)
+        if entry and isinstance(entry, dict) and entry.get("expires_at", 0) > now:
+            return entry.get("value")
+    return default
+
+def set_cache(key: str, value: Any, ttl_seconds: float = 30.0):
+    """
+    Saves a value in both fast in-memory cache and local temp cache file.
+    """
+    now = time.time()
+    entry = {"value": value, "expires_at": now + ttl_seconds}
+    with _CACHE_LOCK:
+        _MEMORY_CACHE[key] = entry
+    _sync_to_disk()
+
+def delete_cache(key: str):
+    """
+    Invalidates a specific cached key from memory and temp cache file.
+    """
+    with _CACHE_LOCK:
+        _MEMORY_CACHE.pop(key, None)
+    _sync_to_disk()
+
+def clear_all_cache():
+    """
+    Clears all cached entries from memory and removes the temp cache file.
+    """
+    with _CACHE_LOCK:
+        _MEMORY_CACHE.clear()
+    try:
+        if os.path.exists(CACHE_FILE_PATH):
+            os.remove(CACHE_FILE_PATH)
+    except Exception:
+        pass

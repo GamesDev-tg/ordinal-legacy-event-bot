@@ -162,5 +162,189 @@ class TestBotAndAPI(unittest.TestCase):
         parsed_sql = _parse_timestamp(sql_str, now)
         self.assertEqual(parsed_sql.year, 2026)
 
+def run_coro_sync(coro):
+    while True:
+        try:
+            coro.send(None)
+        except StopIteration as e:
+            return e.value
+
+class TestBotAsync(unittest.TestCase):
+    def setUp(self):
+        self.test_db = os.path.join(tempfile.gettempdir(), f"test_bot_async_{random.randint(10000, 99999)}.db")
+        settings.DATABASE_PATH = self.test_db
+        settings.ADMIN_IDS = [999001]
+        settings.BOT_TOKEN = "mock_bot_token_for_dev"
+        from app.cache import clear_all_cache
+        clear_all_cache()
+        init_db()
+
+    def tearDown(self):
+        from app.cache import clear_all_cache
+        clear_all_cache()
+        if os.path.exists(self.test_db):
+            try:
+                os.remove(self.test_db)
+            except Exception:
+                pass
+
+    def test_group_chatter_silence(self):
+        async def _run():
+            from unittest.mock import patch, AsyncMock
+            group_msg = {
+                "chat": {"id": -100987654321, "type": "supergroup"},
+                "from": {"id": 111222, "username": "player1"},
+                "text": "Hello everyone, good morning!"
+            }
+            with patch("app.bot.send_telegram_message", new_callable=AsyncMock) as mock_send:
+                await handle_bot_message(group_msg)
+                mock_send.assert_not_called()
+        run_coro_sync(_run())
+
+    def test_non_admin_admins_denied(self):
+        async def _run():
+            from unittest.mock import patch, AsyncMock
+            non_admin_admins = {
+                "chat": {"id": 111222, "type": "private"},
+                "from": {"id": 111222, "username": "player1"},
+                "text": "/admins"
+            }
+            with patch("app.bot.send_telegram_message", new_callable=AsyncMock) as mock_send:
+                await handle_bot_message(non_admin_admins)
+                mock_send.assert_called_once()
+                args, _ = mock_send.call_args
+                self.assertEqual(args[0], 111222)
+                self.assertIn("Access Denied", args[1])
+        run_coro_sync(_run())
+
+    def test_non_admin_adminhelp_denied(self):
+        async def _run():
+            from unittest.mock import patch, AsyncMock
+            non_admin_help = {
+                "chat": {"id": 111222, "type": "private"},
+                "from": {"id": 111222, "username": "player1"},
+                "text": "/adminhelp"
+            }
+            with patch("app.bot.send_telegram_message", new_callable=AsyncMock) as mock_send:
+                await handle_bot_message(non_admin_help)
+                mock_send.assert_called_once()
+                args, _ = mock_send.call_args
+                self.assertEqual(args[0], 111222)
+                self.assertIn("Access Denied", args[1])
+        run_coro_sync(_run())
+
+    def test_admin_adminhelp_in_group_redirects(self):
+        async def _run():
+            from unittest.mock import patch, AsyncMock
+            admin_id = 999001
+            admin_group_call = {
+                "chat": {"id": -100987654321, "type": "supergroup"},
+                "from": {"id": admin_id, "username": "sudo_boss"},
+                "text": "/adminhelp"
+            }
+            with patch("app.bot.send_telegram_message", new_callable=AsyncMock) as mock_send:
+                await handle_bot_message(admin_group_call)
+                mock_send.assert_called_once()
+                args, _ = mock_send.call_args
+                self.assertEqual(args[0], -100987654321)
+                self.assertIn("in private chat", args[1])
+                self.assertNotIn("ADMIN COMMAND CENTER", args[1])
+        run_coro_sync(_run())
+
+    def test_admin_adminhelp_in_dm(self):
+        async def _run():
+            from unittest.mock import patch, AsyncMock
+            admin_id = 999001
+            admin_dm_call = {
+                "chat": {"id": admin_id, "type": "private"},
+                "from": {"id": admin_id, "username": "sudo_boss"},
+                "text": "/adminhelp"
+            }
+            with patch("app.bot.send_telegram_message", new_callable=AsyncMock) as mock_send:
+                await handle_bot_message(admin_dm_call)
+                mock_send.assert_called_once()
+                args, _ = mock_send.call_args
+                self.assertEqual(args[0], admin_id)
+                self.assertIn("ADMIN COMMAND CENTER", args[1])
+        run_coro_sync(_run())
+
+    def test_group_command_with_at_suffix(self):
+        async def _run():
+            from unittest.mock import patch, AsyncMock
+            admin_id = 999001
+            settings.BOT_USERNAME = "OrdinalLegacyEventBot"
+            conn = get_db_connection()
+            conn.execute("UPDATE users SET joined_groups = 1 WHERE telegram_id = ?", (admin_id,))
+            conn.commit()
+            conn.close()
+            
+            bot_suffix_call = {
+                "chat": {"id": -100987654321, "type": "supergroup"},
+                "from": {"id": admin_id, "username": "sudo_boss"},
+                "text": "/status@OrdinalLegacyEventBot"
+            }
+            with patch("app.bot.send_telegram_message", new_callable=AsyncMock) as mock_send:
+                await handle_bot_message(bot_suffix_call)
+                mock_send.assert_called_once()
+                args, _ = mock_send.call_args
+                self.assertEqual(args[0], -100987654321)
+                self.assertIn("Status Report", args[1])
+        run_coro_sync(_run())
+
+    def test_dm_only_commands_in_groups(self):
+        async def _run():
+            from unittest.mock import patch, AsyncMock
+            group_game_call = {
+                "chat": {"id": -100987654321, "type": "supergroup"},
+                "from": {"id": 111222, "username": "player1"},
+                "text": "/chakri"
+            }
+            with patch("app.bot.send_telegram_message", new_callable=AsyncMock) as mock_send:
+                await handle_bot_message(group_game_call)
+                mock_send.assert_called_once()
+                args, _ = mock_send.call_args
+                self.assertEqual(args[0], -100987654321)
+                self.assertIn("in private chat", args[1])
+                self.assertNotIn("CHAKRI WHIRL: SPARK HARVEST", args[1])
+        run_coro_sync(_run())
+
+    def test_button_click_guard_other_user(self):
+        async def _run():
+            from unittest.mock import patch, AsyncMock
+            other_user_click = {
+                "id": "cb_query_12345",
+                "from": {"id": 888999, "username": "other_player"},
+                "message": {"chat": {"id": -100987654321, "type": "supergroup"}},
+                "data": "play_chakri:111222"
+            }
+            with patch("app.bot.answer_telegram_callback_query", new_callable=AsyncMock) as mock_ans, \
+                 patch("app.bot.run_in_chat_chakri", new_callable=AsyncMock) as mock_chakri:
+                await handle_bot_callback_query(other_user_click)
+                mock_ans.assert_called_once()
+                ans_args, ans_kwargs = mock_ans.call_args
+                self.assertEqual(ans_args[0], "cb_query_12345")
+                self.assertIn("belongs to another player", ans_kwargs.get("text", ""))
+                self.assertTrue(ans_kwargs.get("show_alert", False))
+                mock_chakri.assert_not_called()
+        run_coro_sync(_run())
+
+    def test_button_click_anti_spam(self):
+        async def _run():
+            from unittest.mock import patch, AsyncMock
+            owner_click = {
+                "id": "cb_query_99901",
+                "from": {"id": 777666, "username": "speedy"},
+                "message": {"chat": {"id": 777666, "type": "private"}},
+                "data": "cmd_status:777666"
+            }
+            with patch("app.bot.answer_telegram_callback_query", new_callable=AsyncMock) as mock_ans, \
+                 patch("app.bot.handle_bot_message", new_callable=AsyncMock) as mock_msg:
+                await handle_bot_callback_query(owner_click)
+                owner_click["id"] = "cb_query_99902"
+                await handle_bot_callback_query(owner_click)
+                last_call = mock_ans.call_args
+                self.assertIn("wait a moment", last_call[1].get("text", ""))
+        run_coro_sync(_run())
+
 if __name__ == "__main__":
     unittest.main()

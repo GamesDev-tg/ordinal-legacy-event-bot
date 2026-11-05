@@ -462,16 +462,25 @@ def reset_all_shubh_refills() -> dict:
     return {"success": True, "users_reset": user_count}
 
 def get_system_setting(key: str, default: Optional[str] = None) -> Optional[str]:
+    from app.cache import get_cache, set_cache
+    cached = get_cache(f"setting_{key}")
+    if cached is not None:
+        return cached
+
     conn = get_db_connection()
     try:
         row = conn.execute("SELECT value FROM system_settings WHERE key = ?", (key,)).fetchone()
-        return row["value"] if row else default
+        val = row["value"] if row else default
+        if val is not None:
+            set_cache(f"setting_{key}", val, ttl_seconds=60.0)
+        return val
     except Exception:
         return default
     finally:
         conn.close()
 
 def set_system_setting(key: str, value: str):
+    from app.cache import delete_cache
     conn = get_db_connection()
     try:
         with conn:
@@ -480,6 +489,8 @@ def set_system_setting(key: str, value: str):
                 conn.execute("UPDATE system_settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?", (value, key))
             else:
                 conn.execute("INSERT INTO system_settings (key, value) VALUES (?, ?)", (key, value))
+        delete_cache(f"setting_{key}")
+        delete_cache("all_admin_ids")
     finally:
         conn.close()
 
@@ -496,6 +507,11 @@ def get_effective_backup_chat_id() -> Optional[int]:
     return None
 
 def get_all_admin_ids() -> List[int]:
+    from app.cache import get_cache, set_cache
+    cached = get_cache("all_admin_ids")
+    if cached is not None:
+        return cached
+
     base_admins = set(settings.ADMIN_IDS)
     extra_str = get_system_setting("extra_admin_ids", "")
     if extra_str:
@@ -503,18 +519,23 @@ def get_all_admin_ids() -> List[int]:
             x = x.strip()
             if x.isdigit():
                 base_admins.add(int(x))
-    return sorted(list(base_admins))
+    res = sorted(list(base_admins))
+    set_cache("all_admin_ids", res, ttl_seconds=60.0)
+    return res
 
 def add_admin_id(new_admin_id: int) -> bool:
+    from app.cache import delete_cache
     current = get_all_admin_ids()
     if new_admin_id in current:
         return False
     current.append(new_admin_id)
     extras = [str(i) for i in current if i not in settings.ADMIN_IDS]
     set_system_setting("extra_admin_ids", ",".join(extras))
+    delete_cache("all_admin_ids")
     return True
 
 def remove_admin_id(admin_id: int) -> bool:
+    from app.cache import delete_cache
     if admin_id in settings.ADMIN_IDS:
         return False
     current = get_all_admin_ids()
@@ -522,6 +543,7 @@ def remove_admin_id(admin_id: int) -> bool:
         current.remove(admin_id)
         extras = [str(i) for i in current if i not in settings.ADMIN_IDS]
         set_system_setting("extra_admin_ids", ",".join(extras))
+        delete_cache("all_admin_ids")
         return True
     return False
 

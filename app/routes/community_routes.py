@@ -2,11 +2,20 @@ from fastapi import APIRouter
 from app.models import CommunityStateResponse
 from app.database import get_db_connection, get_stage_info
 from app.config import settings
+from app.cache import get_cache, set_cache
 
 router = APIRouter(prefix="/api/community", tags=["Community State"])
 
 @router.get("/state", response_model=CommunityStateResponse)
 def api_community_state():
+    # High-speed temp cache check (sub-millisecond response)
+    cached = get_cache("api_community_state")
+    if cached is not None:
+        try:
+            return CommunityStateResponse(**cached)
+        except Exception:
+            pass
+
     conn = get_db_connection()
     comm = conn.execute("SELECT total_sparks, target_sparks, current_stage FROM community_state WHERE id = 1").fetchone()
     total_sparks = comm["total_sparks"]
@@ -39,7 +48,7 @@ def api_community_state():
         })
     conn.close()
     
-    return CommunityStateResponse(
+    resp = CommunityStateResponse(
         total_sparks=total_sparks,
         target_sparks=target_sparks,
         progress_percentage=pct,
@@ -48,3 +57,10 @@ def api_community_state():
         active_players_count=active_count,
         top_gharanas=top_gharanas
     )
+    # Cache for 5 seconds in temp cache to support hundreds of concurrent players
+    try:
+        set_cache("api_community_state", resp.model_dump() if hasattr(resp, "model_dump") else resp.dict(), ttl_seconds=5.0)
+    except Exception:
+        pass
+
+    return resp

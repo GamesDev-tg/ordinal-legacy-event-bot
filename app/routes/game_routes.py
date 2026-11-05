@@ -52,8 +52,10 @@ def api_game_finish(
     x_telegram_id: Optional[str] = Header(None)
 ):
     from app.bot import send_bot_log_sync
+    from app.cache import delete_cache
     user_id = extract_telegram_id(authorization, x_telegram_id)
     res = finish_game_session(user_id, req.session_id, req.nonce, req.raw_score, req.duration_ms)
+    delete_cache("api_community_state")
     send_bot_log_sync(f"🎮 Player `{user_id}` completed mini-game run (+{res['points_awarded']} Sparks). Total: *{res['new_user_total']} Pts* | Community: *{res['community_total']:,} Sparks*")
     if res.get("tier_unlocked"):
         send_bot_log_sync(f"🏆 *TIER ASCENSION*: Player `{user_id}` unlocked *{res['tier_name']}* (Tier {res['new_tier_level']})!")

@@ -1,6 +1,7 @@
 import random
 import json
 import datetime
+import time
 import secrets
 import httpx
 from typing import Dict, Any, Optional
@@ -20,7 +21,13 @@ def is_admin(user_id: int) -> bool:
     return user_id in get_all_admin_ids()
 
 def send_bot_log_sync(text: str):
-    print(f"[BOT LOG]: {text}")
+    try:
+        print(f"[BOT LOG]: {text}")
+    except Exception:
+        try:
+            print(f"[BOT LOG]: {text.encode('ascii', 'replace').decode('ascii')}")
+        except Exception:
+            pass
     logs_chat = get_effective_logs_chat_id()
     if logs_chat and settings.BOT_TOKEN != "mock_bot_token_for_dev":
         try:
@@ -147,6 +154,26 @@ async def send_telegram_document(chat_id: int, file_bytes: bytes, filename: str,
         print(f"Failed to send telegram document: {e}")
         return False
 
+# In-memory anti-spam rate limiter for button clicks
+_BUTTON_CLICK_COOLDOWN: Dict[int, float] = {}
+
+async def answer_telegram_callback_query(callback_query_id: str, text: Optional[str] = None, show_alert: bool = False) -> bool:
+    """Answers a Telegram callback query to clear button loading spinners and optionally show alert."""
+    if settings.BOT_TOKEN == "mock_bot_token_for_dev" or not callback_query_id:
+        return True
+    url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/answerCallbackQuery"
+    payload = {"callback_query_id": callback_query_id}
+    if text:
+        payload["text"] = text
+        payload["show_alert"] = show_alert
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(url, json=payload)
+            return resp.status_code == 200
+    except Exception as e:
+        print(f"Failed to answer telegram callback query: {e}")
+        return False
+
 async def sync_telegram_bot_commands() -> bool:
     """
     Registers all player commands with Telegram BotFather API using setMyCommands.
@@ -156,21 +183,20 @@ async def sync_telegram_bot_commands() -> bool:
         return True
     
     commands = [
-        {"command": "start", "description": "Launch festival arena & start event"},
-        {"command": "play", "description": "Choose & play mini-games (Chat/App)"},
+        {"command": "start", "description": "Launch festival arena and start event"},
+        {"command": "play", "description": "Choose and play mini-games (Chat/App)"},
         {"command": "chakri", "description": "Spin Chakri Whirl in chat (1-3 pts)"},
         {"command": "rangoli", "description": "Draw Rangoli pattern in chat (1-3 pts)"},
         {"command": "mithai", "description": "Feast on Mithai in chat (1-3 pts)"},
-        {"command": "mydata", "description": "View your complete stats & tier rewards"},
+        {"command": "mydata", "description": "View your stats and tier rewards"},
         {"command": "status", "description": "View community Akhand Diya sparks"},
-        {"command": "shubh", "description": "Claim daily Shubh Muhurat (+5 wicks & pts)"},
+        {"command": "shubh", "description": "Claim daily Shubh refill (+5 wicks & pts)"},
         {"command": "shagun", "description": "Get companion referral invite link"},
-        {"command": "house", "description": "View your Gharana standing & rank"},
+        {"command": "house", "description": "View your Gharana standing and rank"},
         {"command": "top", "description": "View top 10 lampbearers on leaderboard"},
         {"command": "gharanas", "description": "View all 4 Gharana house standings"},
-        {"command": "tiers", "description": "View milestone ladder & rewards (Coins, Pearl...)"},
-        {"command": "admins", "description": "View authorized event administrators"},
-        {"command": "help", "description": "Show festival guide & all commands"}
+        {"command": "tiers", "description": "View milestone ladder and rewards"},
+        {"command": "help", "description": "Show festival guide and commands"}
     ]
     url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/setMyCommands"
     try:
@@ -312,6 +338,9 @@ def execute_in_chat_game(user_id: int, game_type: int) -> dict:
             comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
             comm_total = comm["total_sparks"] if comm else 0
             new_wicks = u["diya_wicks"] - 1
+
+        from app.cache import delete_cache
+        delete_cache("api_community_state")
         
         return {
             "success": True,
@@ -335,7 +364,7 @@ async def run_in_chat_chakri(chat_id: int, user_id: int):
             await send_telegram_message(
                 chat_id,
                 f"⚠️ *{res['error']}*",
-                {"inline_keyboard": [[{"text": "✨ Claim Shubh Refill (+5 Wicks & Pts)", "callback_data": "cmd_shubh"}]]}
+                {"inline_keyboard": [[{"text": "Claim Shubh Refill (+5 Wicks & Pts)", "callback_data": f"cmd_shubh:{user_id}"}]]}
             )
             return
         score = res["score"]
@@ -352,11 +381,11 @@ async def run_in_chat_chakri(chat_id: int, user_id: int):
         )
         kb = {
             "inline_keyboard": [
-                [{"text": "🌀 Spin Chakri Again", "callback_data": "play_chakri"},
-                 {"text": "🌸 Draw Rangoli", "callback_data": "play_rangoli"}],
-                [{"text": "🍬 Taste Mithai", "callback_data": "play_mithai"},
-                 {"text": "🪔 Mini-App Arena", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
-                [{"text": "📊 View My Status", "callback_data": "cmd_status"}]
+                [{"text": "Spin Chakri Again", "callback_data": f"play_chakri:{user_id}"},
+                 {"text": "Draw Rangoli", "callback_data": f"play_rangoli:{user_id}"}],
+                [{"text": "Taste Mithai", "callback_data": f"play_mithai:{user_id}"},
+                 {"text": "Mini-App Arena", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
+                [{"text": "View My Status", "callback_data": f"cmd_status:{user_id}"}]
             ]
         }
         await send_telegram_message(chat_id, msg, kb)
@@ -371,7 +400,7 @@ async def run_in_chat_rangoli(chat_id: int, user_id: int):
             await send_telegram_message(
                 chat_id,
                 f"⚠️ *{res['error']}*",
-                {"inline_keyboard": [[{"text": "✨ Claim Shubh Refill (+5 Wicks & Pts)", "callback_data": "cmd_shubh"}]]}
+                {"inline_keyboard": [[{"text": "Claim Shubh Refill (+5 Wicks & Pts)", "callback_data": f"cmd_shubh:{user_id}"}]]}
             )
             return
         score = res["score"]
@@ -386,11 +415,11 @@ async def run_in_chat_rangoli(chat_id: int, user_id: int):
         )
         kb = {
             "inline_keyboard": [
-                [{"text": "🌸 Draw Rangoli Again", "callback_data": "play_rangoli"},
-                 {"text": "🌀 Spin Chakri", "callback_data": "play_chakri"}],
-                [{"text": "🍬 Taste Mithai", "callback_data": "play_mithai"},
-                 {"text": "🪔 Mini-App Arena", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
-                [{"text": "📊 View My Status", "callback_data": "cmd_status"}]
+                [{"text": "Draw Rangoli Again", "callback_data": f"play_rangoli:{user_id}"},
+                 {"text": "Spin Chakri", "callback_data": f"play_chakri:{user_id}"}],
+                [{"text": "Taste Mithai", "callback_data": f"play_mithai:{user_id}"},
+                 {"text": "Mini-App Arena", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
+                [{"text": "View My Status", "callback_data": f"cmd_status:{user_id}"}]
             ]
         }
         await send_telegram_message(chat_id, msg, kb)
@@ -405,7 +434,7 @@ async def run_in_chat_mithai(chat_id: int, user_id: int):
             await send_telegram_message(
                 chat_id,
                 f"⚠️ *{res['error']}*",
-                {"inline_keyboard": [[{"text": "✨ Claim Shubh Refill (+5 Wicks & Pts)", "callback_data": "cmd_shubh"}]]}
+                {"inline_keyboard": [[{"text": "Claim Shubh Refill (+5 Wicks & Pts)", "callback_data": f"cmd_shubh:{user_id}"}]]}
             )
             return
         score = res["score"]
@@ -420,11 +449,11 @@ async def run_in_chat_mithai(chat_id: int, user_id: int):
         )
         kb = {
             "inline_keyboard": [
-                [{"text": "🍬 Feast Mithai Again", "callback_data": "play_mithai"},
-                 {"text": "🌀 Spin Chakri", "callback_data": "play_chakri"}],
-                [{"text": "🌸 Draw Rangoli", "callback_data": "play_rangoli"},
-                 {"text": "🪔 Mini-App Arena", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
-                [{"text": "📊 View My Status", "callback_data": "cmd_status"}]
+                [{"text": "Feast Mithai Again", "callback_data": f"play_mithai:{user_id}"},
+                 {"text": "Spin Chakri", "callback_data": f"play_chakri:{user_id}"}],
+                [{"text": "Draw Rangoli", "callback_data": f"play_rangoli:{user_id}"},
+                 {"text": "Mini-App Arena", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
+                [{"text": "View My Status", "callback_data": f"cmd_status:{user_id}"}]
             ]
         }
         await send_telegram_message(chat_id, msg, kb)
@@ -435,12 +464,56 @@ async def run_in_chat_mithai(chat_id: int, user_id: int):
 async def handle_bot_message(message: Dict[str, Any]):
     chat = message.get("chat", {})
     chat_id = chat.get("id")
+    chat_type = chat.get("type", "private")
+    is_private = (chat_type == "private")
     from_user = message.get("from", {})
     user_id = from_user.get("id")
     text = message.get("text", "").strip()
+    doc = message.get("document")
     
     if not chat_id or not user_id:
         return
+
+    # Ignore service messages, chat member joins/leaves, or empty text without document
+    if not text and not doc:
+        return
+
+    # Ignore service notifications when bot or user joins/leaves groups
+    if (message.get("new_chat_members") or message.get("new_chat_participant") or 
+        message.get("left_chat_member") or message.get("left_chat_participant") or 
+        message.get("group_chat_created") or message.get("supergroup_chat_created") or
+        message.get("channel_chat_created") or message.get("pinned_message")):
+        return
+
+    # In groups/supergroups/channels: NEVER reply to regular chat chatter! Only explicit slash commands.
+    if not is_private and not text.startswith("/"):
+        return
+
+    # Normalize group commands with bot username suffix (e.g. /play@OrdinalLegacyEventBot -> /play)
+    if text.startswith("/"):
+        parts = text.split(maxsplit=1)
+        cmd_part = parts[0]
+        rest_part = f" {parts[1]}" if len(parts) > 1 else ""
+        if "@" in cmd_part:
+            cmd_name, at_target = cmd_part.split("@", 1)
+            bot_user = (settings.BOT_USERNAME or "").lower()
+            if bot_user and at_target.lower() != bot_user:
+                # Command targeted at another bot in the group; ignore silently
+                return
+            text = f"{cmd_name}{rest_part}".strip()
+
+    # Guard: in groups, only public community readouts are allowed (/top, /status, /gharanas, /tiers, /stats).
+    # All personal, interactive, game, help, and admin commands are directed to DM to avoid spamming groups.
+    if not is_private and text.startswith("/"):
+        cmd_head = text.split()[0].lower()
+        ALLOWED_GROUP_COMMANDS = {"/top", "/topusers", "/status", "/gharanas", "/leaderboard", "/tiers", "/stats"}
+        if cmd_head not in ALLOWED_GROUP_COMMANDS:
+            bot_user = settings.BOT_USERNAME or "OrdinalLegacyEventBot"
+            await send_telegram_message(
+                chat_id,
+                f"👉 Please use `{cmd_head}` in private chat with [@{bot_user}](https://t.me/{bot_user}) to avoid group spam."
+            )
+            return
     
     username = from_user.get("username", "")
     first_name = from_user.get("first_name", "Lampbearer")
@@ -457,7 +530,6 @@ async def handle_bot_message(message: Dict[str, Any]):
         print(f"[AUTO BACKUP ERROR]: {e}")
 
     # 2. Check for document upload with /restore
-    doc = message.get("document")
     caption = message.get("caption", "").strip()
     if doc and caption.startswith("/restore"):
         if not is_admin(user_id):
@@ -504,29 +576,34 @@ async def handle_bot_message(message: Dict[str, Any]):
 
     # Public commands that anyone can run even before joining groups:
     allowed_unverified = (
-        "/verify", "verify", "/admins", "/findadmins", "/help", "/tiers",
-        "/status", "/mydata", "/profile", "/data"
+        "/verify", "verify", "/help", "/commands", "/menu", "/tiers",
+        "/status", "/mydata", "/profile", "/data", "/top", "/topusers",
+        "/gharanas", "/leaderboard", "/stats"
     )
 
     # Mandatory 3 Group Links Gate before entering the game (Applies to all users unless admin or running info commands)
     if not user.get("joined_groups", 0) and not is_admin(user_id) and text not in allowed_unverified and not text.startswith(("/bypassverify", "/admin")):
-        gate_text = (
-            f"🪔 *Welcome to Ordinal Legacy Maha Deepotsav, {first_name}!* 🪔\n\n"
-            f"Before entering the sacred arena, you must join our 3 official community groups:\n\n"
-            f"1️⃣ {settings.GROUP_NAME_1}\n"
-            f"2️⃣ {settings.GROUP_NAME_2}\n"
-            f"3️⃣ {settings.GROUP_NAME_3}\n\n"
-            f"👉 Tap each button below to join, then tap *Verify & Enter Arena*!"
-        )
-        gate_keyboard = {
-            "inline_keyboard": [
-                [{"text": f"1️⃣ Join {settings.GROUP_NAME_1}", "url": settings.GROUP_LINK_1}],
-                [{"text": f"2️⃣ Join {settings.GROUP_NAME_2}", "url": settings.GROUP_LINK_2}],
-                [{"text": f"3️⃣ Join {settings.GROUP_NAME_3}", "url": settings.GROUP_LINK_3}],
-                [{"text": "✅ Verify & Enter Arena", "callback_data": "verify_groups"}]
-            ]
-        }
-        await send_telegram_message(chat_id, gate_text, gate_keyboard)
+        if is_private:
+            gate_text = (
+                f"🪔 *Welcome to Ordinal Legacy Maha Deepotsav, {first_name}!* 🪔\n\n"
+                f"Before entering the sacred arena, you must join our 3 official community groups:\n\n"
+                f"1️⃣ {settings.GROUP_NAME_1}\n"
+                f"2️⃣ {settings.GROUP_NAME_2}\n"
+                f"3️⃣ {settings.GROUP_NAME_3}\n\n"
+                f"👉 Tap each button below to join, then tap *Verify & Enter Arena*!"
+            )
+            gate_keyboard = {
+                "inline_keyboard": [
+                    [{"text": f"1. Join {settings.GROUP_NAME_1}", "url": settings.GROUP_LINK_1}],
+                    [{"text": f"2. Join {settings.GROUP_NAME_2}", "url": settings.GROUP_LINK_2}],
+                    [{"text": f"3. Join {settings.GROUP_NAME_3}", "url": settings.GROUP_LINK_3}],
+                    [{"text": "Verify & Enter Arena", "callback_data": f"verify_groups:{user_id}"}]
+                ]
+            }
+            await send_telegram_message(chat_id, gate_text, gate_keyboard)
+        else:
+            bot_user = settings.BOT_USERNAME or "OrdinalLegacyEventBot"
+            await send_telegram_message(chat_id, f"👉 Please use `/start` in private chat with [@{bot_user}](https://t.me/{bot_user}) to verify and enter the festival arena.")
         return
 
     if text.startswith("/bypassverify"):
@@ -553,8 +630,8 @@ async def handle_bot_message(message: Dict[str, Any]):
             )
             kb = {
                 "inline_keyboard": [
-                    [{"text": f"👉 Join {name}", "url": link}] for name, link in unjoined
-                ] + [[{"text": "✅ Verify & Enter Arena", "callback_data": "verify_groups"}]]
+                    [{"text": f"Join {name}", "url": link}] for name, link in unjoined
+                ] + [[{"text": "Verify & Enter Arena", "callback_data": f"verify_groups:{user_id}"}]]
             }
             await send_telegram_message(chat_id, warn_text, kb)
             return
@@ -573,12 +650,12 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"Choose how you want to play:",
             {
                 "inline_keyboard": [
-                    [{"text": "🪔 Enter Maha Deepotsav Arena (Mini-App)", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
-                    [{"text": "🎮 Play Mini-Games in Chat", "callback_data": "menu_play"}],
-                    [{"text": "🌀 Chakri", "callback_data": "play_chakri"},
-                     {"text": "🌸 Rangoli", "callback_data": "play_rangoli"},
-                     {"text": "🍬 Mithai", "callback_data": "play_mithai"}],
-                    [{"text": "✨ Claim Shubh Refill (+5 Wicks & Pts)", "callback_data": "cmd_shubh"}]
+                    [{"text": "Enter Maha Deepotsav Arena (Mini-App)", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
+                    [{"text": "Play Mini-Games in Chat", "callback_data": f"menu_play:{user_id}"}],
+                    [{"text": "Play Chakri", "callback_data": f"play_chakri:{user_id}"},
+                     {"text": "Play Rangoli", "callback_data": f"play_rangoli:{user_id}"},
+                     {"text": "Play Mithai", "callback_data": f"play_mithai:{user_id}"}],
+                    [{"text": "Claim Shubh Refill (+5 Wicks & Pts)", "callback_data": f"cmd_shubh:{user_id}"}]
                 ]
             }
         )
@@ -599,26 +676,27 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"🪔 *Welcome to Ordinal Legacy Maha Deepotsav, {first_name}!* 🪔\n\n"
             f"You have been initiated into the *{settings.GHARANAS[user['gharana_id']]}*!\n"
             f"Our sacred goal is to unite and collect *{settings.GLOBAL_MILESTONE_TARGET:,} Sparks* to ignite the community *Akhand Diya*.\n\n"
-            f"🎮 *Mini-Games*: Earn 1 to 3 hard points per play.\n"
-            f"🤝 *Diya Companion*: Invite 1 friend as your bonded companion for daily free wicks!\n"
-            f"✨ *Additional Friends*: Earn +1 minimum point per friend.\n\n"
-            f"Tap the button below to launch the festival arena:"
+            f"• Mini-Games: /chakri, /rangoli, /mithai (1 to 3 hard points per play)\n"
+            f"• Diya Companion: /shagun (Invite 1 friend as your bonded companion for daily free wicks!)\n"
+            f"• Daily Refill: /shubh (Claim daily bonus wicks and sparks)\n"
+            f"• Profile & Rewards: /mydata\n\n"
+            f"Tap the buttons below to play:"
         )
         
         webapp_url = f"{settings.MINI_APP_URL}?tg_id={user_id}"
         keyboard = {
             "inline_keyboard": [
-                [{"text": "🪔 Enter Maha Deepotsav Arena (Mini-App)", "web_app": {"url": webapp_url}}],
-                [{"text": "🎮 Play Mini-Games in Chat", "callback_data": "menu_play"}],
-                [{"text": "🌀 Chakri", "callback_data": "play_chakri"},
-                 {"text": "🌸 Rangoli", "callback_data": "play_rangoli"},
-                 {"text": "🍬 Mithai", "callback_data": "play_mithai"}],
-                [{"text": "👤 My Dossier & Rewards", "callback_data": "cmd_mydata"},
-                 {"text": "🎁 Rewards Ladder", "callback_data": "cmd_tiers"}],
-                [{"text": "🎁 My Shagun Invite Link", "callback_data": "cmd_shagun"},
-                 {"text": "✨ Shubh Refill (+5 Wicks & Pts)", "callback_data": "cmd_shubh"}],
-                [{"text": "📊 Community Progress", "callback_data": "cmd_status"},
-                 {"text": "🏰 Gharanas Leaderboard", "callback_data": "cmd_gharanas"}]
+                [{"text": "Enter Maha Deepotsav Arena (Mini-App)", "web_app": {"url": webapp_url}}],
+                [{"text": "Play Mini-Games in Chat", "callback_data": f"menu_play:{user_id}"}],
+                [{"text": "Play Chakri", "callback_data": f"play_chakri:{user_id}"},
+                 {"text": "Play Rangoli", "callback_data": f"play_rangoli:{user_id}"},
+                 {"text": "Play Mithai", "callback_data": f"play_mithai:{user_id}"}],
+                [{"text": "My Dossier & Rewards", "callback_data": f"cmd_mydata:{user_id}"},
+                 {"text": "Rewards Ladder", "callback_data": f"cmd_tiers:{user_id}"}],
+                [{"text": "My Shagun Invite Link", "callback_data": f"cmd_shagun:{user_id}"},
+                 {"text": "Claim Shubh Refill", "callback_data": f"cmd_shubh:{user_id}"}],
+                [{"text": "Community Status", "callback_data": f"cmd_status:{user_id}"},
+                 {"text": "Gharanas Leaderboard", "callback_data": f"cmd_gharanas:{user_id}"}]
             ]
         }
         await send_telegram_message(chat_id, welcome_text, keyboard)
@@ -627,18 +705,18 @@ async def handle_bot_message(message: Dict[str, Any]):
     elif text == "/play":
         play_text = (
             f"🎮 *Maha Deepotsav Festival Arena: Choose How to Play!*\n\n"
-            f"Every run consumes *1 Diya Wick* (max 10, regenerates 1 every 3m).\n"
+            f"Every run consumes *1 Diya Wick* (max 10, regenerates 1 every 1m).\n"
             f"Earn *1 to 3 hard sparks* per run to ignite the 200,000 Akhand Diya!\n\n"
             f"Select an in-chat game or launch the full Mini-App:"
         )
         play_kb = {
             "inline_keyboard": [
-                [{"text": "🪔 Launch Mini-App Arena", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
-                [{"text": "🌀 Chakri Whirl (In-Chat)", "callback_data": "play_chakri"},
-                 {"text": "🌸 Rangoli Pattern (In-Chat)", "callback_data": "play_rangoli"}],
-                [{"text": "🍬 Mithai Feast (In-Chat)", "callback_data": "play_mithai"}],
-                [{"text": "✨ Claim Shubh Refill (+5)", "callback_data": "cmd_shubh"},
-                 {"text": "👤 My Data & Rewards", "callback_data": "cmd_mydata"}]
+                [{"text": "Launch Mini-App Arena", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
+                [{"text": "Play Chakri Whirl", "callback_data": f"play_chakri:{user_id}"},
+                 {"text": "Play Rangoli Pattern", "callback_data": f"play_rangoli:{user_id}"}],
+                [{"text": "Play Mithai Feast", "callback_data": f"play_mithai:{user_id}"}],
+                [{"text": "Claim Shubh Refill", "callback_data": f"cmd_shubh:{user_id}"},
+                 {"text": "My Data & Rewards", "callback_data": f"cmd_mydata:{user_id}"}]
             ]
         }
         await send_telegram_message(chat_id, play_text, play_kb)
@@ -774,6 +852,9 @@ async def handle_bot_message(message: Dict[str, Any]):
         return
 
     elif text in ("/admins", "/findadmins"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: You do not have permission to view administrator records.")
+            return
         admins = get_all_admin_ids()
         conn = get_db_connection()
         admin_lines = []
@@ -790,7 +871,11 @@ async def handle_bot_message(message: Dict[str, Any]):
             + "\n".join(admin_lines) + "\n\n"
             f"🔒 _Notice: All game modification, SQL querying, and database commands are strictly locked to authorized administrators._"
         )
-        await send_telegram_message(chat_id, admin_msg)
+        if not is_private:
+            await send_telegram_message(user_id, admin_msg)
+            await send_telegram_message(chat_id, "🔒 Administrator records sent privately to your DM, Sudo.")
+        else:
+            await send_telegram_message(chat_id, admin_msg)
         return
 
     elif text in ("/admin", "/adminhelp"):
@@ -836,7 +921,11 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"• `/exportrewards` — Export player rewards breakdown\n"
             f"• `/syncbot` — Synchronize public commands in BotFather"
         )
-        await send_telegram_message(chat_id, admin_help)
+        if not is_private:
+            await send_telegram_message(user_id, admin_help)
+            await send_telegram_message(chat_id, "🔒 *Admin Command Center*: Dispatched privately to your DM, Sudo.")
+        else:
+            await send_telegram_message(chat_id, admin_help)
         return
 
     elif text.startswith("/addadmin"):
@@ -1641,10 +1730,10 @@ async def handle_bot_message(message: Dict[str, Any]):
         )
         kb = {
             "inline_keyboard": [
-                [{"text": "🎮 Play Mini-Games", "callback_data": "menu_play"},
-                 {"text": "🪔 Launch Mini-App", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
-                [{"text": "🎁 Invite Friends", "callback_data": "cmd_shagun"},
-                 {"text": "✨ Daily Refill", "callback_data": "cmd_shubh"}]
+                [{"text": "Play Mini-Games", "callback_data": f"menu_play:{user_id}"},
+                 {"text": "Launch Mini-App", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
+                [{"text": "Invite Friends", "callback_data": f"cmd_shagun:{user_id}"},
+                 {"text": "Daily Refill", "callback_data": f"cmd_shubh:{user_id}"}]
             ]
         }
         await send_telegram_message(chat_id, mydata_msg, kb)
@@ -1661,47 +1750,79 @@ async def handle_bot_message(message: Dict[str, Any]):
             await send_telegram_message(chat_id, "⚠️ Failed to sync commands. Check bot token or server logs.")
         return
 
-    else:
+    elif text in ("/help", "/commands", "/menu"):
         help_text = (
-            f"🪔 *Ordinal Legacy Event Bot Commands:*\n\n"
-            f"🎮 *Festival Games:*\n"
-            f"/play — Choose games menu (Chat or Mini-App)\n"
-            f"/chakri — Spin Chakri Whirl in chat (1 wick, 1-3 pts)\n"
-            f"/rangoli — Draw Rangoli in chat (1 wick, 1-3 pts)\n"
-            f"/mithai — Feast on Mithai in chat (1 wick, 1-3 pts)\n\n"
-            f"🌟 *Event & Profile:*\n"
-            f"/mydata — View your complete score, stats & unlocked rewards\n"
-            f"/start — Launch festival arena and mini-games\n"
-            f"/status — View your points, stamina wicks, and flame stage\n"
-            f"/house — View your Gharana house motto, ranking, and avg score\n"
-            f"/top — View Top 10 Lampbearers on the leaderboard\n"
-            f"/shagun — Get your companion referral link\n"
-            f"/shubh — Claim your daily Shubh Muhurat refill (+5 wicks & pts)\n"
-            f"/widget — View or generate the pinned channel Akhand Diya widget\n"
-            f"/gharanas — View live Gharana house standings\n"
-            f"/tiers — View milestone ladder & rewards (Coins, Pearl...)\n"
-            f"/stats — View global event metrics and statistics\n"
-            f"/admins — View festival management administrators\n"
-            f"/help — Show this command menu\n"
+            f"Ordinal Legacy Event Bot Commands:\n\n"
+            f"Festival Games:\n"
+            f"/play - Choose games menu (Chat or Mini-App)\n"
+            f"/chakri - Spin Chakri Whirl in chat (1 wick, 1-3 pts)\n"
+            f"/rangoli - Draw Rangoli in chat (1 wick, 1-3 pts)\n"
+            f"/mithai - Feast on Mithai in chat (1 wick, 1-3 pts)\n\n"
+            f"Event & Profile:\n"
+            f"/mydata - View your complete score, stats & unlocked rewards\n"
+            f"/start - Launch festival arena and mini-games\n"
+            f"/status - View community Akhand Diya sparks and progress\n"
+            f"/house - View your Gharana standing & rank\n"
+            f"/top - View Top 10 Lampbearers on the leaderboard\n"
+            f"/shagun - Get your companion referral link\n"
+            f"/shubh - Claim daily Shubh refill (+5 wicks & pts)\n"
+            f"/widget - View pinned channel Akhand Diya widget\n"
+            f"/gharanas - View live Gharana house standings\n"
+            f"/tiers - View milestone ladder & rewards (Coins, Pearl...)\n"
+            f"/stats - View global event metrics and statistics\n"
+            f"/help - Show this command menu\n"
         )
-        if is_admin(user_id):
-            help_text += (
-                f"\n👑 *Admin Control Panel:*\n"
-                f"You have administrative privileges. Type `/adminhelp` or `/admin` to view all event management, points adjustment, backup/recovery, and logging commands."
-            )
         await send_telegram_message(chat_id, help_text)
+        return
+
+    else:
+        # Ignore random chatter in groups and private chat.
+        # Only notify for unrecognized slash commands in private chat.
+        if is_private and text.startswith("/"):
+            await send_telegram_message(chat_id, "❓ *Unrecognized Command*: Type /help to view all festival commands.")
+        return
 
 async def handle_bot_callback_query(callback_query: Dict[str, Any]):
+    callback_id = callback_query.get("id")
     from_user = callback_query.get("from", {})
     user_id = from_user.get("id")
     chat = callback_query.get("message", {}).get("chat", {})
     chat_id = chat.get("id") or user_id
-    data = callback_query.get("data", "")
+    raw_data = callback_query.get("data", "")
 
     if not user_id or not chat_id:
         return
 
-    if data == "verify_groups":
+    # 1. Anti-spam rate-limit guard (max 1 button click per second per user)
+    now = time.time()
+    last_click = _BUTTON_CLICK_COOLDOWN.get(user_id, 0.0)
+    if now - last_click < 1.0:
+        await answer_telegram_callback_query(
+            callback_id,
+            text="⏳ Please wait a moment before tapping again!",
+            show_alert=False
+        )
+        return
+    _BUTTON_CLICK_COOLDOWN[user_id] = now
+
+    # 2. Owner ID Guard: verify if button belongs to this user
+    parts = raw_data.split(":")
+    action = parts[0]
+    owner_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+
+    if owner_id is not None and owner_id != user_id:
+        await answer_telegram_callback_query(
+            callback_id,
+            text="⛔ This query belongs to another player. Please use the command yourself in private chat!",
+            show_alert=True
+        )
+        return
+
+    # 3. Stop Telegram loading spinner immediately
+    await answer_telegram_callback_query(callback_id)
+
+    # 4. Route action
+    if action == "verify_groups":
         is_ok, unjoined = await verify_user_all_groups(user_id)
         if not is_ok:
             unjoined_items = "\n".join([f"• {name}" for name, link in unjoined])
@@ -1713,8 +1834,8 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
             )
             kb = {
                 "inline_keyboard": [
-                    [{"text": f"👉 Join {name}", "url": link}] for name, link in unjoined
-                ] + [[{"text": "✅ Verify & Enter Arena", "callback_data": "verify_groups"}]]
+                    [{"text": f"Join {name}", "url": link}] for name, link in unjoined
+                ] + [[{"text": "Verify & Enter Arena", "callback_data": f"verify_groups:{user_id}"}]]
             }
             await send_telegram_message(chat_id, warn_text, kb)
             return
@@ -1736,29 +1857,29 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
             f"Choose how you want to play:",
             {
                 "inline_keyboard": [
-                    [{"text": "🪔 Enter Maha Deepotsav Arena (Mini-App)", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
-                    [{"text": "🎮 Play Mini-Games in Chat", "callback_data": "menu_play"}],
-                    [{"text": "🌀 Chakri", "callback_data": "play_chakri"},
-                     {"text": "🌸 Rangoli", "callback_data": "play_rangoli"},
-                     {"text": "🍬 Mithai", "callback_data": "play_mithai"}],
-                    [{"text": "✨ Claim Shubh Refill (+5 Wicks & Pts)", "callback_data": "cmd_shubh"}],
-                    [{"text": "🎁 My Shagun Invite Link", "callback_data": "cmd_shagun"}]
+                    [{"text": "Enter Maha Deepotsav Arena (Mini-App)", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
+                    [{"text": "Play Mini-Games in Chat", "callback_data": f"menu_play:{user_id}"}],
+                    [{"text": "Play Chakri", "callback_data": f"play_chakri:{user_id}"},
+                     {"text": "Play Rangoli", "callback_data": f"play_rangoli:{user_id}"},
+                     {"text": "Play Mithai", "callback_data": f"play_mithai:{user_id}"}],
+                    [{"text": "Claim Shubh Refill (+5 Wicks & Pts)", "callback_data": f"cmd_shubh:{user_id}"}],
+                    [{"text": "My Shagun Invite Link", "callback_data": f"cmd_shagun:{user_id}"}]
                 ]
             }
         )
         return
 
-    elif data == "menu_play":
+    elif action == "menu_play":
         fake_msg = {"chat": {"id": chat_id}, "from": from_user, "text": "/play"}
         await handle_bot_message(fake_msg)
-    elif data == "play_chakri":
+    elif action == "play_chakri":
         await run_in_chat_chakri(chat_id, user_id)
-    elif data == "play_rangoli":
+    elif action == "play_rangoli":
         await run_in_chat_rangoli(chat_id, user_id)
-    elif data == "play_mithai":
+    elif action == "play_mithai":
         await run_in_chat_mithai(chat_id, user_id)
 
-    elif data == "cmd_shagun":
+    elif action == "cmd_shagun":
         invite_link = f"https://t.me/{settings.BOT_USERNAME}?start=shagun_{user_id}"
         shagun_msg = (
             f"🎁 *Your Diwali Shagun Invite Link:*\n`{invite_link}`\n\n"
@@ -1767,21 +1888,21 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
             f"• Extra friends grant *+1 point each* (up to 15 points max)."
         )
         await send_telegram_message(chat_id, shagun_msg)
-    elif data == "cmd_status":
+    elif action == "cmd_status":
         fake_msg = {"chat": {"id": chat_id}, "from": from_user, "text": "/status"}
         await handle_bot_message(fake_msg)
-    elif data == "cmd_mydata":
+    elif action == "cmd_mydata":
         fake_msg = {"chat": {"id": chat_id}, "from": from_user, "text": "/mydata"}
         await handle_bot_message(fake_msg)
-    elif data == "cmd_shubh":
+    elif action == "cmd_shubh":
         try:
             res = claim_shubh_refill(user_id)
             await send_telegram_message(chat_id, f"✨ *{res['message']}*")
         except Exception as e:
             await send_telegram_message(chat_id, f"⚠️ {getattr(e, 'detail', str(e))}")
-    elif data == "cmd_gharanas":
+    elif action == "cmd_gharanas":
         fake_msg = {"chat": {"id": chat_id}, "from": from_user, "text": "/gharanas"}
         await handle_bot_message(fake_msg)
-    elif data == "cmd_tiers":
+    elif action == "cmd_tiers":
         fake_msg = {"chat": {"id": chat_id}, "from": from_user, "text": "/tiers"}
         await handle_bot_message(fake_msg)
