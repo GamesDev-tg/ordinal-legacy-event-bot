@@ -421,6 +421,46 @@ def reset_event_data() -> dict:
     conn.close()
     return {"success": True, "message": "Event data reset successfully."}
 
+def reset_scores_keep_users() -> dict:
+    conn = get_db_connection()
+    with conn:
+        conn.execute('''
+            UPDATE users 
+            SET points_total = 0, 
+                tier_level = 0, 
+                diya_wicks = 10, 
+                referral_points_earned = 0, 
+                shubh_refill_date = NULL
+        ''')
+        conn.execute("UPDATE community_state SET total_sparks = 0, current_stage = 0 WHERE id = 1")
+        conn.execute("DELETE FROM game_sessions")
+        conn.execute("DELETE FROM partner_wick_gifts")
+        user_count = conn.execute("SELECT COUNT(*) as c FROM users").fetchone()["c"]
+        ref_count = conn.execute("SELECT COUNT(*) as c FROM referrals").fetchone()["c"]
+    conn.close()
+    return {
+        "success": True,
+        "users_preserved": user_count,
+        "referrals_preserved": ref_count,
+        "message": f"Scores reset to 0 and wicks refilled to 10. All {user_count} players and {ref_count} referrals preserved!"
+    }
+
+def refill_all_users_wicks() -> dict:
+    conn = get_db_connection()
+    with conn:
+        conn.execute("UPDATE users SET diya_wicks = ?", (settings.STAMINA_BANK_CAP,))
+        user_count = conn.execute("SELECT COUNT(*) as c FROM users").fetchone()["c"]
+    conn.close()
+    return {"success": True, "users_refilled": user_count}
+
+def reset_all_shubh_refills() -> dict:
+    conn = get_db_connection()
+    with conn:
+        conn.execute("UPDATE users SET shubh_refill_date = NULL")
+        user_count = conn.execute("SELECT COUNT(*) as c FROM users").fetchone()["c"]
+    conn.close()
+    return {"success": True, "users_reset": user_count}
+
 def get_system_setting(key: str, default: Optional[str] = None) -> Optional[str]:
     conn = get_db_connection()
     try:

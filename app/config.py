@@ -35,7 +35,7 @@ class Settings:
     MAX_REFERRAL_POINTS: int = int(os.getenv("MAX_REFERRAL_POINTS", "15"))
     MIN_GAME_DURATION_SECONDS: int = int(os.getenv("MIN_GAME_DURATION_SECONDS", "3"))
     STAMINA_BANK_CAP: int = int(os.getenv("STAMINA_BANK_CAP", "10"))
-    STAMINA_REGEN_MINUTES: int = int(os.getenv("STAMINA_REGEN_MINUTES", "3"))
+    STAMINA_REGEN_MINUTES: int = int(os.getenv("STAMINA_REGEN_MINUTES", "1"))
 
     GROUP_LINK_1: str = os.getenv("GROUP_LINK_1", "https://t.me/OrdinalLegacy")
     GROUP_LINK_2: str = os.getenv("GROUP_LINK_2", "https://t.me/OrdinalLegacyEventInfo")

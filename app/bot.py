@@ -10,7 +10,8 @@ from app.database import (
     generate_full_backup, reset_event_data, get_all_admin_ids, add_admin_id,
     remove_admin_id, get_effective_logs_chat_id, get_effective_backup_chat_id,
     set_system_setting, get_system_setting, restore_from_backup_data,
-    purge_dummy_data
+    purge_dummy_data, reset_scores_keep_users, refill_all_users_wicks,
+    reset_all_shubh_refills
 )
 from app.referral_engine import process_referral_claim
 from app.game_engine import claim_shubh_refill, update_user_stamina
@@ -70,7 +71,16 @@ async def dispatch_backup_snapshot(reason: str = "Manual Admin Snapshot", target
     await send_bot_log(f"📦 *Data Recovery Snapshot Dispatched*: Reason: `{reason}`. Saved `{snap['total_users']}` users, `{snap['community_sparks']}` sparks.")
     return sent_any
 
+_last_backup_check_time = 0
+
 async def check_and_trigger_auto_backup() -> bool:
+    global _last_backup_check_time
+    import time
+    now_ts = time.time()
+    if now_ts - _last_backup_check_time < 300:
+        return False
+    _last_backup_check_time = now_ts
+
     backup_chat = get_effective_backup_chat_id()
     if not backup_chat:
         return False
@@ -269,7 +279,7 @@ def execute_in_chat_game(user_id: int, game_type: int) -> dict:
             if not u["joined_groups"] and not is_admin(user_id) and settings.BOT_TOKEN != "mock_bot_token_for_dev":
                 return {"error": "You must join all 3 official community groups and verify first! Send /start."}
             if u["diya_wicks"] < 1:
-                return {"error": "Out of Diya Wicks! Claim your daily /shubh refill or wait 3 mins for regeneration."}
+                return {"error": "Out of Diya Wicks! Claim your daily /shubh refill or wait 1 min for regeneration."}
 
             now_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
             if u["diya_wicks"] >= settings.STAMINA_BANK_CAP:
@@ -816,11 +826,14 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"• `/addadmin <id>` — Add new administrator\n"
             f"• `/deladmin <id>` — Remove administrator\n"
             f"• `/admins` — View list of administrators\n\n"
-            f"⚙️ *Database & Maintenance:*\n"
-            f"• `/query <SQL>` — Execute raw SQL query (Admin Only)\n"
+            f"⚙️ *Database & Multi-Level Resets:*\n"
+            f"• `/resetscores CONFIRM` — Reset points/wicks (KEEPS all users & referrals!)\n"
+            f"• `/refillallwicks` — Refill 10/10 wicks for all players instantly\n"
+            f"• `/resetshubh` — Reset daily Shubh Muhurat refill for all\n"
+            f"• `/resetevent CONFIRM` — Full event wipe (auto-backup first)\n"
             f"• `/cleandummy` — Purge mock/test accounts before launch\n"
+            f"• `/query <SQL>` — Execute raw SQL query (Admin Only)\n"
             f"• `/exportrewards` — Export player rewards breakdown\n"
-            f"• `/resetevent CONFIRM` — Reset event (auto-backup first)\n"
             f"• `/syncbot` — Synchronize public commands in BotFather"
         )
         await send_telegram_message(chat_id, admin_help)
@@ -1396,6 +1409,65 @@ async def handle_bot_message(message: Dict[str, Any]):
         await send_bot_log(f"🔄 *Event Reset Executed* by Admin `{user_id}`. Safety backup snapshot was dispatched.")
         return
 
+    elif text.startswith(("/resetscores", "/resetpoints")):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+        parts = text.split()
+        if len(parts) < 2 or parts[1].upper() != "CONFIRM":
+            warn_msg = (
+                f"⚠️ *RESET SCORES REQUESTED (Keeps All Users & Referrals)*\n\n"
+                f"This will:\n"
+                f"• Reset all player scores to *0 Pts* (Tier 0: Diya Spark)\n"
+                f"• Refill all players' Diya Wicks to *10/10*\n"
+                f"• Reset community Akhand Jyoti to *0 Sparks (Stage 0)*\n"
+                f"• Reset daily Shubh Muhurat refills\n"
+                f"• Clear gameplay session history\n\n"
+                f"🔒 *100% PRESERVED*:\n"
+                f"• All registered users & Telegram usernames\n"
+                f"• Gharana house assignments\n"
+                f"• Group gate verification statuses\n"
+                f"• All Diya Companion & referral bonds\n\n"
+                f"👉 To execute for tomorrow's launch, type:\n`/resetscores CONFIRM`"
+            )
+            await send_telegram_message(chat_id, warn_msg)
+            return
+
+        # Automatic safety backup first
+        await dispatch_backup_snapshot(reason=f"Pre-Score-Reset Safety Snapshot by Sudo {user_id}", target_chat_id=chat_id)
+
+        res = reset_scores_keep_users()
+        await send_telegram_message(
+            chat_id,
+            f"🔄 *Festival Scores Reset Complete!*\n\n"
+            f"• All player scores reset to *0 Pts* for official launch!\n"
+            f"• All Diya Wicks refilled to *10/10*\n"
+            f"• Community Akhand Diya reset to *0 Sparks*\n"
+            f"• Preserved Lampbearers: *{res['users_preserved']}*\n"
+            f"• Preserved Referral Bonds: *{res['referrals_preserved']}*\n\n"
+            f"✨ The competition arena is fresh and ready!"
+        )
+        await send_bot_log(f"🔄 Sudo `{user_id}` executed `/resetscores`. Scores reset; {res['users_preserved']} users and {res['referrals_preserved']} referrals preserved.")
+        return
+
+    elif text in ("/refillallwicks", "/resetallwicks"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+        res = refill_all_users_wicks()
+        await send_telegram_message(chat_id, f"🪔 *All Wicks Refilled!* Restored full Diya Wicks (10/10) for all *{res['users_refilled']}* registered players.")
+        await send_bot_log(f"🪔 Sudo `{user_id}` refilled wicks for all {res['users_refilled']} players.")
+        return
+
+    elif text in ("/resetshubh", "/resetallshubh"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+        res = reset_all_shubh_refills()
+        await send_telegram_message(chat_id, f"✨ *Shubh Muhurat Reset!* All *{res['users_reset']}* players can now claim their +5 wicks & points blessing again.")
+        await send_bot_log(f"✨ Sudo `{user_id}` reset Shubh Muhurat refills for all {res['users_reset']} players.")
+        return
+
     elif text in ("/cleandummy", "/purgedummy"):
         if not is_admin(user_id):
             await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
@@ -1556,7 +1628,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"🎁 *Reward Milestones:*\n"
             f"{rew_text}\n\n"
             f"🪔 *Diya Wicks*: *{u['diya_wicks']}/10*\n"
-            f"⚡ *Stamina Speed*: 1 wick every 3 minutes\n"
+            f"⚡ *Stamina Speed*: 1 wick every 1 minute\n"
             f"✨ *Daily Shubh Muhurat*: {shubh_status}\n\n"
             f"🎮 *Festival Gameplay:*\n"
             f"• Completed Runs: *{total_runs}*\n"
