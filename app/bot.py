@@ -21,6 +21,15 @@ from app.cache import get_cache, set_cache, delete_cache
 def is_admin(user_id: int) -> bool:
     return user_id in get_all_admin_ids()
 
+def escape_md(text: Any) -> str:
+    """Escapes Telegram legacy Markdown formatting characters (*, _, `, [) safely."""
+    if text is None:
+        return ""
+    s = str(text)
+    for ch in ("\\", "*", "_", "`", "["):
+        s = s.replace(ch, f"\\{ch}")
+    return s
+
 def send_bot_log_sync(text: str):
     try:
         print(f"[BOT LOG]: {text}")
@@ -637,8 +646,9 @@ async def handle_bot_message(message: Dict[str, Any]):
                 try:
                     ref_res = process_referral_claim(referrer_id, user_id)
                     print(f"[REFERRAL SUCCESS]: Player {user_id} successfully bound to referrer {referrer_id}")
-                    friend_tag = f"@{username}" if username else first_name
-                    ref_name = ref_res.get("referrer_name", f"Player {referrer_id}")
+                    raw_friend_tag = f"@{username}" if username else first_name
+                    friend_tag = escape_md(raw_friend_tag)
+                    ref_name = escape_md(ref_res.get("referrer_name", f"Player {referrer_id}"))
                     if ref_res.get("is_companion"):
                         await send_telegram_message(
                             referrer_id,
@@ -654,7 +664,7 @@ async def handle_bot_message(message: Dict[str, Any]):
                             f"• Your inviter earned: *+1 Point*\n"
                             f"• You can now exchange free daily Diya Wicks via `/shagun`!"
                         )
-                        await send_bot_log(f"🤝 *Companion Bound*: `{user_id}` ({friend_tag}) bound with `{referrer_id}` (+1 Pt).")
+                        await send_bot_log(f"🤝 *Companion Bound*: `{user_id}` ({raw_friend_tag}) bound with `{referrer_id}` (+1 Pt).")
                     else:
                         await send_telegram_message(
                             referrer_id,
@@ -666,7 +676,7 @@ async def handle_bot_message(message: Dict[str, Any]):
                             f"🎁 *Shagun Invite Accepted!*\n\n"
                             f"You joined through *{ref_name}*'s Shagun invite link! +1 Point has been credited to their festival score."
                         )
-                        await send_bot_log(f"🎁 *Referral Claimed*: `{user_id}` ({friend_tag}) referred by `{referrer_id}` (+1 Pt).")
+                        await send_bot_log(f"🎁 *Referral Claimed*: `{user_id}` ({raw_friend_tag}) referred by `{referrer_id}` (+1 Pt).")
                     
                     if text.startswith(("/shagun", "/bind")):
                         return
@@ -733,8 +743,9 @@ async def handle_bot_message(message: Dict[str, Any]):
     # Mandatory 3 Group Links Gate before entering the game (Applies to all users unless admin or running info commands)
     if not user.get("joined_groups", 0) and not is_admin(user_id) and text not in allowed_unverified and not text.startswith(("/bypassverify", "/admin")):
         if is_private:
+            safe_fname = escape_md(first_name)
             gate_text = (
-                f"🪔 *Welcome to Ordinal Legacy Maha Deepotsav, {first_name}!* 🪔\n\n"
+                f"🪔 *Welcome to Ordinal Legacy Maha Deepotsav, {safe_fname}!* 🪔\n\n"
                 f"Before entering the sacred arena, you must join our 3 official community groups:\n\n"
                 f"1️⃣ {settings.GROUP_NAME_1}\n"
                 f"2️⃣ {settings.GROUP_NAME_2}\n"
@@ -811,8 +822,9 @@ async def handle_bot_message(message: Dict[str, Any]):
         return
     
     if text.startswith("/start"):
+        safe_fname = escape_md(first_name)
         welcome_text = (
-            f"🪔 *Welcome to Ordinal Legacy Maha Deepotsav, {first_name}!* 🪔\n\n"
+            f"🪔 *Welcome to Ordinal Legacy Maha Deepotsav, {safe_fname}!* 🪔\n\n"
             f"You have been initiated into the *{settings.GHARANAS[user['gharana_id']]}*!\n"
             f"Our sacred goal is to unite and collect *{settings.GLOBAL_MILESTONE_TARGET:,} Sparks* to ignite the community *Akhand Diya*.\n\n"
             f"• Mini-Games: /chakri, /rangoli, /mithai (1 to 3 hard points per play)\n"
@@ -899,7 +911,11 @@ async def handle_bot_message(message: Dict[str, Any]):
         
         stage_num, stage_name = get_stage_info(comm["total_sparks"])
         tier_name = get_tier_name(u["tier_level"])
-        companion_text = f"*{comp_row['first_name'] or comp_row['username']}* ({get_tier_name(comp_row['tier_level'])})" if comp_row else "_None yet (Invite 1 friend!)_"
+        if comp_row:
+            comp_display = comp_row['first_name'] or comp_row['username'] or f"Player {comp_row['telegram_id']}"
+            companion_text = f"*{escape_md(comp_display)}* ({get_tier_name(comp_row['tier_level'])})"
+        else:
+            companion_text = "_None yet (Invite 1 friend!)_"
         
         status_msg = (
             f"🪔 *Maha Deepotsav Status Report*\n\n"
@@ -931,7 +947,7 @@ async def handle_bot_message(message: Dict[str, Any]):
         ref_points = u["referral_points_earned"] if u else 0
         if comp_row:
             c_name = f"@{comp_row['username']}" if comp_row['username'] else (comp_row['first_name'] or f"Player {comp_row['telegram_id']}")
-            comp_status = f"🤝 *Diya Companion*: *{c_name}* (Bonded & Active)"
+            comp_status = f"🤝 *Diya Companion*: *{escape_md(c_name)}* (Bonded & Active)"
         else:
             comp_status = "🤝 *Diya Companion*: _None yet_ (Invite your 1st friend to bond!)"
 
@@ -1570,15 +1586,18 @@ async def handle_bot_message(message: Dict[str, Any]):
         comp_str = f"{comp_row['first_name'] or comp_row['username']} (`{comp_row['telegram_id']}`)" if comp_row else "None"
         g_name = settings.GHARANAS.get(u["gharana_id"], "Unknown")
         
+        safe_pname = escape_md(u['first_name'] or u['username'])
+        safe_puname = escape_md(u['username']) if u['username'] else 'N/A'
+        safe_comp_str = escape_md(comp_str)
         profile_msg = (
-            f"👤 *Player Profile: {u['first_name'] or u['username']}*\n\n"
+            f"👤 *Player Profile: {safe_pname}*\n\n"
             f"• Telegram ID: `{u['telegram_id']}`\n"
-            f"• Username: @{u['username'] or 'N/A'}\n"
+            f"• Username: @{safe_puname}\n"
             f"• Gharana: *{g_name}*\n"
             f"• Hard Points: *{u['points_total']} Pts*\n"
             f"• Tier: *{get_tier_name(u['tier_level'])}* (Tier {u['tier_level']})\n"
             f"• Diya Wicks: *{u['diya_wicks']}/10*\n"
-            f"• Diya Companion: *{comp_str}*\n"
+            f"• Diya Companion: *{safe_comp_str}*\n"
             f"• Friends Invited: *{total_refs}* (Points earned: {u['referral_points_earned']}/{settings.MAX_REFERRAL_POINTS})\n"
             f"• Completed Runs: *{games_count}* (Flawless 3-pt runs: {three_pts})\n"
             f"• Joined: `{u['created_at']}`"
@@ -1926,15 +1945,21 @@ async def handle_bot_message(message: Dict[str, Any]):
                 rewards_status.append(f"• {rew_sym}: 🔒 _({diff:,} more pts needed)_")
         rew_text = "\n".join(rewards_status)
         
-        comp_str = f"*{comp_row['first_name'] or comp_row['username']}*" if comp_row else "_None yet (Use /shagun)_"
+        if comp_row:
+            comp_display = comp_row['first_name'] or comp_row['username'] or f"Player {comp_row['telegram_id']}"
+            comp_str = f"*{escape_md(comp_display)}*"
+        else:
+            comp_str = "_None yet (Use /shagun)_"
         today_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
         shubh_status = "✅ Claimed today" if u["shubh_refill_date"] == today_str else "✨ Available now (/shubh)"
         
+        safe_fname = escape_md(first_name)
+        safe_uname = escape_md(username) if username else "N/A"
         mydata_msg = (
-            f"👤 *PLAYER EVENT DOSSIER: {first_name}*\n"
+            f"👤 *PLAYER EVENT DOSSIER: {safe_fname}*\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"🆔 *Telegram ID*: `{user_id}`\n"
-            f"🏷 *Username*: @{username or 'N/A'}\n"
+            f"🏷 *Username*: @{safe_uname}\n"
             f"🏰 *Initiated House*: *{g_name}*\n"
             f"🛡 *Official Gate*: {'✅ Verified Member' if u['joined_groups'] else '⚠️ Unverified'}\n\n"
             f"🔥 *Sparks Contributed*: *{pts:,} Sparks*\n"
