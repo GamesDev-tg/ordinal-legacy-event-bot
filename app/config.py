@@ -37,12 +37,15 @@ class Settings:
     STAMINA_BANK_CAP: int = int(os.getenv("STAMINA_BANK_CAP", "10"))
     STAMINA_REGEN_MINUTES: int = int(os.getenv("STAMINA_REGEN_MINUTES", "3"))
 
-    GROUP_LINK_1: str = os.getenv("GROUP_LINK_1", "https://t.me/Ordinal_Legacy")
-    GROUP_LINK_2: str = os.getenv("GROUP_LINK_2", "https://t.me/Ol_Chat")
-    GROUP_LINK_3: str = os.getenv("GROUP_LINK_3", "https://t.me/Ordinal_Legacy_Chat")
-    GROUP_NAME_1: str = os.getenv("GROUP_NAME_1", "Discussion Group (@Ordinal_Legacy)")
-    GROUP_NAME_2: str = os.getenv("GROUP_NAME_2", "Bot Features (@Ol_Chat)")
-    GROUP_NAME_3: str = os.getenv("GROUP_NAME_3", "Event Discussion (@Ordinal_Legacy_Chat)")
+    GROUP_LINK_1: str = os.getenv("GROUP_LINK_1", "https://t.me/OrdinalLegacy")
+    GROUP_LINK_2: str = os.getenv("GROUP_LINK_2", "https://t.me/OrdinalLegacyEventInfo")
+    GROUP_LINK_3: str = os.getenv("GROUP_LINK_3", "https://t.me/Ordinal_Legacy")
+    GROUP_NAME_1: str = os.getenv("GROUP_NAME_1", "Ordinal Legacy Main (@OrdinalLegacy)")
+    GROUP_NAME_2: str = os.getenv("GROUP_NAME_2", "Ordinal Legacy Events Information (@OrdinalLegacyEventInfo)")
+    GROUP_NAME_3: str = os.getenv("GROUP_NAME_3", "Common Discussion (@Ordinal_Legacy)")
+
+    LOGS_CHAT_ID: str = os.getenv("LOGS_CHAT_ID", "").strip("'\" ")
+    BACKUP_CHAT_ID: str = os.getenv("BACKUP_CHAT_ID", "").strip("'\" ")
     
     TIER_THRESHOLDS = {
         0: 0,

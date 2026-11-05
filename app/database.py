@@ -178,6 +178,12 @@ def init_postgres_db():
             UNIQUE (sender_id, gift_date)
         );
 
+        CREATE TABLE IF NOT EXISTS system_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
         ALTER TABLE users ADD COLUMN IF NOT EXISTS shubh_refill_date TEXT;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS joined_groups INTEGER DEFAULT 0;
         ''')
@@ -251,6 +257,12 @@ def init_sqlite_db():
             gift_date TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             UNIQUE (sender_id, gift_date)
+        );
+
+        CREATE TABLE IF NOT EXISTS system_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
         ''')
         
@@ -370,3 +382,155 @@ def reset_event_data() -> dict:
         conn.execute("DELETE FROM partner_wick_gifts")
     conn.close()
     return {"success": True, "message": "Event data reset successfully."}
+
+def get_system_setting(key: str, default: Optional[str] = None) -> Optional[str]:
+    conn = get_db_connection()
+    try:
+        row = conn.execute("SELECT value FROM system_settings WHERE key = ?", (key,)).fetchone()
+        return row["value"] if row else default
+    except Exception:
+        return default
+    finally:
+        conn.close()
+
+def set_system_setting(key: str, value: str):
+    conn = get_db_connection()
+    try:
+        with conn:
+            existing = conn.execute("SELECT key FROM system_settings WHERE key = ?", (key,)).fetchone()
+            if existing:
+                conn.execute("UPDATE system_settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?", (value, key))
+            else:
+                conn.execute("INSERT INTO system_settings (key, value) VALUES (?, ?)", (key, value))
+    finally:
+        conn.close()
+
+def get_effective_logs_chat_id() -> Optional[int]:
+    val = get_system_setting("logs_chat_id", settings.LOGS_CHAT_ID)
+    if val and (val.lstrip("-").isdigit()):
+        return int(val)
+    return None
+
+def get_effective_backup_chat_id() -> Optional[int]:
+    val = get_system_setting("backup_chat_id", settings.BACKUP_CHAT_ID)
+    if val and (val.lstrip("-").isdigit()):
+        return int(val)
+    return None
+
+def get_all_admin_ids() -> List[int]:
+    base_admins = set(settings.ADMIN_IDS)
+    extra_str = get_system_setting("extra_admin_ids", "")
+    if extra_str:
+        for x in extra_str.split(","):
+            x = x.strip()
+            if x.isdigit():
+                base_admins.add(int(x))
+    return sorted(list(base_admins))
+
+def add_admin_id(new_admin_id: int) -> bool:
+    current = get_all_admin_ids()
+    if new_admin_id in current:
+        return False
+    current.append(new_admin_id)
+    extras = [str(i) for i in current if i not in settings.ADMIN_IDS]
+    set_system_setting("extra_admin_ids", ",".join(extras))
+    return True
+
+def remove_admin_id(admin_id: int) -> bool:
+    if admin_id in settings.ADMIN_IDS:
+        return False
+    current = get_all_admin_ids()
+    if admin_id in current:
+        current.remove(admin_id)
+        extras = [str(i) for i in current if i not in settings.ADMIN_IDS]
+        set_system_setting("extra_admin_ids", ",".join(extras))
+        return True
+    return False
+
+def restore_from_backup_data(backup_data: dict) -> dict:
+    import secrets
+    data = backup_data.get("data", backup_data)
+    users = data.get("users", [])
+    comm = data.get("community_state", [])
+    referrals = data.get("referrals", [])
+    game_sessions = data.get("game_sessions", [])
+
+    conn = get_db_connection()
+    users_restored = 0
+    refs_restored = 0
+    games_restored = 0
+    with conn:
+        if comm and len(comm) > 0:
+            c = comm[0]
+            conn.execute(
+                "UPDATE community_state SET total_sparks = ?, target_sparks = ?, current_stage = ? WHERE id = 1",
+                (c.get("total_sparks", 0), c.get("target_sparks", settings.GLOBAL_MILESTONE_TARGET), c.get("current_stage", 0))
+            )
+
+        for u in users:
+            tid = u.get("telegram_id")
+            if not tid:
+                continue
+            existing = conn.execute("SELECT id FROM users WHERE telegram_id = ?", (tid,)).fetchone()
+            if existing:
+                conn.execute(
+                    '''UPDATE users SET username = ?, first_name = ?, gharana_id = ?, points_total = ?,
+                       diya_wicks = ?, tier_level = ?, referral_points_earned = ?, shubh_refill_date = ?,
+                       joined_groups = ? WHERE telegram_id = ?''',
+                    (
+                        u.get("username"), u.get("first_name"), u.get("gharana_id", 1),
+                        u.get("points_total", 0), u.get("diya_wicks", 10), u.get("tier_level", 0),
+                        u.get("referral_points_earned", 0), u.get("shubh_refill_date"),
+                        u.get("joined_groups", 0), tid
+                    )
+                )
+            else:
+                conn.execute(
+                    '''INSERT INTO users (telegram_id, username, first_name, gharana_id, points_total,
+                       diya_wicks, tier_level, referral_points_earned, shubh_refill_date, joined_groups)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                    (
+                        tid, u.get("username"), u.get("first_name"), u.get("gharana_id", 1),
+                        u.get("points_total", 0), u.get("diya_wicks", 10), u.get("tier_level", 0),
+                        u.get("referral_points_earned", 0), u.get("shubh_refill_date"),
+                        u.get("joined_groups", 0)
+                    )
+                )
+            users_restored += 1
+
+        for r in referrals:
+            r_id = r.get("referrer_id")
+            ref_id = r.get("referred_id")
+            if r_id and ref_id and r_id != ref_id:
+                try:
+                    conn.execute(
+                        '''INSERT INTO referrals (referrer_id, referred_id, is_companion, bonus_awarded)
+                           VALUES (?, ?, ?, ?)''',
+                        (r_id, ref_id, r.get("is_companion", 0), r.get("bonus_awarded", 0))
+                    )
+                    refs_restored += 1
+                except Exception:
+                    pass
+
+        for g in game_sessions:
+            gid = g.get("id")
+            if gid:
+                try:
+                    conn.execute(
+                        '''INSERT INTO game_sessions (id, telegram_id, game_type, seed, nonce, score_awarded, duration_ms, is_valid)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                        (gid, g.get("telegram_id"), g.get("game_type", 1), g.get("seed", "restored"),
+                         g.get("nonce", secrets.token_hex(8)), g.get("score_awarded", 1),
+                         g.get("duration_ms", 15000), g.get("is_valid", 1))
+                    )
+                    games_restored += 1
+                except Exception:
+                    pass
+
+    conn.close()
+    return {
+        "success": True,
+        "users_restored": users_restored,
+        "referrals_restored": refs_restored,
+        "games_restored": games_restored
+    }

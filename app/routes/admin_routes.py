@@ -12,7 +12,8 @@ from app.database import get_db_connection, calculate_tier, get_tier_name, gener
 router = APIRouter(prefix="/api/admin", tags=["Admin Operations"])
 
 def check_admin(admin_id: int):
-    if admin_id not in settings.ADMIN_IDS:
+    from app.database import get_all_admin_ids
+    if admin_id not in get_all_admin_ids():
         raise HTTPException(status_code=403, detail="Unauthorized: Admin privileges required.")
 
 @router.post("/add_points", response_model=AdminAddPointsResponse)

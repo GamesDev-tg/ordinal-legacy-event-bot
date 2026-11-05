@@ -150,5 +150,36 @@ class TestAdmin(unittest.TestCase):
         self.assertEqual(comm["total_sparks"], 0)
         self.assertEqual(comm["current_stage"], 0)
 
+    def test_dynamic_admins_and_settings(self):
+        from app.database import (
+            get_all_admin_ids, add_admin_id, remove_admin_id,
+            get_system_setting, set_system_setting, restore_from_backup_data,
+            generate_full_backup
+        )
+        # Test settings
+        set_system_setting("test_key", "test_val")
+        self.assertEqual(get_system_setting("test_key"), "test_val")
+
+        # Test add/remove admin
+        new_adm = 888123
+        self.assertNotIn(new_adm, get_all_admin_ids())
+        added = add_admin_id(new_adm)
+        self.assertTrue(added)
+        self.assertIn(new_adm, get_all_admin_ids())
+
+        # Cannot remove super admin
+        super_adm = 1257427765
+        self.assertFalse(remove_admin_id(super_adm))
+
+        # Can remove added admin
+        self.assertTrue(remove_admin_id(new_adm))
+        self.assertNotIn(new_adm, get_all_admin_ids())
+
+        # Test backup & restore
+        backup = generate_full_backup()
+        self.assertIn("users", backup["data"])
+        restored = restore_from_backup_data(backup)
+        self.assertTrue(restored["success"])
+
 if __name__ == "__main__":
     unittest.main()

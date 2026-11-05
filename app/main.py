@@ -50,6 +50,12 @@ async def telegram_webhook(request: Request):
         print(f"Error handling webhook update: {e}")
         return {"ok": False, "error": str(e)}
 
+@app.get("/api/cron/backup")
+async def api_cron_backup():
+    from app.bot import dispatch_backup_snapshot
+    ok = await dispatch_backup_snapshot(reason="Automated 6-Hour Scheduled Cron")
+    return {"ok": ok, "message": "6-hour backup snapshot dispatched to recovery group" if ok else "Backup group not configured or dispatch completed"}
+
 @app.get("/api/sync_commands")
 async def api_sync_commands():
     from app.bot import sync_telegram_bot_commands

@@ -7,10 +7,80 @@ from typing import Dict, Any, Optional
 from app.config import settings
 from app.database import (
     get_db_connection, calculate_tier, get_tier_name, get_stage_info,
-    generate_full_backup, reset_event_data
+    generate_full_backup, reset_event_data, get_all_admin_ids, add_admin_id,
+    remove_admin_id, get_effective_logs_chat_id, get_effective_backup_chat_id,
+    set_system_setting, get_system_setting, restore_from_backup_data
 )
 from app.referral_engine import process_referral_claim
 from app.game_engine import claim_shubh_refill, update_user_stamina
+
+def is_admin(user_id: int) -> bool:
+    return user_id in get_all_admin_ids()
+
+async def send_bot_log(text: str):
+    print(f"[BOT LOG]: {text}")
+    logs_chat = get_effective_logs_chat_id()
+    if logs_chat and settings.BOT_TOKEN != "mock_bot_token_for_dev":
+        try:
+            await send_telegram_message(logs_chat, f"📋 *[EVENT BOT LOG]*\n{text}")
+        except Exception as e:
+            print(f"[BOT LOG ERROR]: {e}")
+
+async def dispatch_backup_snapshot(reason: str = "Manual Admin Snapshot", target_chat_id: Optional[int] = None) -> bool:
+    snap = generate_full_backup()
+    json_bytes = json.dumps(snap, default=str, indent=2).encode("utf-8")
+    now = datetime.datetime.now(datetime.timezone.utc)
+    now_str = now.strftime("%Y%m%d_%H%M%S")
+    filename = f"ordinal_event_backup_{now_str}.json"
+    
+    caption = (
+        f"🛡️ *MAHA DEEPOTSAV DATA RECOVERY SNAPSHOT*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📍 *Trigger*: {reason}\n"
+        f"👥 *Total Players*: `{snap['total_users']:,}`\n"
+        f"🔥 *Community Sparks*: `{snap['community_sparks']:,}`\n"
+        f"🎮 *Valid Game Runs*: `{snap['total_games']:,}`\n"
+        f"🤝 *Referral Bonds*: `{snap['total_referrals']:,}`\n"
+        f"⏰ *Timestamp*: `{now.strftime('%Y-%m-%d %H:%M:%S UTC')}`\n\n"
+        f"_Automated recovery snapshot created with zero data loss._"
+    )
+    
+    dest_chats = set()
+    configured_backup = get_effective_backup_chat_id()
+    if configured_backup:
+        dest_chats.add(configured_backup)
+    if target_chat_id:
+        dest_chats.add(target_chat_id)
+        
+    sent_any = False
+    for cid in dest_chats:
+        ok = await send_telegram_document(cid, json_bytes, filename, caption)
+        if ok:
+            sent_any = True
+            
+    # Update timestamp in system_settings
+    set_system_setting("last_backup_time", now.isoformat())
+    await send_bot_log(f"📦 *Data Recovery Snapshot Dispatched*: Reason: `{reason}`. Saved `{snap['total_users']}` users, `{snap['community_sparks']}` sparks.")
+    return sent_any
+
+async def check_and_trigger_auto_backup() -> bool:
+    backup_chat = get_effective_backup_chat_id()
+    if not backup_chat:
+        return False
+    
+    last_str = get_system_setting("last_backup_time")
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if last_str:
+        try:
+            last_dt = datetime.datetime.fromisoformat(last_str)
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.replace(tzinfo=datetime.timezone.utc)
+            if (now - last_dt).total_seconds() < 6 * 3600:
+                return False
+        except Exception:
+            pass
+            
+    return await dispatch_backup_snapshot(reason="Automated 6-Hour Recovery Cycle")
 
 async def send_telegram_message(chat_id: int, text: str, reply_markup: Optional[Dict[str, Any]] = None):
     if settings.BOT_TOKEN == "mock_bot_token_for_dev":
@@ -82,6 +152,7 @@ async def sync_telegram_bot_commands() -> bool:
         {"command": "top", "description": "View top 10 lampbearers on leaderboard"},
         {"command": "gharanas", "description": "View all 4 Gharana house standings"},
         {"command": "tiers", "description": "View milestone ladder & rewards (Coins, Pearl...)"},
+        {"command": "admins", "description": "View authorized event administrators"},
         {"command": "help", "description": "Show festival guide & all commands"}
     ]
     url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/setMyCommands"
@@ -98,7 +169,7 @@ async def check_telegram_membership(user_id: int, chat_identifier: str) -> bool:
     Check if user is a member/admin/creator of a Telegram channel or group.
     Returns True if confirmed member or admin. Returns False otherwise.
     """
-    if settings.BOT_TOKEN == "mock_bot_token_for_dev" or user_id in settings.ADMIN_IDS:
+    if settings.BOT_TOKEN == "mock_bot_token_for_dev" or is_admin(user_id):
         return True
     
     chat_handle = chat_identifier
@@ -123,7 +194,7 @@ async def check_telegram_membership(user_id: int, chat_identifier: str) -> bool:
         return False
 
 async def verify_user_all_groups(user_id: int) -> tuple[bool, list]:
-    if user_id in settings.ADMIN_IDS:
+    if is_admin(user_id):
         return True, []
 
     groups = [
@@ -342,6 +413,50 @@ async def handle_bot_message(message: Dict[str, Any]):
         print(f"[REGISTRATION ERROR]: {e}")
         user = {"gharana_id": 1, "points_total": 0, "tier_level": 0, "diya_wicks": 10, "joined_groups": 0}
 
+    # 1. Background 6-hour automatic backup check
+    try:
+        await check_and_trigger_auto_backup()
+    except Exception as e:
+        print(f"[AUTO BACKUP ERROR]: {e}")
+
+    # 2. Check for document upload with /restore
+    doc = message.get("document")
+    caption = message.get("caption", "").strip()
+    if doc and caption.startswith("/restore"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required to restore backups.")
+            await send_bot_log(f"🚨 *Security Alert*: Non-admin `{user_id}` attempted to upload `/restore` file.")
+            return
+
+        file_id = doc.get("file_id")
+        file_name = doc.get("file_name", "backup.json")
+        try:
+            get_file_url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/getFile?file_id={file_id}"
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                res_info = await client.get(get_file_url)
+                file_path = res_info.json().get("result", {}).get("file_path")
+                if not file_path:
+                    await send_telegram_message(chat_id, "❌ Could not retrieve file path from Telegram.")
+                    return
+                down_url = f"https://api.telegram.org/file/bot{settings.BOT_TOKEN}/{file_path}"
+                file_resp = await client.get(down_url)
+                backup_data = file_resp.json()
+
+            res_restored = restore_from_backup_data(backup_data)
+            success_msg = (
+                f"✅ *Database Restored from File: {file_name}* 🎉\n\n"
+                f"• Restored Players: *{res_restored['users_restored']}*\n"
+                f"• Restored Referrals: *{res_restored['referrals_restored']}*\n"
+                f"• Restored Game Runs: *{res_restored['games_restored']}*\n\n"
+                f"All player scores, wicks, and community sparks are fully operational."
+            )
+            await send_telegram_message(chat_id, success_msg)
+            await send_bot_log(f"🔄 *Database Restored*: Admin `{user_id}` restored `{file_name}` ({res_restored['users_restored']} players).")
+            return
+        except Exception as e:
+            await send_telegram_message(chat_id, f"❌ *Restore Failed*: Invalid JSON or schema error: `{str(e)}`")
+            return
+
     # Reset gate test command
     if text in ("/resetgate", "/testgate"):
         conn = get_db_connection()
@@ -350,8 +465,14 @@ async def handle_bot_message(message: Dict[str, Any]):
         await send_telegram_message(chat_id, "🔄 Group verification gate reset to 0! Send /start now to see the 3 group join buttons.")
         return
 
-    # Mandatory 3 Group Links Gate before entering the game (Applies to all users)
-    if not user.get("joined_groups", 0) and text not in ("/verify", "verify") and not text.startswith("/bypassverify"):
+    # Public commands that anyone can run even before joining groups:
+    allowed_unverified = (
+        "/verify", "verify", "/admins", "/findadmins", "/help", "/tiers",
+        "/status", "/mydata", "/profile", "/data"
+    )
+
+    # Mandatory 3 Group Links Gate before entering the game (Applies to all users unless admin or running info commands)
+    if not user.get("joined_groups", 0) and not is_admin(user_id) and text not in allowed_unverified and not text.startswith(("/bypassverify", "/admin")):
         gate_text = (
             f"🪔 *Welcome to Ordinal Legacy Maha Deepotsav, {first_name}!* 🪔\n\n"
             f"Before entering the sacred arena, you must join our 3 official community groups:\n\n"
@@ -372,8 +493,8 @@ async def handle_bot_message(message: Dict[str, Any]):
         return
 
     if text.startswith("/bypassverify"):
-        if user_id not in settings.ADMIN_IDS:
-            await send_telegram_message(chat_id, "⛔ *Unauthorized*: Admin privileges required.")
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
             return
         parts = text.split()
         target_uid = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else user_id
@@ -615,14 +736,206 @@ async def handle_bot_message(message: Dict[str, Any]):
         await send_telegram_message(chat_id, msg)
         return
 
-    elif text.startswith("/add"):
-        if user_id not in settings.ADMIN_IDS:
-            await send_telegram_message(chat_id, "⛔ *Unauthorized*: Admin privileges required.")
+    elif text in ("/admins", "/findadmins"):
+        admins = get_all_admin_ids()
+        conn = get_db_connection()
+        admin_lines = []
+        for a_id in admins:
+            u = conn.execute("SELECT username, first_name FROM users WHERE telegram_id = ?", (a_id,)).fetchone()
+            name_str = f" (@{u['username']})" if u and u["username"] else (f" ({u['first_name']})" if u and u["first_name"] else "")
+            super_tag = " 🌟 [Super Admin]" if a_id == 1257427765 else ""
+            admin_lines.append(f"• ID: `{a_id}`{name_str}{super_tag}")
+        conn.close()
+        
+        admin_msg = (
+            f"👑 *Maha Deepotsav Event Administrators:*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            + "\n".join(admin_lines) + "\n\n"
+            f"🔒 _Notice: All game modification, SQL querying, and database commands are strictly locked to authorized administrators._"
+        )
+        await send_telegram_message(chat_id, admin_msg)
+        return
+
+    elif text in ("/admin", "/adminhelp"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: You do not have administrator privileges.")
+            await send_bot_log(f"🚨 *Security Alert*: Unauthorized user `{user_id}` attempted to access `/adminhelp`.")
+            return
+        admin_help = (
+            f"👑 *MAHA DEEPOTSAV: ADMIN COMMAND CENTER*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"👥 *Player Management:*\n"
+            f"• `/userinfo <id/@user>` — Deep dossier on player\n"
+            f"• `/setpoints <id> <pts>` — Set exact hard sparks score\n"
+            f"• `/addpoints <id> <pts>` — Add/deduct sparks (also `/add`)\n"
+            f"• `/setwicks <id> <0-10>` — Set user's diya wicks\n"
+            f"• `/resetwicks <id>` — Refill user to 10/10 wicks\n"
+            f"• `/setgharana <id> <1-4>` — Transfer Gharana (1=Surya, 2=Agni, 3=Chandra, 4=Vayu)\n"
+            f"• `/bypassverify <id>` — Manually grant group verification\n"
+            f"• `/unverify <id>` — Reset verification status to unverified\n\n"
+            f"📢 *Broadcast & Milestones:*\n"
+            f"• `/broadcast <msg>` — Send announcement to all players\n"
+            f"• `/setsparks <num>` — Set Akhand Jyoti community sparks\n\n"
+            f"🛡️ *Logs & Data Recovery Groups:*\n"
+            f"• `/setlogschat <chat_id>` — Set Bot Logs Telegram Group\n"
+            f"• `/setbackupchat <chat_id>` — Set Bot Recovery Telegram Group\n"
+            f"• `/getchats` — View configured Logs & Recovery Groups\n"
+            f"• `/testlog` — Send test ping to Logs & Recovery groups\n"
+            f"• `/backup` — Trigger immediate backup snapshot\n"
+            f"• `/restore` — Instructions to restore backup file\n\n"
+            f"👑 *Admin Management:*\n"
+            f"• `/addadmin <id>` — Add new administrator\n"
+            f"• `/deladmin <id>` — Remove administrator\n"
+            f"• `/admins` — View list of administrators\n\n"
+            f"⚙️ *Database & Maintenance:*\n"
+            f"• `/query <SQL>` — Execute raw SQL query (Admin Only)\n"
+            f"• `/exportrewards` — Export player rewards breakdown\n"
+            f"• `/resetevent CONFIRM` — Reset event (auto-backup first)\n"
+            f"• `/syncbot` — Synchronize public commands in BotFather"
+        )
+        await send_telegram_message(chat_id, admin_help)
+        return
+
+    elif text.startswith("/addadmin"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            await send_bot_log(f"🚨 *Security Alert*: User `{user_id}` tried to use `/addadmin`.")
+            return
+        parts = text.split()
+        if len(parts) != 2 or not parts[1].isdigit():
+            await send_telegram_message(chat_id, "Usage: `/addadmin <telegram_id>`")
+            return
+        new_admin = int(parts[1])
+        if add_admin_id(new_admin):
+            await send_telegram_message(chat_id, f"✅ Administrator `{new_admin}` added successfully!")
+            await send_bot_log(f"👑 Admin `{user_id}` added new admin `{new_admin}`.")
+        else:
+            await send_telegram_message(chat_id, f"ℹ️ `{new_admin}` is already an administrator.")
+        return
+
+    elif text.startswith("/deladmin"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            await send_bot_log(f"🚨 *Security Alert*: User `{user_id}` tried to use `/deladmin`.")
+            return
+        parts = text.split()
+        if len(parts) != 2 or not parts[1].isdigit():
+            await send_telegram_message(chat_id, "Usage: `/deladmin <telegram_id>`")
+            return
+        target_admin = int(parts[1])
+        if target_admin == 1257427765:
+            await send_telegram_message(chat_id, "⛔ Cannot remove primary Super Admin.")
+            return
+        if remove_admin_id(target_admin):
+            await send_telegram_message(chat_id, f"✅ Administrator `{target_admin}` removed successfully.")
+            await send_bot_log(f"👑 Admin `{user_id}` removed admin `{target_admin}`.")
+        else:
+            await send_telegram_message(chat_id, f"❌ Administrator `{target_admin}` not found or cannot be removed.")
+        return
+
+    elif text.startswith("/setlogschat"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+        parts = text.split()
+        if len(parts) != 2:
+            await send_telegram_message(chat_id, "Usage: `/setlogschat <chat_id>`\nExample: `/setlogschat -1001234567890`")
+            return
+        new_cid = parts[1].strip()
+        set_system_setting("logs_chat_id", new_cid)
+        await send_telegram_message(chat_id, f"✅ Bot Logs Group ID set to `{new_cid}`.")
+        await send_bot_log(f"🔔 *Bot Logs Group Connected!* Real-time operational logs will be streamed here.")
+        return
+
+    elif text.startswith("/setbackupchat"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+        parts = text.split()
+        if len(parts) != 2:
+            await send_telegram_message(chat_id, "Usage: `/setbackupchat <chat_id>`\nExample: `/setbackupchat -1009876543210`")
+            return
+        new_cid = parts[1].strip()
+        set_system_setting("backup_chat_id", new_cid)
+        await send_telegram_message(chat_id, f"✅ Bot Recovery Data Group ID set to `{new_cid}`. Sending initial backup verification...")
+        try:
+            ok = await dispatch_backup_snapshot(reason="Initial Recovery Group Binding", target_chat_id=int(new_cid))
+            if ok:
+                await send_telegram_message(chat_id, f"🎉 Verification backup snapshot successfully delivered to `{new_cid}`!")
+            else:
+                await send_telegram_message(chat_id, f"⚠️ Configured, but failed to send initial file. Make sure bot is added as admin in `{new_cid}`.")
+        except Exception as e:
+            await send_telegram_message(chat_id, f"⚠️ Configured with warning: {e}")
+        return
+
+    elif text == "/getchats":
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+        logs_c = get_effective_logs_chat_id()
+        backup_c = get_effective_backup_chat_id()
+        last_b = get_system_setting("last_backup_time", "None")
+        msg = (
+            f"📡 *Configured Group Channels:*\n\n"
+            f"• *Bot Logs Group*: `{logs_c or 'Not Configured'}`\n"
+            f"• *Bot Recovery Data Group*: `{backup_c or 'Not Configured'}`\n"
+            f"• *Last 6-Hr Auto-Backup*: `{last_b}`\n\n"
+            f"_Use `/setlogschat <id>` and `/setbackupchat <id>` to update._"
+        )
+        await send_telegram_message(chat_id, msg)
+        return
+
+    elif text == "/testlog":
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+        await send_bot_log(f"🧪 *Test Log Ping* triggered by admin `{user_id}`. Operational log system active.")
+        await send_telegram_message(chat_id, "✅ Test log ping dispatched!")
+        return
+
+    elif text.startswith("/setpoints"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            await send_bot_log(f"🚨 *Security Alert*: User `{user_id}` tried to use `/setpoints`.")
+            return
+        parts = text.split()
+        if len(parts) != 3 or not parts[1].isdigit() or not parts[2].isdigit():
+            await send_telegram_message(chat_id, "Usage: `/setpoints <telegram_id> <points>`")
+            return
+        target_id = int(parts[1])
+        new_pts = int(parts[2])
+        new_tier = calculate_tier(new_pts)
+        conn = get_db_connection()
+        with conn:
+            target = conn.execute("SELECT points_total FROM users WHERE telegram_id = ?", (target_id,)).fetchone()
+            if not target:
+                conn.close()
+                await send_telegram_message(chat_id, f"❌ Player `{target_id}` not found.")
+                return
+            diff = new_pts - target["points_total"]
+            conn.execute("UPDATE users SET points_total = ?, tier_level = ? WHERE telegram_id = ?", (new_pts, new_tier, target_id))
+            if diff != 0:
+                conn.execute("UPDATE community_state SET total_sparks = GREATEST(0, total_sparks + ?) WHERE id = 1", (diff,))
+            comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
+            comm_total = comm["total_sparks"] if comm else 0
+        conn.close()
+        await send_telegram_message(
+            chat_id,
+            f"✅ *Score Updated*: User `{target_id}` points set to *{new_pts}* ({get_tier_name(new_tier)}).\n"
+            f"• Community Total: *{comm_total:,} Sparks*"
+        )
+        await send_bot_log(f"✏️ Admin `{user_id}` set points for `{target_id}` to `{new_pts}`.")
+        return
+
+    elif text.startswith(("/add", "/addpoints")):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            await send_bot_log(f"🚨 *Security Alert*: User `{user_id}` tried to use `/addpoints`.")
             return
             
         parts = text.split()
         if len(parts) != 3 or not parts[1].isdigit() or not parts[2].lstrip("-").isdigit():
-            await send_telegram_message(chat_id, "Usage: `/add <telegram_id> <points>`")
+            await send_telegram_message(chat_id, "Usage: `/addpoints <telegram_id> <points>`")
             return
             
         target_id = int(parts[1])
@@ -633,7 +946,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             target = conn.execute("SELECT points_total FROM users WHERE telegram_id = ?", (target_id,)).fetchone()
             if not target:
                 conn.close()
-                await send_telegram_message(chat_id, f"User `{target_id}` not found.")
+                await send_telegram_message(chat_id, f"❌ Player `{target_id}` not found.")
                 return
                 
             new_pts = max(0, target["points_total"] + pts)
@@ -653,11 +966,114 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"• New User Score: *{new_pts}* ({get_tier_name(new_tier)})\n"
             f"• Community Total: *{comm_total:,} Sparks*"
         )
+        await send_bot_log(f"✨ Admin `{user_id}` adjusted points for `{target_id}` by `{pts}`.")
+        return
+
+    elif text.startswith("/setwicks"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+        parts = text.split()
+        if len(parts) != 3 or not parts[1].isdigit() or not parts[2].isdigit():
+            await send_telegram_message(chat_id, "Usage: `/setwicks <telegram_id> <0-10>`")
+            return
+        target_id = int(parts[1])
+        wicks_val = min(10, max(0, int(parts[2])))
+        conn = get_db_connection()
+        with conn:
+            u = conn.execute("SELECT first_name FROM users WHERE telegram_id = ?", (target_id,)).fetchone()
+            if not u:
+                conn.close()
+                await send_telegram_message(chat_id, f"❌ Player `{target_id}` not found.")
+                return
+            conn.execute("UPDATE users SET diya_wicks = ? WHERE telegram_id = ?", (wicks_val, target_id))
+        conn.close()
+        await send_telegram_message(chat_id, f"✅ Diya Wicks set to *{wicks_val}/10* for `{target_id}` ({u['first_name']}).")
+        await send_bot_log(f"🪔 Admin `{user_id}` updated wicks for `{target_id}` to `{wicks_val}`.")
+        return
+
+    elif text.startswith("/setgharana"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+        parts = text.split()
+        if len(parts) != 3 or not parts[1].isdigit() or parts[2] not in ("1", "2", "3", "4"):
+            await send_telegram_message(chat_id, "Usage: `/setgharana <telegram_id> <1-4>`\n1=Surya, 2=Agni, 3=Chandra, 4=Vayu")
+            return
+        target_id = int(parts[1])
+        new_gid = int(parts[2])
+        g_name = settings.GHARANAS.get(new_gid)
+        conn = get_db_connection()
+        with conn:
+            u = conn.execute("SELECT first_name FROM users WHERE telegram_id = ?", (target_id,)).fetchone()
+            if not u:
+                conn.close()
+                await send_telegram_message(chat_id, f"❌ Player `{target_id}` not found.")
+                return
+            conn.execute("UPDATE users SET gharana_id = ? WHERE telegram_id = ?", (new_gid, target_id))
+        conn.close()
+        await send_telegram_message(chat_id, f"✅ User `{target_id}` ({u['first_name']}) transferred to *{g_name}*!")
+        await send_bot_log(f"🏰 Admin `{user_id}` moved `{target_id}` to `{g_name}`.")
+        return
+
+    elif text.startswith("/setsparks"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+        parts = text.split()
+        if len(parts) != 2 or not parts[1].isdigit():
+            await send_telegram_message(chat_id, "Usage: `/setsparks <sparks>`\nExample: `/setsparks 50000`")
+            return
+        new_sparks = int(parts[1])
+        new_stage, stage_name = get_stage_info(new_sparks)
+        conn = get_db_connection()
+        with conn:
+            conn.execute("UPDATE community_state SET total_sparks = ?, current_stage = ? WHERE id = 1", (new_sparks, new_stage))
+        conn.close()
+        await send_telegram_message(chat_id, f"🔥 *Akhand Diya Sparks Updated*: `{new_sparks:,}` Sparks ({stage_name}).")
+        await send_bot_log(f"🔥 Admin `{user_id}` set community sparks to `{new_sparks:,}`.")
+        return
+
+    elif text.startswith("/unverify"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+        parts = text.split()
+        target_uid = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else user_id
+        conn = get_db_connection()
+        conn.execute("UPDATE users SET joined_groups = 0 WHERE telegram_id = ?", (target_uid,))
+        conn.close()
+        await send_telegram_message(chat_id, f"🔒 User `{target_uid}` status set to *Unverified*.")
+        await send_bot_log(f"🛡️ Admin `{user_id}` unverified user `{target_uid}`.")
+        return
+
+    elif text.startswith("/broadcast"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+        bc_msg = text[len("/broadcast"):].strip()
+        if not bc_msg:
+            await send_telegram_message(chat_id, "Usage: `/broadcast <message>`")
+            return
+        conn = get_db_connection()
+        user_rows = conn.execute("SELECT telegram_id FROM users").fetchall()
+        conn.close()
+        
+        sent_count = 0
+        formatted = f"📢 *FESTIVAL BROADCAST*\n━━━━━━━━━━━━━━━━━━━━━━\n{bc_msg}"
+        for row in user_rows:
+            target_uid = row["telegram_id"]
+            ok = await send_telegram_message(target_uid, formatted)
+            if ok:
+                sent_count += 1
+        await send_telegram_message(chat_id, f"✅ Broadcast delivered to *{sent_count}/{len(user_rows)}* registered players.")
+        await send_bot_log(f"📢 Admin `{user_id}` broadcasted to `{sent_count}` users.")
         return
 
     elif text.startswith("/query"):
-        if user_id not in settings.ADMIN_IDS:
-            await send_telegram_message(chat_id, "⛔ *Unauthorized*: Admin privileges required.")
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: You do not have permission to execute SQL queries.")
+            await send_bot_log(f"🚨 *CRITICAL SECURITY ALERT*: Unauthorized user `{user_id}` attempted to execute SQL query: `{text}`")
             return
         
         query_str = text[len("/query"):].strip()
@@ -666,8 +1082,8 @@ async def handle_bot_message(message: Dict[str, Any]):
             return
         
         upper_q = query_str.upper()
-        if not (upper_q.startswith("SELECT") or upper_q.startswith("UPDATE")):
-            await send_telegram_message(chat_id, "⚠️ Only `SELECT` and `UPDATE` queries are permitted.")
+        if not (upper_q.startswith("SELECT") or upper_q.startswith("UPDATE") or upper_q.startswith("INSERT")):
+            await send_telegram_message(chat_id, "⚠️ Only `SELECT`, `UPDATE`, and `INSERT` queries are permitted.")
             return
         
         forbidden = ["DROP", "ALTER", "ATTACH", "DETACH", "PRAGMA", "VACUUM"]
@@ -697,7 +1113,8 @@ async def handle_bot_message(message: Dict[str, Any]):
                 with conn:
                     cur.execute(query_str)
                     affected = cur.rowcount
-                await send_telegram_message(chat_id, f"✅ *Update Executed*: `{affected}` rows affected.")
+                await send_telegram_message(chat_id, f"✅ *Statement Executed*: `{affected}` rows affected.")
+                await send_bot_log(f"💾 Admin `{user_id}` executed query: `{query_str[:80]}` ({affected} rows affected).")
         except Exception as e:
             await send_telegram_message(chat_id, f"❌ *Query Error*: `{str(e)}`")
         finally:
@@ -705,6 +1122,9 @@ async def handle_bot_message(message: Dict[str, Any]):
         return
 
     elif text.startswith(("/findtier", "/tierusers")):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
         parts = text.split()
         if len(parts) < 2 or not parts[1].isdigit() or int(parts[1]) not in range(6):
             await send_telegram_message(chat_id, "Usage: `/findtier <0-5>`\nExample: `/findtier 5` to view Akhand Sovereigns.")
@@ -736,7 +1156,10 @@ async def handle_bot_message(message: Dict[str, Any]):
         await send_telegram_message(chat_id, msg)
         return
 
-    elif text.startswith("/user"):
+    elif text.startswith(("/userinfo", "/user")):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
         parts = text.split()
         if len(parts) < 2:
             await send_telegram_message(chat_id, "Usage: `/user <telegram_id or username>`")
@@ -809,8 +1232,8 @@ async def handle_bot_message(message: Dict[str, Any]):
         return
 
     elif text.startswith("/resetwicks"):
-        if user_id not in settings.ADMIN_IDS:
-            await send_telegram_message(chat_id, "⛔ *Unauthorized*: Admin privileges required.")
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
             return
         parts = text.split()
         if len(parts) != 2 or not parts[1].isdigit():
@@ -827,33 +1250,39 @@ async def handle_bot_message(message: Dict[str, Any]):
             conn.execute("UPDATE users SET diya_wicks = ? WHERE telegram_id = ?", (settings.STAMINA_BANK_CAP, target_id))
         conn.close()
         await send_telegram_message(chat_id, f"✅ Restored full Diya Wicks (10/10) for `{target_id}` ({u['first_name']}).")
+        await send_bot_log(f"🪔 Admin `{user_id}` restored full wicks (10/10) for `{target_id}`.")
         return
 
-    elif text == "/backup":
-        if user_id not in settings.ADMIN_IDS:
-            await send_telegram_message(chat_id, "⛔ *Unauthorized*: Admin privileges required.")
+    elif text in ("/backup", "/snapshot"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
             return
-        snap = generate_full_backup()
-        json_bytes = json.dumps(snap, default=str, indent=2).encode("utf-8")
-        now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S")
-        filename = f"ordinal_event_backup_{now_str}.json"
-        caption = (
-            f"📦 *Ordinal Event Complete Database Backup*\n\n"
-            f"• *Timestamp*: `{snap['timestamp_utc']}`\n"
-            f"• *Registered Users*: `{snap['total_users']:,}`\n"
-            f"• *Referral Bonds*: `{snap['total_referrals']:,}`\n"
-            f"• *Game Sessions*: `{snap['total_games']:,}`\n"
-            f"• *Akhand Sparks*: `{snap['community_sparks']:,}`\n\n"
-            f"🛡️ _Complete JSON snapshot generated with zero data loss._"
+        await send_telegram_message(chat_id, "⏳ Generating complete database snapshot and dispatching to Recovery Group...")
+        ok = await dispatch_backup_snapshot(reason=f"Manual Admin Request by {user_id}", target_chat_id=chat_id)
+        if ok:
+            await send_telegram_message(chat_id, "✅ Database backup snapshot dispatched successfully!")
+        else:
+            await send_telegram_message(chat_id, "⚠️ Backup generation encountered an issue. Check server logs.")
+        return
+
+    elif text.startswith("/restore"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+        msg = (
+            "📥 *Database Recovery / Restore Procedure*\n\n"
+            "To restore the database from a backup JSON snapshot:\n"
+            "1. Locate any `.json` backup file generated by `/backup` or automatic 6-hour backup.\n"
+            "2. Send/upload that file directly to this bot chat.\n"
+            "3. Set the file caption to `/restore`.\n\n"
+            "⚠️ *Note*: Restoring will import all users, referrals, and community sparks from the snapshot."
         )
-        sent = await send_telegram_document(chat_id, json_bytes, filename, caption)
-        if not sent:
-            await send_telegram_message(chat_id, "⚠️ Backup generated but failed to transmit document. Check server logs.")
+        await send_telegram_message(chat_id, msg)
         return
 
     elif text.startswith("/resetevent"):
-        if user_id not in settings.ADMIN_IDS:
-            await send_telegram_message(chat_id, "⛔ *Unauthorized*: Admin privileges required.")
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
             return
         parts = text.split()
         if len(parts) < 2 or parts[1].upper() != "CONFIRM":
@@ -867,16 +1296,8 @@ async def handle_bot_message(message: Dict[str, Any]):
             await send_telegram_message(chat_id, warn_msg)
             return
 
-        # Automatic safety backup first
-        snap = generate_full_backup()
-        json_bytes = json.dumps(snap, default=str, indent=2).encode("utf-8")
-        now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S")
-        await send_telegram_document(
-            chat_id,
-            json_bytes,
-            f"pre_reset_backup_{now_str}.json",
-            "🛡️ *Pre-Reset Safety Backup Attached*\n_Snapshot saved before event scores were reset._"
-        )
+        # Automatic safety backup first dispatched to recovery group & admin chat
+        await dispatch_backup_snapshot(reason=f"Pre-Reset Safety Snapshot by Admin {user_id}", target_chat_id=chat_id)
 
         # Perform reset
         reset_event_data()
@@ -890,6 +1311,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"• Gameplay history cleared for fresh event cycle\n\n"
             f"✨ The new event arena is ready for participants!"
         )
+        await send_bot_log(f"🔄 *Event Reset Executed* by Admin `{user_id}`. Safety backup snapshot was dispatched.")
         return
 
     elif text == "/stats":
@@ -1059,12 +1481,12 @@ async def handle_bot_message(message: Dict[str, Any]):
         return
 
     elif text == "/syncbot":
-        if user_id not in settings.ADMIN_IDS:
-            await send_telegram_message(chat_id, "⛔ *Unauthorized*: Admin privileges required.")
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
             return
         ok = await sync_telegram_bot_commands()
         if ok:
-            await send_telegram_message(chat_id, "✅ *Telegram Bot Commands Synchronized!* All 14 player commands are now visible in the Telegram menu button.")
+            await send_telegram_message(chat_id, "✅ *Telegram Bot Commands Synchronized!* All player commands are now visible in the Telegram menu button.")
         else:
             await send_telegram_message(chat_id, "⚠️ Failed to sync commands. Check bot token or server logs.")
         return
@@ -1088,21 +1510,14 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"/widget — View or generate the pinned channel Akhand Diya widget\n"
             f"/gharanas — View live Gharana house standings\n"
             f"/tiers — View milestone ladder & rewards (Coins, Pearl...)\n"
-            f"/findtier <0-5> — View players in a specific reward tier\n"
-            f"/user <id/@username> — Inspect user profile details\n"
             f"/stats — View global event metrics and statistics\n"
+            f"/admins — View festival management administrators\n"
             f"/help — Show this command menu\n"
         )
-        if user_id in settings.ADMIN_IDS:
+        if is_admin(user_id):
             help_text += (
-                f"\n👑 *Admin Commands:*\n"
-                f"`/syncbot` — Synchronize public commands with Telegram BotFather\n"
-                f"`/backup` — Download complete database snapshot (.json)\n"
-                f"`/resetevent` — Reset scores & sparks for new event cycle\n"
-                f"`/query SELECT ...` — Query database\n"
-                f"`/query UPDATE ...` — Update database values\n"
-                f"`/add <user_id> <points>` — Manually adjust points\n"
-                f"`/resetwicks <user_id>` — Restore full wicks (10/10)\n"
+                f"\n👑 *Admin Control Panel:*\n"
+                f"You have administrative privileges. Type `/adminhelp` or `/admin` to view all event management, points adjustment, backup/recovery, and logging commands."
             )
         await send_telegram_message(chat_id, help_text)
 
