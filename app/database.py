@@ -538,10 +538,15 @@ def restore_from_backup_data(backup_data: dict) -> dict:
 def purge_dummy_data() -> dict:
     conn = get_db_connection()
     with conn:
-        # Keep real admin (1257427765) and any real users with genuine Telegram IDs (> 8 digits)
+        # Delete specific non-real test IDs
+        conn.execute("DELETE FROM users WHERE telegram_id IN (99998888, 999888777, 1087968824)")
+        conn.execute("DELETE FROM game_sessions WHERE telegram_id IN (99998888, 999888777, 1087968824)")
+        conn.execute("DELETE FROM referrals WHERE referrer_id IN (99998888, 999888777, 1087968824) OR referred_id IN (99998888, 999888777, 1087968824)")
+
+        # Keep real admin (1257427765) and genuine Telegram users
         conn.execute('''
             DELETE FROM users 
-            WHERE telegram_id != 1257427765 
+            WHERE telegram_id NOT IN (1257427765, 6621196996) 
               AND (
                   username LIKE 'test_%' 
                   OR username LIKE 'target_%' 

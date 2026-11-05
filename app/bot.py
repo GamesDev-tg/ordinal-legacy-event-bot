@@ -238,6 +238,23 @@ def register_user_if_new(telegram_id: int, username: str, first_name: str) -> di
                 (telegram_id, username, first_name, assigned_gharana)
             )
             user = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
+        else:
+            # Dynamically update username or first_name if changed or missing
+            need_update = False
+            cur_username = user["username"] or ""
+            cur_first_name = user["first_name"] or ""
+            if username and username != cur_username:
+                cur_username = username
+                need_update = True
+            if first_name and first_name != cur_first_name and first_name != "Lampbearer":
+                cur_first_name = first_name
+                need_update = True
+            if need_update:
+                conn.execute(
+                    "UPDATE users SET username = ?, first_name = ? WHERE telegram_id = ?",
+                    (cur_username, cur_first_name, telegram_id)
+                )
+                user = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
     conn.close()
     return dict(user)
 
@@ -753,7 +770,7 @@ async def handle_bot_message(message: Dict[str, Any]):
         for a_id in admins:
             u = conn.execute("SELECT username, first_name FROM users WHERE telegram_id = ?", (a_id,)).fetchone()
             name_str = f" (@{u['username']})" if u and u["username"] else (f" ({u['first_name']})" if u and u["first_name"] else "")
-            super_tag = " 🌟 [Super Admin]" if a_id == 1257427765 else ""
+            super_tag = " 👑 [Sudo]" if a_id == 1257427765 else ""
             admin_lines.append(f"• ID: `{a_id}`{name_str}{super_tag}")
         conn.close()
         
@@ -835,7 +852,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             return
         target_admin = int(parts[1])
         if target_admin == 1257427765:
-            await send_telegram_message(chat_id, "⛔ Cannot remove primary Super Admin.")
+            await send_telegram_message(chat_id, "⛔ Cannot remove primary Sudo administrator.")
             return
         if remove_admin_id(target_admin):
             await send_telegram_message(chat_id, f"✅ Administrator `{target_admin}` removed successfully.")
@@ -1058,6 +1075,32 @@ async def handle_bot_message(message: Dict[str, Any]):
         await send_bot_log(f"🛡️ Admin `{user_id}` unverified user `{target_uid}`.")
         return
 
+    elif text.startswith("/deleteuser"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+        parts = text.split()
+        if len(parts) != 2 or not parts[1].isdigit():
+            await send_telegram_message(chat_id, "Usage: `/deleteuser <telegram_id>`")
+            return
+        target_uid = int(parts[1])
+        if target_uid == 1257427765:
+            await send_telegram_message(chat_id, "❌ Cannot delete Sudo administrator.")
+            return
+        conn = get_db_connection()
+        with conn:
+            conn.execute("DELETE FROM users WHERE telegram_id = ?", (target_uid,))
+            conn.execute("DELETE FROM game_sessions WHERE telegram_id = ?", (target_uid,))
+            conn.execute("DELETE FROM referrals WHERE referrer_id = ? OR referred_id = ?", (target_uid, target_uid))
+            row = conn.execute("SELECT COALESCE(SUM(points_total), 0) as s FROM users").fetchone()
+            valid_sparks = row["s"] if row else 0
+            stage, _ = get_stage_info(valid_sparks)
+            conn.execute("UPDATE community_state SET total_sparks = ?, current_stage = ? WHERE id = 1", (valid_sparks, stage))
+        conn.close()
+        await send_telegram_message(chat_id, f"🗑️ User `{target_uid}` deleted from database. Akhand sparks updated to {valid_sparks:,}.")
+        await send_bot_log(f"🗑️ Sudo `{user_id}` deleted user `{target_uid}`.")
+        return
+
     elif text.startswith("/broadcast"):
         if not is_admin(user_id):
             await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
@@ -1093,8 +1136,8 @@ async def handle_bot_message(message: Dict[str, Any]):
             return
         
         upper_q = query_str.upper()
-        if not (upper_q.startswith("SELECT") or upper_q.startswith("UPDATE") or upper_q.startswith("INSERT")):
-            await send_telegram_message(chat_id, "⚠️ Only `SELECT`, `UPDATE`, and `INSERT` queries are permitted.")
+        if not (upper_q.startswith("SELECT") or upper_q.startswith("UPDATE") or upper_q.startswith("INSERT") or upper_q.startswith("DELETE")):
+            await send_telegram_message(chat_id, "⚠️ Only `SELECT`, `UPDATE`, `INSERT`, and `DELETE` queries are permitted.")
             return
         
         forbidden = ["DROP", "ALTER", "ATTACH", "DETACH", "PRAGMA", "VACUUM"]
