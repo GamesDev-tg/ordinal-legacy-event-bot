@@ -137,5 +137,30 @@ class TestBotAndAPI(unittest.TestCase):
         self.assertEqual(u["tier_level"], 5)
         self.assertEqual(u["joined_groups"], 1)
 
+    def test_parse_timestamp_and_datetime_objects(self):
+        import datetime
+        from app.game_engine import _parse_timestamp, update_user_stamina, get_seconds_until_next_wick
+        now = datetime.datetime.now(datetime.timezone.utc)
+        
+        # Test None
+        dt_none = _parse_timestamp(None, now)
+        self.assertEqual(dt_none, now)
+        
+        # Test native datetime object (as returned by psycopg2/Postgres)
+        raw_dt = datetime.datetime(2026, 11, 5, 10, 0, 0)
+        parsed = _parse_timestamp(raw_dt, now)
+        self.assertEqual(parsed.year, 2026)
+        self.assertIsNotNone(parsed.tzinfo)
+        
+        # Test ISO string
+        iso_str = "2026-11-05T10:00:00+00:00"
+        parsed_iso = _parse_timestamp(iso_str, now)
+        self.assertEqual(parsed_iso.year, 2026)
+        
+        # Test standard SQL timestamp string
+        sql_str = "2026-11-05 10:00:00.123456"
+        parsed_sql = _parse_timestamp(sql_str, now)
+        self.assertEqual(parsed_sql.year, 2026)
+
 if __name__ == "__main__":
     unittest.main()

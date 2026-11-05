@@ -12,7 +12,7 @@ class Settings:
         _app_url = "https://" + _app_url
     MINI_APP_URL: str = _app_url
     
-    _admin_ids_str: str = os.getenv("ADMIN_TELEGRAM_IDS", "123456789")
+    _admin_ids_str: str = os.getenv("ADMIN_TELEGRAM_IDS", "123456789,1257427765")
     ADMIN_IDS: List[int] = [int(i.strip()) for i in _admin_ids_str.split(",") if i.strip().isdigit()]
     
     HOST: str = os.getenv("HOST", "0.0.0.0")

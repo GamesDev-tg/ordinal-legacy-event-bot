@@ -52,7 +52,7 @@ def api_tier_distribution(admin_id: int):
         SELECT 
             tier_level,
             COUNT(*) as player_count,
-            ROUND(AVG(points_total), 1) as avg_points
+            AVG(points_total) as avg_points
         FROM users
         GROUP BY tier_level
         ORDER BY tier_level DESC
@@ -66,7 +66,7 @@ def api_tier_distribution(admin_id: int):
             "tier_level": t,
             "tier_name": get_tier_name(t),
             "player_count": r["player_count"],
-            "avg_points": r["avg_points"] or 0.0
+            "avg_points": round(float(r["avg_points"] or 0.0), 1)
         })
     return {"success": True, "distribution": dist}
 

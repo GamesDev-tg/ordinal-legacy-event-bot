@@ -68,22 +68,33 @@ class PostgresConnectionWrapper:
         return PostgresCursorWrapper(raw_cur)
 
     def commit(self):
-        self._conn.commit()
+        try:
+            if not getattr(self._conn, "autocommit", False):
+                self._conn.commit()
+        except Exception:
+            pass
 
     def rollback(self):
-        self._conn.rollback()
+        try:
+            if not getattr(self._conn, "autocommit", False):
+                self._conn.rollback()
+        except Exception:
+            pass
 
     def close(self):
-        self._conn.close()
+        try:
+            self._conn.close()
+        except Exception:
+            pass
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         if exc_type:
-            self._conn.rollback()
+            self.rollback()
         else:
-            self._conn.commit()
+            self.commit()
 
 def get_db_connection():
     if is_postgres():

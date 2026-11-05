@@ -21,7 +21,7 @@ def api_community_state():
             u.gharana_id,
             COUNT(u.id) as total_members,
             SUM(u.points_total) as total_points,
-            ROUND(AVG(u.points_total), 1) as avg_points
+            AVG(u.points_total) as avg_points
         FROM users u
         GROUP BY u.gharana_id
         ORDER BY avg_points DESC, total_points DESC
@@ -35,7 +35,7 @@ def api_community_state():
             "name": settings.GHARANAS.get(gid, f"Gharana {gid}"),
             "members": r["total_members"],
             "total_points": r["total_points"] or 0,
-            "avg_points": r["avg_points"] or 0.0
+            "avg_points": round(float(r["avg_points"] or 0.0), 1)
         })
     conn.close()
     

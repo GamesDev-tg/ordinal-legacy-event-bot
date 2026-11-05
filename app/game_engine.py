@@ -5,6 +5,26 @@ from fastapi import HTTPException
 from app.config import settings
 from app.database import get_db_connection, calculate_tier, get_tier_name, get_stage_info
 
+def _parse_timestamp(val, default_dt: datetime.datetime) -> datetime.datetime:
+    if not val:
+        return default_dt
+    if isinstance(val, datetime.datetime):
+        if val.tzinfo is None:
+            return val.replace(tzinfo=datetime.timezone.utc)
+        return val
+    if isinstance(val, str):
+        try:
+            dt = datetime.datetime.fromisoformat(val)
+        except Exception:
+            try:
+                dt = datetime.datetime.strptime(val.split('.')[0], "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                return default_dt
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        return dt
+    return default_dt
+
 def update_user_stamina(conn, telegram_id: int) -> int:
     user = conn.execute("SELECT diya_wicks, last_wick_regen FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
     if not user:
@@ -16,14 +36,7 @@ def update_user_stamina(conn, telegram_id: int) -> int:
     if current_wicks >= settings.STAMINA_BANK_CAP:
         return current_wicks
     
-    last_regen_str = user["last_wick_regen"]
-    try:
-        last_regen = datetime.datetime.fromisoformat(last_regen_str)
-    except Exception:
-        last_regen = datetime.datetime.strptime(last_regen_str.split('.')[0], "%Y-%m-%d %H:%M:%S")
-        
-    if last_regen.tzinfo is None:
-        last_regen = last_regen.replace(tzinfo=datetime.timezone.utc)
+    last_regen = _parse_timestamp(user["last_wick_regen"], now)
         
     elapsed_minutes = (now - last_regen).total_seconds() / 60.0
     new_wicks_gained = int(elapsed_minutes // settings.STAMINA_REGEN_MINUTES)
@@ -45,16 +58,9 @@ def get_seconds_until_next_wick(conn, telegram_id: int) -> int:
     if not user or user["diya_wicks"] >= settings.STAMINA_BANK_CAP:
         return 0
     
-    last_regen_str = user["last_wick_regen"]
-    try:
-        last_regen = datetime.datetime.fromisoformat(last_regen_str)
-    except Exception:
-        last_regen = datetime.datetime.strptime(last_regen_str.split('.')[0], "%Y-%m-%d %H:%M:%S")
-        
-    if last_regen.tzinfo is None:
-        last_regen = last_regen.replace(tzinfo=datetime.timezone.utc)
-        
     now = datetime.datetime.now(datetime.timezone.utc)
+    last_regen = _parse_timestamp(user["last_wick_regen"], now)
+        
     elapsed_seconds = (now - last_regen).total_seconds()
     period_seconds = settings.STAMINA_REGEN_MINUTES * 60
     remaining = period_seconds - (elapsed_seconds % period_seconds)
