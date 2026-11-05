@@ -56,6 +56,12 @@ async def api_cron_backup():
     ok = await dispatch_backup_snapshot(reason="Automated 6-Hour Scheduled Cron")
     return {"ok": ok, "message": "6-hour backup snapshot dispatched to recovery group" if ok else "Backup group not configured or dispatch completed"}
 
+@app.get("/api/cron/referrals")
+def api_cron_referrals():
+    from app.referral_engine import reconcile_all_referrals
+    res = reconcile_all_referrals()
+    return {"ok": True, "result": res}
+
 @app.get("/api/sync_commands")
 async def api_sync_commands():
     from app.bot import sync_telegram_bot_commands

@@ -113,3 +113,45 @@ def send_companion_wick_gift(sender_id: int) -> dict:
     conn.close()
     
     return {"success": True, "message": "Sent 1 free Diya Wick to your companion!"}
+
+def reconcile_all_referrals() -> dict:
+    """
+    Background Job Queue & Reconciliation:
+    Recounts all actual referrals from the ground-truth `referrals` table for every user.
+    Synchronizes `referral_points_earned`, `points_total`, and `tier_level` to ensure
+    zero lost referral counts or missed points.
+    """
+    conn = get_db_connection()
+    synced_users = 0
+    try:
+        with conn:
+            # Aggregate all actual referred friends per referrer
+            rows = conn.execute('''
+                SELECT referrer_id, COUNT(id) as actual_refs, COALESCE(SUM(bonus_awarded), 0) as total_bonus
+                FROM referrals
+                GROUP BY referrer_id
+            ''').fetchall()
+            
+            for r in rows:
+                ref_id = r["referrer_id"]
+                actual_refs = r["actual_refs"]
+                # Cap bonus points at settings.MAX_REFERRAL_POINTS (15)
+                target_earned = min(settings.MAX_REFERRAL_POINTS, actual_refs)
+                
+                u = conn.execute("SELECT points_total, referral_points_earned FROM users WHERE telegram_id = ?", (ref_id,)).fetchone()
+                if u:
+                    current_earned = u["referral_points_earned"]
+                    if current_earned != target_earned:
+                        diff = target_earned - current_earned
+                        new_total = max(0, u["points_total"] + diff)
+                        new_tier = calculate_tier(new_total)
+                        conn.execute(
+                            "UPDATE users SET points_total = ?, referral_points_earned = ?, tier_level = ? WHERE telegram_id = ?",
+                            (new_total, target_earned, new_tier, ref_id)
+                        )
+                        synced_users += 1
+    except Exception as e:
+        print(f"[RECONCILE ERROR]: {e}")
+    finally:
+        conn.close()
+    return {"status": "ok", "synced_users": synced_users}

@@ -33,6 +33,7 @@ async function authenticateUser(initData) {
         const data = await resp.json();
         if (resp.ok && data.success) {
             currentUser = data.user;
+            await checkAndClaimReferral();
             updateUI(data);
             return;
         }
@@ -53,10 +54,58 @@ async function authenticateUser(initData) {
         if (fallbackData.success) {
             currentUser = fallbackData.user;
             authHeader = `dev_user_${tgId}`;
+            await checkAndClaimReferral();
             updateUI(fallbackData);
         }
     } catch (e2) {
         console.error("Fallback auth error:", e2);
+    }
+}
+
+async function checkAndClaimReferral() {
+    try {
+        const tg = window.Telegram?.WebApp;
+        const urlParams = new URLSearchParams(window.location.search);
+        let startParam = tg?.initDataUnsafe?.start_param || urlParams.get('startapp') || urlParams.get('start') || urlParams.get('ref');
+        if (!startParam) return;
+
+        let referrerId = null;
+        if (typeof startParam === 'string') {
+            if (startParam.startsWith('shagun_')) {
+                referrerId = parseInt(startParam.replace('shagun_', ''), 10);
+            } else if (startParam.startsWith('ref_')) {
+                referrerId = parseInt(startParam.replace('ref_', ''), 10);
+            } else if (/^\d+$/.test(startParam)) {
+                referrerId = parseInt(startParam, 10);
+            }
+        }
+
+        if (referrerId && currentUser && referrerId !== currentUser.telegram_id) {
+            const claimResp = await fetch('/api/referral/claim', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': authHeader,
+                    'x-telegram-id': String(currentUser.telegram_id)
+                },
+                body: JSON.stringify({ referrer_telegram_id: referrerId })
+            });
+            const claimData = await claimResp.json();
+            if (claimResp.ok && claimData.success) {
+                console.log("Mini-App referral claimed successfully:", claimData);
+                const refreshResp = await fetch('/api/auth/telegram', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ init_data: authHeader })
+                });
+                const refreshData = await refreshResp.json();
+                if (refreshResp.ok && refreshData.success) {
+                    currentUser = refreshData.user;
+                }
+            }
+        }
+    } catch (e) {
+        console.warn("Could not auto-claim referral via start_param:", e);
     }
 }
 

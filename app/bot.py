@@ -106,6 +106,21 @@ async def check_and_trigger_auto_backup() -> bool:
             
     return await dispatch_backup_snapshot(reason="Automated 6-Hour Recovery Cycle")
 
+_last_ref_reconcile_time = 0
+
+def check_and_trigger_referral_reconciliation():
+    global _last_ref_reconcile_time
+    now = time.time()
+    if now - _last_ref_reconcile_time > 300:
+        _last_ref_reconcile_time = now
+        from app.referral_engine import reconcile_all_referrals
+        try:
+            res = reconcile_all_referrals()
+            if res.get("synced_users", 0) > 0:
+                print(f"[REFERRAL JOB]: Auto-reconciled {res['synced_users']} user accounts.")
+        except Exception as e:
+            print(f"[REFERRAL JOB ERROR]: {e}")
+
 async def send_telegram_message(chat_id: int, text: str, reply_markup: Optional[Dict[str, Any]] = None):
     if settings.BOT_TOKEN == "mock_bot_token_for_dev":
         try:
@@ -548,11 +563,62 @@ async def handle_bot_message(message: Dict[str, Any]):
         print(f"[REGISTRATION ERROR]: {e}")
         user = {"gharana_id": 1, "points_total": 0, "tier_level": 0, "diya_wicks": 10, "joined_groups": 0}
 
-    # 1. Background 6-hour automatic backup check
+    # 1. Background 6-hour automatic backup check & periodic referral count reconciliation job
     try:
         await check_and_trigger_auto_backup()
+        check_and_trigger_referral_reconciliation()
     except Exception as e:
-        print(f"[AUTO BACKUP ERROR]: {e}")
+        print(f"[AUTO BACKUP/RECONCILE ERROR]: {e}")
+
+    # 2. Early Referral Capture: process referral parameters immediately upon /start, /shagun or /bind
+    # This ensures new players who click invite links have their referral recorded BEFORE any group gate!
+    if text.startswith(("/start", "/shagun", "/bind")):
+        parts = text.split()
+        if len(parts) > 1:
+            ref_payload = parts[1].strip()
+            referrer_id = None
+            if ref_payload.startswith("shagun_"):
+                raw_id = ref_payload.replace("shagun_", "")
+                if raw_id.isdigit():
+                    referrer_id = int(raw_id)
+            elif ref_payload.startswith("ref_"):
+                raw_id = ref_payload.replace("ref_", "")
+                if raw_id.isdigit():
+                    referrer_id = int(raw_id)
+            elif ref_payload.isdigit():
+                referrer_id = int(ref_payload)
+            
+            if referrer_id and referrer_id != user_id:
+                try:
+                    ref_res = process_referral_claim(referrer_id, user_id)
+                    print(f"[REFERRAL SUCCESS]: Player {user_id} successfully bound to referrer {referrer_id}")
+                    friend_tag = f"@{username}" if username else first_name
+                    if ref_res.get("is_companion"):
+                        await send_telegram_message(
+                            referrer_id,
+                            f"🤝 *New Diya Companion Bound!* 🎉\n\n"
+                            f"Your friend *{friend_tag}* joined through your Shagun link and is now your permanent Diya Companion!\n"
+                            f"• You earned: *+1 Hard Point*\n"
+                            f"• You can now send each other free daily Diya Wicks!"
+                        )
+                        await send_bot_log(f"🤝 *Companion Bound*: `{user_id}` ({friend_tag}) bound with `{referrer_id}` (+1 Pt).")
+                    else:
+                        await send_telegram_message(
+                            referrer_id,
+                            f"🎁 *New Lampbearer Joined!* 🪔\n\n"
+                            f"Your friend *{friend_tag}* joined through your link! (+1 Point added, total: {ref_res.get('referral_points_earned')}/{settings.MAX_REFERRAL_POINTS})."
+                        )
+                        await send_bot_log(f"🎁 *Referral Claimed*: `{user_id}` ({friend_tag}) referred by `{referrer_id}` (+1 Pt).")
+                    
+                    if text.startswith(("/shagun", "/bind")):
+                        await send_telegram_message(chat_id, f"✅ Successfully bound to inviter `{referrer_id}`! {ref_res.get('message', '')}")
+                        return
+                except Exception as e:
+                    detail = getattr(e, "detail", str(e))
+                    print(f"[REFERRAL CLAIM INFO]: {detail}")
+                    if text.startswith(("/shagun", "/bind")):
+                        await send_telegram_message(chat_id, f"ℹ️ {detail}")
+                        return
 
     # 2. Check for document upload with /restore
     caption = message.get("caption", "").strip()
@@ -1742,7 +1808,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"🎁 *Reward Milestones:*\n"
             f"{rew_text}\n\n"
             f"🪔 *Diya Wicks*: *{u['diya_wicks']}/10*\n"
-            f"⚡ *Stamina Speed*: 1 wick every 1 minute\n"
+            f"⚡ *Stamina Speed*: 1 wick every 1–3 mins randomly\n"
             f"✨ *Daily Shubh Muhurat*: {shubh_status}\n\n"
             f"🎮 *Festival Gameplay:*\n"
             f"• Completed Runs: *{total_runs}*\n"
@@ -1773,6 +1839,15 @@ async def handle_bot_message(message: Dict[str, Any]):
             await send_telegram_message(chat_id, "✅ *Telegram Bot Commands Synchronized!* All player commands are now visible in the Telegram menu button.")
         else:
             await send_telegram_message(chat_id, "⚠️ Failed to sync commands. Check bot token or server logs.")
+        return
+
+    elif text == "/syncreferrals":
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+        from app.referral_engine import reconcile_all_referrals
+        res = reconcile_all_referrals()
+        await send_telegram_message(chat_id, f"✅ *Referral Reconciliation Complete*: Synced {res['synced_users']} user accounts with exact referral table records.")
         return
 
     elif text in ("/help", "/commands", "/menu"):
