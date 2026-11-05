@@ -588,11 +588,19 @@ async def handle_bot_message(message: Dict[str, Any]):
             elif ref_payload.isdigit():
                 referrer_id = int(ref_payload)
             
-            if referrer_id and referrer_id != user_id:
+            if referrer_id and referrer_id == user_id:
+                await send_telegram_message(
+                    chat_id,
+                    "⚠️ *Self-Referral Detected*\nYou cannot refer yourself with your own Shagun link. Share your link with friends to earn points and bond companions!"
+                )
+                if not text.startswith("/start"):
+                    return
+            elif referrer_id and referrer_id != user_id:
                 try:
                     ref_res = process_referral_claim(referrer_id, user_id)
                     print(f"[REFERRAL SUCCESS]: Player {user_id} successfully bound to referrer {referrer_id}")
                     friend_tag = f"@{username}" if username else first_name
+                    ref_name = ref_res.get("referrer_name", f"Player {referrer_id}")
                     if ref_res.get("is_companion"):
                         await send_telegram_message(
                             referrer_id,
@@ -601,6 +609,13 @@ async def handle_bot_message(message: Dict[str, Any]):
                             f"• You earned: *+1 Hard Point*\n"
                             f"• You can now send each other free daily Diya Wicks!"
                         )
+                        await send_telegram_message(
+                            chat_id,
+                            f"🤝 *Diya Companion Bond Formed!*\n\n"
+                            f"You are now bonded with *{ref_name}* as Diya Companions!\n"
+                            f"• Your inviter earned: *+1 Point*\n"
+                            f"• You can now exchange free daily Diya Wicks via `/shagun`!"
+                        )
                         await send_bot_log(f"🤝 *Companion Bound*: `{user_id}` ({friend_tag}) bound with `{referrer_id}` (+1 Pt).")
                     else:
                         await send_telegram_message(
@@ -608,16 +623,20 @@ async def handle_bot_message(message: Dict[str, Any]):
                             f"🎁 *New Lampbearer Joined!* 🪔\n\n"
                             f"Your friend *{friend_tag}* joined through your link! (+1 Point added, total: {ref_res.get('referral_points_earned')}/{settings.MAX_REFERRAL_POINTS})."
                         )
+                        await send_telegram_message(
+                            chat_id,
+                            f"🎁 *Shagun Invite Accepted!*\n\n"
+                            f"You joined through *{ref_name}*'s Shagun invite link! +1 Point has been credited to their festival score."
+                        )
                         await send_bot_log(f"🎁 *Referral Claimed*: `{user_id}` ({friend_tag}) referred by `{referrer_id}` (+1 Pt).")
                     
                     if text.startswith(("/shagun", "/bind")):
-                        await send_telegram_message(chat_id, f"✅ Successfully bound to inviter `{referrer_id}`! {ref_res.get('message', '')}")
                         return
                 except Exception as e:
                     detail = getattr(e, "detail", str(e))
                     print(f"[REFERRAL CLAIM INFO]: {detail}")
+                    await send_telegram_message(chat_id, f"ℹ️ *Referral Notice*: {detail}")
                     if text.startswith(("/shagun", "/bind")):
-                        await send_telegram_message(chat_id, f"ℹ️ {detail}")
                         return
 
     # 2. Check for document upload with /restore
@@ -669,7 +688,7 @@ async def handle_bot_message(message: Dict[str, Any]):
     allowed_unverified = (
         "/verify", "verify", "/help", "/commands", "/menu", "/tiers",
         "/status", "/mydata", "/profile", "/data", "/top", "/topusers",
-        "/gharanas", "/leaderboard", "/stats"
+        "/gharanas", "/leaderboard", "/stats", "/shagun", "/bind"
     )
 
     # Mandatory 3 Group Links Gate before entering the game (Applies to all users unless admin or running info commands)
@@ -753,16 +772,6 @@ async def handle_bot_message(message: Dict[str, Any]):
         return
     
     if text.startswith("/start"):
-        parts = text.split()
-        ref_payload = parts[1] if len(parts) > 1 else None
-        
-        if ref_payload and ref_payload.startswith("shagun_"):
-            try:
-                referrer_id = int(ref_payload.replace("shagun_", ""))
-                process_referral_claim(referrer_id, user_id)
-            except Exception:
-                pass
-                
         welcome_text = (
             f"🪔 *Welcome to Ordinal Legacy Maha Deepotsav, {first_name}!* 🪔\n\n"
             f"You have been initiated into the *{settings.GHARANAS[user['gharana_id']]}*!\n"
@@ -859,20 +868,38 @@ async def handle_bot_message(message: Dict[str, Any]):
         await send_telegram_message(chat_id, status_msg)
         return
 
-    elif text == "/shagun":
+    elif text.startswith("/shagun"):
         invite_link = f"https://t.me/{settings.BOT_USERNAME}?start=shagun_{user_id}"
+        conn = get_db_connection()
+        u = conn.execute("SELECT points_total, referral_points_earned FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
+        comp_row = conn.execute('''
+            SELECT u.telegram_id, u.username, u.first_name, u.points_total
+            FROM referrals r
+            JOIN users u ON (u.telegram_id = CASE WHEN r.referrer_id = ? THEN r.referred_id ELSE r.referrer_id END)
+            WHERE (r.referrer_id = ? OR r.referred_id = ?) AND r.is_companion = 1
+        ''', (user_id, user_id, user_id)).fetchone()
+        total_friends_count = conn.execute("SELECT COUNT(id) as c FROM referrals WHERE referrer_id = ?", (user_id,)).fetchone()["c"]
+        conn.close()
+
+        ref_points = u["referral_points_earned"] if u else 0
+        if comp_row:
+            c_name = f"@{comp_row['username']}" if comp_row['username'] else (comp_row['first_name'] or f"Player {comp_row['telegram_id']}")
+            comp_status = f"🤝 *Diya Companion*: *{c_name}* (Bonded & Active)"
+        else:
+            comp_status = "🤝 *Diya Companion*: _None yet_ (Invite your 1st friend to bond!)"
+
         shagun_msg = (
             f"🎁 *Your Diwali Shagun Invite Link:*\n`{invite_link}`\n\n"
-            f"• Your *1st active friend* becomes your bonded *Diya Companion*!\n"
-            f"• You can exchange daily free Diya Wicks with your companion.\n"
-            f"• Extra friends grant *+1 point each* (up to 15 points max)."
+            f"{comp_status}\n"
+            f"• *Invited Friends*: *{total_friends_count}* joined\n"
+            f"• *Referral Points*: *{ref_points}/{settings.MAX_REFERRAL_POINTS} Pts* earned\n\n"
+            f"Share your link with friends! Each friend awards you +1 point towards milestone tier coin rewards, and your 1st companion unlocks daily free wick exchanges!"
         )
-        keyboard = {
-            "inline_keyboard": [
-                [{"text": "📲 Share Invite Link", "url": f"https://t.me/share/url?url={invite_link}&text=Join%20me%20in%20the%20Ordinal%20Legacy%20Diwali%20Maha%20Deepotsav!"}]
-            ]
-        }
-        await send_telegram_message(chat_id, shagun_msg, keyboard)
+        kb_buttons = []
+        if comp_row:
+            kb_buttons.append([{"text": "🎁 Send Free Wick to Companion", "callback_data": f"gift_companion_wick:{user_id}"}])
+        kb_buttons.append([{"text": "📲 Share Invite on Telegram", "url": f"https://t.me/share/url?url={invite_link}&text=Join%20me%20in%20the%20Ordinal%20Legacy%20Diwali%20Maha%20Deepotsav!"}])
+        await send_telegram_message(chat_id, shagun_msg, {"inline_keyboard": kb_buttons})
         return
 
     elif text == "/shubh":
@@ -1008,6 +1035,8 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"• `/resetshubh` — Reset daily Shubh Muhurat refill for all\n"
             f"• `/resetevent CONFIRM` — Full event wipe (auto-backup first)\n"
             f"• `/cleandummy` — Purge mock/test accounts before launch\n"
+            f"• `/syncreferrals` — Reconcile & sync ground-truth referral counts\n"
+            f"• `/resetreferrals CONFIRM` — Clear all referral bonds & reset referral points\n"
             f"• `/query <SQL>` — Execute raw SQL query (Admin Only)\n"
             f"• `/exportrewards` — Export player rewards breakdown\n"
             f"• `/syncbot` — Synchronize public commands in BotFather"
@@ -1630,6 +1659,23 @@ async def handle_bot_message(message: Dict[str, Any]):
         await send_bot_log(f"🔄 Sudo `{user_id}` executed `/resetscores`. Scores reset; {res['users_preserved']} users and {res['referrals_preserved']} referrals preserved.")
         return
 
+    elif text.startswith("/resetreferrals"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+        parts = text.split()
+        if len(parts) < 2 or parts[1].upper() != "CONFIRM":
+            await send_telegram_message(
+                chat_id,
+                "⚠️ *RESET ALL REFERRALS*\n\nThis will clear all referral bonds, companion links, and reset all players' `referral_points_earned` to 0 so you can test freshly.\n\nType `/resetreferrals CONFIRM` to execute."
+            )
+            return
+        from app.referral_engine import reset_all_referrals
+        res = reset_all_referrals()
+        await send_telegram_message(chat_id, f"✅ *Referrals Reset*: {res['message']}")
+        await send_bot_log(f"🔄 Sudo `{user_id}` executed `/resetreferrals`. All referral records cleared.")
+        return
+
     elif text in ("/refillallwicks", "/resetallwicks"):
         if not is_admin(user_id):
             await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
@@ -1980,14 +2026,8 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
         await run_in_chat_mithai(chat_id, user_id)
 
     elif action == "cmd_shagun":
-        invite_link = f"https://t.me/{settings.BOT_USERNAME}?start=shagun_{user_id}"
-        shagun_msg = (
-            f"🎁 *Your Diwali Shagun Invite Link:*\n`{invite_link}`\n\n"
-            f"• Your *1st active friend* becomes your bonded *Diya Companion*!\n"
-            f"• You can exchange daily free Diya Wicks with your companion.\n"
-            f"• Extra friends grant *+1 point each* (up to 15 points max)."
-        )
-        await send_telegram_message(chat_id, shagun_msg)
+        fake_msg = {"chat": {"id": chat_id}, "from": from_user, "text": "/shagun"}
+        await handle_bot_message(fake_msg)
     elif action == "cmd_status":
         fake_msg = {"chat": {"id": chat_id}, "from": from_user, "text": "/status"}
         await handle_bot_message(fake_msg)

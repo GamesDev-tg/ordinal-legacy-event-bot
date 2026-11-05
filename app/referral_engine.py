@@ -11,11 +11,24 @@ def process_referral_claim(referrer_id: int, referred_id: int) -> dict:
     with conn:
         referrer = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (referrer_id,)).fetchone()
         if not referrer:
-            raise HTTPException(status_code=404, detail="Referrer account does not exist.")
+            # Auto-register referrer if not yet created
+            counts = conn.execute('''
+                SELECT g.id, COUNT(u.id) as count 
+                FROM (SELECT 1 as id UNION SELECT 2 UNION SELECT 3 UNION SELECT 4) as g
+                LEFT JOIN users u ON u.gharana_id = g.id
+                GROUP BY g.id ORDER BY count ASC, g.id ASC
+            ''').fetchall()
+            assigned_gharana = counts[0]["id"] if counts else 1
+            conn.execute(
+                '''INSERT INTO users (telegram_id, username, first_name, gharana_id, points_total, diya_wicks, tier_level, joined_groups)
+                   VALUES (?, ?, ?, ?, 0, 10, 0, 0)''',
+                (referrer_id, f"player_{referrer_id}", f"Lampbearer_{referrer_id}", assigned_gharana)
+            )
+            referrer = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (referrer_id,)).fetchone()
         
         existing_ref = conn.execute("SELECT * FROM referrals WHERE referred_id = ?", (referred_id,)).fetchone()
         if existing_ref:
-            raise HTTPException(status_code=400, detail="You have already claimed a referral link.")
+            raise HTTPException(status_code=400, detail=f"Account already linked with an inviter (Referral ID: {existing_ref['referrer_id']}).")
         
         comp_row = conn.execute(
             "SELECT * FROM referrals WHERE referrer_id = ? AND is_companion = 1",
@@ -60,6 +73,7 @@ def process_referral_claim(referrer_id: int, referred_id: int) -> dict:
         else:
             friend_name = referred_user["first_name"] or referred_user["username"] or f"Player_{referred_id}"
         
+        referrer_name = referrer["first_name"] or referrer["username"] or f"Player {referrer_id}"
         total_ref_earned = referrer["referral_points_earned"] + points_to_award
         
     conn.close()
@@ -76,6 +90,7 @@ def process_referral_claim(referrer_id: int, referred_id: int) -> dict:
         "referral_points_earned": total_ref_earned,
         "points_awarded_to_referrer": points_to_award,
         "partner_name": friend_name,
+        "referrer_name": referrer_name,
         "message": msg
     }
 
@@ -155,3 +170,12 @@ def reconcile_all_referrals() -> dict:
     finally:
         conn.close()
     return {"status": "ok", "synced_users": synced_users}
+
+def reset_all_referrals() -> dict:
+    conn = get_db_connection()
+    with conn:
+        conn.execute("DELETE FROM referrals")
+        conn.execute("DELETE FROM partner_wick_gifts")
+        conn.execute("UPDATE users SET referral_points_earned = 0")
+    conn.close()
+    return {"success": True, "message": "All referral and companion records have been cleared."}
