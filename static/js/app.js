@@ -181,7 +181,8 @@ function startWickTimer() {
             return;
         }
         if (secondsUntilNextWick <= 0) {
-            secondsUntilNextWick = 60;
+            // Next wick regenerated! Pick random interval between 60s and 180s (1 to 3 minutes)
+            secondsUntilNextWick = Math.floor(Math.random() * (180 - 60 + 1)) + 60;
             currentUser.diya_wicks = Math.min(10, currentUser.diya_wicks + 1);
             document.getElementById('user-wicks').innerText = `${currentUser.diya_wicks}/10`;
             if (currentUser.diya_wicks >= 10) {
@@ -290,7 +291,7 @@ function setupAudioToggle() {
 
 async function launchMiniGame(gameType) {
     if (!currentUser || currentUser.diya_wicks < 1) {
-        alert("Out of Diya Wicks! Wait 1 minute for stamina regeneration (1 wick every 1 min).");
+        alert("Out of Diya Wicks! Stamina refills 1 wick every 1 to 3 minutes randomly.");
         return;
     }
 

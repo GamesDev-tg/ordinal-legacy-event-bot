@@ -1,9 +1,14 @@
+import random
 import uuid
 import secrets
 import datetime
 from fastapi import HTTPException
 from app.config import settings
 from app.database import get_db_connection, calculate_tier, get_tier_name, get_stage_info
+
+def get_random_wick_cooldown() -> int:
+    """Returns a random stamina refill duration between 1 to 3 minutes (60 to 180 seconds)."""
+    return random.randint(60, 180)
 
 def _parse_timestamp(val, default_dt: datetime.datetime) -> datetime.datetime:
     if not val:
@@ -26,7 +31,11 @@ def _parse_timestamp(val, default_dt: datetime.datetime) -> datetime.datetime:
     return default_dt
 
 def update_user_stamina(conn, telegram_id: int) -> int:
-    user = conn.execute("SELECT diya_wicks, last_wick_regen FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
+    try:
+        user = conn.execute("SELECT diya_wicks, last_wick_regen, wick_cooldown_seconds FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
+    except Exception:
+        user = conn.execute("SELECT diya_wicks, last_wick_regen FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
+
     if not user:
         return 0
     
@@ -37,33 +46,67 @@ def update_user_stamina(conn, telegram_id: int) -> int:
         return current_wicks
     
     last_regen = _parse_timestamp(user["last_wick_regen"], now)
-        
-    elapsed_minutes = (now - last_regen).total_seconds() / 60.0
-    new_wicks_gained = int(elapsed_minutes // settings.STAMINA_REGEN_MINUTES)
-    if new_wicks_gained > 0:
-        total_wicks = min(settings.STAMINA_BANK_CAP, current_wicks + new_wicks_gained)
-        if total_wicks >= settings.STAMINA_BANK_CAP:
+    try:
+        cooldown = user["wick_cooldown_seconds"] or get_random_wick_cooldown()
+    except (IndexError, KeyError):
+        cooldown = get_random_wick_cooldown()
+
+    elapsed_seconds = (now - last_regen).total_seconds()
+    if elapsed_seconds < cooldown:
+        return current_wicks
+
+    # Progressively award wicks for each random 1-3 minute window passed
+    gained = 0
+    temp_wicks = current_wicks
+    curr_cooldown = cooldown
+    rem_elapsed = elapsed_seconds
+
+    while rem_elapsed >= curr_cooldown and temp_wicks < settings.STAMINA_BANK_CAP:
+        rem_elapsed -= curr_cooldown
+        temp_wicks += 1
+        gained += 1
+        curr_cooldown = get_random_wick_cooldown()
+
+    if gained > 0:
+        if temp_wicks >= settings.STAMINA_BANK_CAP:
             new_regen_time = now
+            next_cooldown = get_random_wick_cooldown()
         else:
-            new_regen_time = last_regen + datetime.timedelta(minutes=new_wicks_gained * settings.STAMINA_REGEN_MINUTES)
-        conn.execute(
-            "UPDATE users SET diya_wicks = ?, last_wick_regen = ? WHERE telegram_id = ?",
-            (total_wicks, new_regen_time.isoformat(), telegram_id)
-        )
-        return total_wicks
+            new_regen_time = now - datetime.timedelta(seconds=rem_elapsed)
+            next_cooldown = curr_cooldown
+        
+        try:
+            conn.execute(
+                "UPDATE users SET diya_wicks = ?, last_wick_regen = ?, wick_cooldown_seconds = ? WHERE telegram_id = ?",
+                (temp_wicks, new_regen_time.isoformat(), next_cooldown, telegram_id)
+            )
+        except Exception:
+            conn.execute(
+                "UPDATE users SET diya_wicks = ?, last_wick_regen = ? WHERE telegram_id = ?",
+                (temp_wicks, new_regen_time.isoformat(), telegram_id)
+            )
+        return temp_wicks
+
     return current_wicks
 
 def get_seconds_until_next_wick(conn, telegram_id: int) -> int:
-    user = conn.execute("SELECT diya_wicks, last_wick_regen FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
+    try:
+        user = conn.execute("SELECT diya_wicks, last_wick_regen, wick_cooldown_seconds FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
+    except Exception:
+        user = conn.execute("SELECT diya_wicks, last_wick_regen FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
+
     if not user or user["diya_wicks"] >= settings.STAMINA_BANK_CAP:
         return 0
     
     now = datetime.datetime.now(datetime.timezone.utc)
     last_regen = _parse_timestamp(user["last_wick_regen"], now)
-        
+    try:
+        cooldown = user["wick_cooldown_seconds"] or 120
+    except (IndexError, KeyError):
+        cooldown = 120
+
     elapsed_seconds = (now - last_regen).total_seconds()
-    period_seconds = settings.STAMINA_REGEN_MINUTES * 60
-    remaining = period_seconds - (elapsed_seconds % period_seconds)
+    remaining = cooldown - elapsed_seconds
     return max(0, int(remaining))
 
 def claim_shubh_refill(telegram_id: int) -> dict:
@@ -112,8 +155,15 @@ def start_game_session(telegram_id: int, game_type: int) -> dict:
             raise HTTPException(status_code=400, detail="Out of Diya Wicks! Wait for stamina regeneration.")
         
         now_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        next_cd = get_random_wick_cooldown()
         if wicks == settings.STAMINA_BANK_CAP:
-            conn.execute("UPDATE users SET diya_wicks = diya_wicks - 1, last_wick_regen = ? WHERE telegram_id = ?", (now_str, telegram_id))
+            try:
+                conn.execute(
+                    "UPDATE users SET diya_wicks = diya_wicks - 1, last_wick_regen = ?, wick_cooldown_seconds = ? WHERE telegram_id = ?",
+                    (now_str, next_cd, telegram_id)
+                )
+            except Exception:
+                conn.execute("UPDATE users SET diya_wicks = diya_wicks - 1, last_wick_regen = ? WHERE telegram_id = ?", (now_str, telegram_id))
         else:
             conn.execute("UPDATE users SET diya_wicks = diya_wicks - 1 WHERE telegram_id = ?", (telegram_id,))
         

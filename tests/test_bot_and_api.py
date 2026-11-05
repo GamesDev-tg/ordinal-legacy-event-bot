@@ -162,6 +162,26 @@ class TestBotAndAPI(unittest.TestCase):
         parsed_sql = _parse_timestamp(sql_str, now)
         self.assertEqual(parsed_sql.year, 2026)
 
+    def test_random_stamina_gap_refill(self):
+        import datetime
+        from app.game_engine import update_user_stamina, get_seconds_until_next_wick, get_random_wick_cooldown
+        cd = get_random_wick_cooldown()
+        self.assertGreaterEqual(cd, 60)
+        self.assertLessEqual(cd, 180)
+
+        conn = get_db_connection()
+        past_time = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=250)
+        conn.execute("UPDATE users SET diya_wicks = 7, last_wick_regen = ?, wick_cooldown_seconds = 100 WHERE telegram_id = ?", (past_time.isoformat(), self.user_id))
+        conn.commit()
+
+        # After 250s with 100s initial cooldown, should gain wicks
+        new_wicks = update_user_stamina(conn, self.user_id)
+        self.assertGreater(new_wicks, 7)
+        secs_remaining = get_seconds_until_next_wick(conn, self.user_id)
+        self.assertGreaterEqual(secs_remaining, 0)
+        self.assertLessEqual(secs_remaining, 180)
+        conn.close()
+
 def run_coro_sync(coro):
     while True:
         try:
