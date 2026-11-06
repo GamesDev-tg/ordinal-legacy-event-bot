@@ -27,6 +27,8 @@ class UserProfile(BaseModel):
     seconds_until_next_wick: int = 0
     joined_groups: bool = False
     is_verified: bool = False
+    is_user_boosted: bool = False
+    active_gharana_boost: Optional[Dict[str, Any]] = None
 
 class AuthResponse(BaseModel):
     success: bool
@@ -36,6 +38,7 @@ class AuthResponse(BaseModel):
     current_stage: int
     stage_description: str = ""
     event_paused: bool = False
+    gharana_boost: Optional[Dict[str, Any]] = None
 
 class GameStartRequest(BaseModel):
     game_type: int = Field(..., ge=1, le=3, description="1: Chakri, 2: Rangoli, 3: Mithai")
@@ -62,6 +65,10 @@ class GameFinishResponse(BaseModel):
     tier_name: str
     new_stage: Optional[int] = 0
     stage_description: Optional[str] = ""
+    base_score: Optional[int] = 0
+    is_boosted: Optional[bool] = False
+    multiplier: Optional[int] = 1
+    active_gharana_boost: Optional[Dict[str, Any]] = None
 
 class ReferralClaimRequest(BaseModel):
     referrer_telegram_id: int
@@ -110,6 +117,7 @@ class CommunityStateResponse(BaseModel):
     active_players_count: int
     top_gharanas: List[Dict[str, Any]]
     event_paused: bool = False
+    active_gharana_boost: Optional[Dict[str, Any]] = None
 
 class RewardExportRow(BaseModel):
     rank: int

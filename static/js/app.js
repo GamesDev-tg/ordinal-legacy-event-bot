@@ -72,8 +72,12 @@ document.addEventListener("DOMContentLoaded", async () => {
         refreshUserData();
     });
 
-    // Periodic live stamina & community sparks sync every 2 seconds for real-time progress
-    setInterval(refreshUserData, 2000);
+    // Periodic live stamina & community sparks sync every 5 seconds when tab is active
+    setInterval(() => {
+        if (!document.hidden && document.visibilityState === "visible") {
+            refreshUserData();
+        }
+    }, 5000);
 });
 
 async function refreshUserData() {

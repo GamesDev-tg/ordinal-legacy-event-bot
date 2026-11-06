@@ -553,25 +553,39 @@ def execute_in_chat_game(user_id: int, game_type: int) -> dict:
             
             # Fair scoring: 3 points (45%), 2 points (40%), 1 point (15%)
             roll = random.random()
-            score = 3 if roll < 0.45 else (2 if roll < 0.85 else 1)
+            base_score = 3 if roll < 0.45 else (2 if roll < 0.85 else 1)
             
-            new_pts = u["points_total"] + score
+            # Check active Gharana 2x Boost
+            from app.game_engine import get_gharana_boost_status
+            boost = get_gharana_boost_status()
+            is_boosted = (u["gharana_id"] == boost["active_gharana_id"])
+            multiplier = 2 if is_boosted else 1
+            awarded_score = base_score * multiplier
+            
+            new_pts = u["points_total"] + awarded_score
             new_tier = calculate_tier(new_pts)
             
             conn.execute(
                 "UPDATE users SET points_total = ?, tier_level = ? WHERE telegram_id = ?",
                 (new_pts, new_tier, user_id)
             )
-            conn.execute("UPDATE community_state SET total_sparks = total_sparks + ? WHERE id = 1", (score,))
+            conn.execute("UPDATE community_state SET total_sparks = total_sparks + ? WHERE id = 1", (awarded_score,))
             
-            # Record game session
+            # Record game session (base_score 1-3 preserves CHECK constraint; multiplier recorded in bonus_multiplier)
             sess_id = f"bot_{secrets.token_hex(8)}"
             nonce = secrets.token_hex(8)
-            conn.execute(
-                '''INSERT INTO game_sessions (id, telegram_id, game_type, seed, nonce, score_awarded, duration_ms, is_valid)
-                   VALUES (?, ?, ?, 'bot_in_chat', ?, ?, 15000, 1)''',
-                (sess_id, user_id, game_type, nonce, score)
-            )
+            try:
+                conn.execute(
+                    '''INSERT INTO game_sessions (id, telegram_id, game_type, seed, nonce, score_awarded, bonus_multiplier, duration_ms, is_valid)
+                       VALUES (?, ?, ?, 'bot_in_chat', ?, ?, ?, 15000, 1)''',
+                    (sess_id, user_id, game_type, nonce, base_score, multiplier)
+                )
+            except Exception:
+                conn.execute(
+                    '''INSERT INTO game_sessions (id, telegram_id, game_type, seed, nonce, score_awarded, duration_ms, is_valid)
+                       VALUES (?, ?, ?, 'bot_in_chat', ?, ?, 15000, 1)''',
+                    (sess_id, user_id, game_type, nonce, base_score)
+                )
             
             comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
             comm_total = comm["total_sparks"] if comm else 0
@@ -584,7 +598,11 @@ def execute_in_chat_game(user_id: int, game_type: int) -> dict:
         
         return {
             "success": True,
-            "score": score,
+            "score": awarded_score,
+            "base_score": base_score,
+            "is_boosted": is_boosted,
+            "multiplier": multiplier,
+            "active_boost": boost,
             "new_pts": new_pts,
             "new_tier": new_tier,
             "tier_name": get_tier_name(new_tier),
@@ -657,13 +675,23 @@ async def run_in_chat_chakri(chat_id: int, user_id: int):
             )
             return
         score = res["score"]
-        sparks = "✨" * (score * 4)
+        sparks = "✨" * (score * 3)
+        boost_info = res.get("active_boost", {})
+        if res.get("is_boosted"):
+            boost_header = f"⚡ *MAHA GHARANA 2X SURGE APPLIED!* ⚡\n_Divine blessings! Your house {boost_info.get('active_gharana_name')} receives 2X Sparks!_\n\n"
+            score_text = f"🏆 *Score Awarded*: `+{score} Hard Sparks` ⚡ *(Base: +{res['base_score']} × 2 Boost!)*"
+        else:
+            rem_m = max(1, boost_info.get("seconds_remaining", 0) // 60)
+            boost_header = f"⚡ *Active 2x House*: {boost_info.get('active_gharana_emoji', '')} {boost_info.get('active_gharana_name', '')} ({rem_m}m remaining)\n\n"
+            score_text = f"🏆 *Score Awarded*: `+{score} Hard Sparks`"
+
         msg = (
             f"🌀 *CHAKRI WHIRL: SPARK HARVEST!* 🌀\n\n"
+            f"{boost_header}"
             f"You placed the Sacred Golden Ground Chakri on the courtyard stone.\n"
             f"💥 *FZZZZZZT!* It spins at blazing speed, throwing golden flares into the night sky!\n"
             f"{sparks}\n\n"
-            f"🏆 *Score Awarded*: `+{score} Hard Sparks`\n"
+            f"{score_text}\n"
             f"👤 *Your Total*: *{res['new_pts']} Pts* ({res['tier_name']})\n"
             f"🪔 *Diya Wicks Remaining*: *{res['new_wicks']}/10*\n"
             f"🔥 *Community Akhand Diya*: `{res['community_total']:,} Sparks`"

@@ -2,9 +2,47 @@ import random
 import uuid
 import secrets
 import datetime
+from typing import Optional, Dict, Any, Tuple
 from fastapi import HTTPException
 from app.config import settings
 from app.database import get_db_connection, calculate_tier, get_tier_name, get_stage_info
+
+GHARANA_BOOST_DURATION_SECONDS = 600  # 10 minutes per Gharana
+GHARANA_TOTAL_CYCLE_SECONDS = GHARANA_BOOST_DURATION_SECONDS * 4  # 2400 seconds (40 minutes for all 4 houses)
+
+GHARANA_EMOJIS = {
+    1: "☀️",
+    2: "🔥",
+    3: "🌙",
+    4: "💨"
+}
+
+def get_gharana_boost_status(target_timestamp: Optional[float] = None) -> dict:
+    """
+    Computes the currently boosted Gharana with 2x points multiplier.
+    Rotates every 10 minutes (600 seconds) equally across all 4 Gharanas:
+    1: Surya (☀️) -> 2: Agni (🔥) -> 3: Chandra (🌙) -> 4: Vayu (💨) -> repeats.
+    Guarantees 100% equal opportunity for all teams with zero bias.
+    """
+    import time
+    now = target_timestamp if target_timestamp is not None else time.time()
+    cycle_pos = int(now) % GHARANA_TOTAL_CYCLE_SECONDS
+    active_idx = cycle_pos // GHARANA_BOOST_DURATION_SECONDS
+    active_id = active_idx + 1
+    seconds_remaining = GHARANA_BOOST_DURATION_SECONDS - (cycle_pos % GHARANA_BOOST_DURATION_SECONDS)
+    next_id = (active_id % 4) + 1
+
+    return {
+        "active_gharana_id": active_id,
+        "active_gharana_name": settings.GHARANAS.get(active_id, f"Gharana {active_id}"),
+        "active_gharana_emoji": GHARANA_EMOJIS.get(active_id, "🪔"),
+        "multiplier": 2,
+        "seconds_remaining": seconds_remaining,
+        "duration_seconds": GHARANA_BOOST_DURATION_SECONDS,
+        "next_gharana_id": next_id,
+        "next_gharana_name": settings.GHARANAS.get(next_id, f"Gharana {next_id}"),
+        "next_gharana_emoji": GHARANA_EMOJIS.get(next_id, "🪔")
+    }
 
 def get_random_wick_cooldown() -> int:
     """Returns a random stamina refill duration between 1 to 3 minutes (60 to 180 seconds)."""
@@ -214,20 +252,34 @@ def finish_game_session(telegram_id: int, session_id: str, nonce: str, raw_score
         if session["is_valid"] != 0:
             raise HTTPException(status_code=400, detail="Replay attack detected! Session already finished.")
         
-        conn.execute(
-            "UPDATE game_sessions SET score_awarded = ?, duration_ms = ?, is_valid = 1 WHERE id = ?",
-            (raw_score, duration_ms, session_id)
-        )
-        
-        user = conn.execute("SELECT points_total, tier_level FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
+        user = conn.execute("SELECT points_total, tier_level, gharana_id FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
         old_points = user["points_total"]
         old_tier = user["tier_level"]
-        new_points = old_points + raw_score
+        u_gharana = user["gharana_id"]
+
+        # Calculate 2x Gharana Boost
+        boost = get_gharana_boost_status()
+        is_boosted = (u_gharana == boost["active_gharana_id"])
+        multiplier = 2 if is_boosted else 1
+        awarded_points = raw_score * multiplier
+
+        try:
+            conn.execute(
+                "UPDATE game_sessions SET score_awarded = ?, bonus_multiplier = ?, duration_ms = ?, is_valid = 1 WHERE id = ?",
+                (raw_score, multiplier, duration_ms, session_id)
+            )
+        except Exception:
+            conn.execute(
+                "UPDATE game_sessions SET score_awarded = ?, duration_ms = ?, is_valid = 1 WHERE id = ?",
+                (raw_score, duration_ms, session_id)
+            )
+
+        new_points = old_points + awarded_points
         new_tier = calculate_tier(new_points)
         tier_unlocked = new_tier > old_tier
         
         conn.execute("UPDATE users SET points_total = ?, tier_level = ? WHERE telegram_id = ?", (new_points, new_tier, telegram_id))
-        conn.execute("UPDATE community_state SET total_sparks = total_sparks + ? WHERE id = 1", (raw_score,))
+        conn.execute("UPDATE community_state SET total_sparks = total_sparks + ? WHERE id = 1", (awarded_points,))
         
         comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
         comm_total = comm["total_sparks"]
@@ -239,7 +291,11 @@ def finish_game_session(telegram_id: int, session_id: str, nonce: str, raw_score
     
     return {
         "success": True,
-        "points_awarded": raw_score,
+        "points_awarded": awarded_points,
+        "base_score": raw_score,
+        "is_boosted": is_boosted,
+        "multiplier": multiplier,
+        "active_gharana_boost": boost,
         "new_user_total": new_points,
         "community_total": comm_total,
         "tier_unlocked": tier_unlocked,

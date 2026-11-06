@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from app.models import CommunityStateResponse
 from app.database import get_db_connection, get_stage_info, is_event_paused
+from app.game_engine import get_gharana_boost_status
 from app.config import settings
 from app.cache import get_cache, set_cache
 
@@ -62,6 +63,8 @@ def api_community_state():
     
     paused = is_event_paused()
     
+    boost = get_gharana_boost_status()
+
     resp = CommunityStateResponse(
         total_sparks=total_sparks,
         target_sparks=target_sparks,
@@ -70,7 +73,8 @@ def api_community_state():
         stage_name=stage_name,
         active_players_count=active_count,
         top_gharanas=top_gharanas,
-        event_paused=paused
+        event_paused=paused,
+        active_gharana_boost=boost
     )
     # Cache for 2 seconds to support high concurrency with near-real-time updates
     try:

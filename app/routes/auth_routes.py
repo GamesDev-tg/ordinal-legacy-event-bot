@@ -5,9 +5,29 @@ from app.database import get_db_connection, get_tier_name, get_stage_info
 from app.bot import register_user_if_new
 from app.game_engine import update_user_stamina, get_seconds_until_next_wick
 import datetime
+import time
+import threading
 from app.config import settings
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
+
+_RECENT_APP_LAUNCH_LOGS = {}
+_LAUNCH_LOG_LOCK = threading.Lock()
+
+def _maybe_log_app_launch(telegram_id: int, username: str, method: str = "Mini-App"):
+    now = time.time()
+    with _LAUNCH_LOG_LOCK:
+        last = _RECENT_APP_LAUNCH_LOGS.get(telegram_id, 0)
+        if now - last < 600:  # 10 minute cooldown per player to avoid spamming log GC on refreshes
+            return
+        _RECENT_APP_LAUNCH_LOGS[telegram_id] = now
+        if len(_RECENT_APP_LAUNCH_LOGS) > 3000:
+            cutoff = now - 1200
+            for k in [k for k, v in _RECENT_APP_LAUNCH_LOGS.items() if v < cutoff]:
+                _RECENT_APP_LAUNCH_LOGS.pop(k, None)
+    
+    from app.bot import send_bot_log_sync
+    send_bot_log_sync(f"🌐 Player <code>{telegram_id}</code> (@{username or 'anon'}) launched Maha Deepotsav {method}.")
 
 def get_full_user_profile(telegram_id: int) -> UserProfile:
     conn = get_db_connection()
@@ -52,6 +72,10 @@ def get_full_user_profile(telegram_id: int) -> UserProfile:
     tier_name = get_tier_name(user["tier_level"])
     
     is_v = bool(user["joined_groups"])
+    from app.game_engine import get_gharana_boost_status
+    boost = get_gharana_boost_status()
+    is_boosted = (user["gharana_id"] == boost["active_gharana_id"])
+
     return UserProfile(
         telegram_id=user["telegram_id"],
         username=user["username"],
@@ -74,7 +98,9 @@ def get_full_user_profile(telegram_id: int) -> UserProfile:
         shubh_refill_available=shubh_available,
         seconds_until_next_wick=secs_until_next,
         joined_groups=is_v,
-        is_verified=is_v
+        is_verified=is_v,
+        is_user_boosted=is_boosted,
+        active_gharana_boost=boost
     )
 
 @router.post("/telegram", response_model=AuthResponse)
@@ -113,8 +139,9 @@ def auth_telegram(req: TelegramAuthRequest):
     from app.database import is_event_paused, get_stage_info
     stage_num, stage_desc = get_stage_info(comm["total_sparks"])
     
-    from app.bot import send_bot_log_sync
-    send_bot_log_sync(f"🌐 Player <code>{telegram_id}</code> (@{username or 'anon'}) launched Maha Deepotsav Mini-App.")
+    _maybe_log_app_launch(telegram_id, username, "Mini-App")
+    from app.game_engine import get_gharana_boost_status
+    boost = get_gharana_boost_status()
 
     return AuthResponse(
         success=True,
@@ -123,7 +150,8 @@ def auth_telegram(req: TelegramAuthRequest):
         target_sparks=comm["target_sparks"],
         current_stage=stage_num,
         stage_description=stage_desc,
-        event_paused=is_event_paused()
+        event_paused=is_event_paused(),
+        gharana_boost=boost
     )
 
 @router.get("/demo/{telegram_id}", response_model=AuthResponse)
@@ -136,6 +164,8 @@ def auth_demo(telegram_id: int):
     
     from app.database import is_event_paused, get_stage_info
     stage_num, stage_desc = get_stage_info(comm["total_sparks"])
+    from app.game_engine import get_gharana_boost_status
+    boost = get_gharana_boost_status()
     return AuthResponse(
         success=True,
         user=profile,
@@ -143,7 +173,8 @@ def auth_demo(telegram_id: int):
         target_sparks=comm["target_sparks"],
         current_stage=stage_num,
         stage_description=stage_desc,
-        event_paused=is_event_paused()
+        event_paused=is_event_paused(),
+        gharana_boost=boost
     )
 
 @router.post("/widget", response_model=AuthResponse)
@@ -164,8 +195,9 @@ def auth_widget(data: dict):
     from app.database import is_event_paused, get_stage_info
     stage_num, stage_desc = get_stage_info(comm["total_sparks"])
     
-    from app.bot import send_bot_log_sync
-    send_bot_log_sync(f"🌐 Player <code>{telegram_id}</code> (@{username or 'anon'}) logged in via Web Login Widget.")
+    _maybe_log_app_launch(telegram_id, username, "via Web Login Widget")
+    from app.game_engine import get_gharana_boost_status
+    boost = get_gharana_boost_status()
 
     return AuthResponse(
         success=True,
@@ -174,5 +206,6 @@ def auth_widget(data: dict):
         target_sparks=comm["target_sparks"],
         current_stage=stage_num,
         stage_description=stage_desc,
-        event_paused=is_event_paused()
+        event_paused=is_event_paused(),
+        gharana_boost=boost
     )

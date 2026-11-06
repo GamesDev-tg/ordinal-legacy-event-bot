@@ -221,6 +221,7 @@ def init_postgres_db():
         ALTER TABLE users ADD COLUMN IF NOT EXISTS shubh_refill_date TEXT;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS joined_groups INTEGER DEFAULT 0;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS wick_cooldown_seconds INTEGER DEFAULT 120;
+        ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS bonus_multiplier INTEGER DEFAULT 1;
 
         CREATE INDEX IF NOT EXISTS idx_users_points ON users (points_total DESC);
         CREATE INDEX IF NOT EXISTS idx_users_tier ON users (tier_level);
@@ -326,6 +327,10 @@ def init_sqlite_db():
             pass
         try:
             conn.execute("ALTER TABLE users ADD COLUMN wick_cooldown_seconds INTEGER DEFAULT 120;")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE game_sessions ADD COLUMN bonus_multiplier INTEGER DEFAULT 1;")
         except Exception:
             pass
     conn.close()
