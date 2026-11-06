@@ -387,6 +387,7 @@ async def sync_telegram_bot_commands() -> bool:
         {"command": "shubh", "description": "Claim daily Shubh refill (+5 wicks & pts)"},
         {"command": "shagun", "description": "Get companion referral invite link"},
         {"command": "house", "description": "View your Gharana standing and rank"},
+        {"command": "boost", "description": "View 10-min 2x Gharana Surge schedule"},
         {"command": "top", "description": "View top 10 lampbearers on leaderboard"},
         {"command": "gharanas", "description": "View all 4 Gharana house standings"},
         {"command": "tiers", "description": "View milestone ladder and rewards"},
@@ -753,11 +754,21 @@ async def run_in_chat_rangoli(chat_id: int, user_id: int):
             )
             return
         score = res["score"]
+        boost_info = res.get("active_boost", {})
+        if res.get("is_boosted"):
+            boost_header = f"⚡ *MAHA GHARANA 2X SURGE APPLIED!* ⚡\n_Divine blessings! Your house {boost_info.get('active_gharana_name')} receives 2X Sparks!_\n\n"
+            score_text = f"🏆 *Score Awarded*: `+{score} Hard Sparks` ⚡ *(Base: +{res['base_score']} × 2 Boost!)*"
+        else:
+            rem_m = max(1, boost_info.get("seconds_remaining", 0) // 60)
+            boost_header = f"⚡ *Active 2x House*: {boost_info.get('active_gharana_emoji', '')} {boost_info.get('active_gharana_name', '')} ({rem_m}m remaining)\n\n"
+            score_text = f"🏆 *Score Awarded*: `+{score} Hard Sparks`"
+
         msg = (
             f"🌸 *RANGOLI COLOR SYMPHONY!* 🌸\n\n"
+            f"{boost_header}"
             f"You traced the eight-fold lotus pattern with vibrant herbal powders: Vermilion, Haldi & Indigo!\n"
             f"🪔 The divine diya illuminates the courtyard in sacred geometric harmony.\n\n"
-            f"🏆 *Score Awarded*: `+{score} Hard Sparks`\n"
+            f"{score_text}\n"
             f"👤 *Your Total*: *{res['new_pts']} Pts* ({res['tier_name']})\n"
             f"🪔 *Diya Wicks Remaining*: *{res['new_wicks']}/10*\n"
             f"🔥 *Community Akhand Diya*: `{res['community_total']:,} Sparks`"
@@ -819,11 +830,21 @@ async def run_in_chat_mithai(chat_id: int, user_id: int):
             )
             return
         score = res["score"]
+        boost_info = res.get("active_boost", {})
+        if res.get("is_boosted"):
+            boost_header = f"⚡ *MAHA GHARANA 2X SURGE APPLIED!* ⚡\n_Divine blessings! Your house {boost_info.get('active_gharana_name')} receives 2X Sparks!_\n\n"
+            score_text = f"🏆 *Score Awarded*: `+{score} Hard Sparks` ⚡ *(Base: +{res['base_score']} × 2 Boost!)*"
+        else:
+            rem_m = max(1, boost_info.get("seconds_remaining", 0) // 60)
+            boost_header = f"⚡ *Active 2x House*: {boost_info.get('active_gharana_emoji', '')} {boost_info.get('active_gharana_name', '')} ({rem_m}m remaining)\n\n"
+            score_text = f"🏆 *Score Awarded*: `+{score} Hard Sparks`"
+
         msg = (
             f"🍬 *MITHAI DROP FEAST!* 🍬\n\n"
+            f"{boost_header}"
             f"You gathered the auspicious Diwali Prasad: Motichoor Laddoos, Kaju Katlis & Gulab Jamuns!\n"
             f"✨ Sweet blessings and prosperity shower upon your Gharana.\n\n"
-            f"🏆 *Score Awarded*: `+{score} Hard Sparks`\n"
+            f"{score_text}\n"
             f"👤 *Your Total*: *{res['new_pts']} Pts* ({res['tier_name']})\n"
             f"🪔 *Diya Wicks Remaining*: *{res['new_wicks']}/10*\n"
             f"🔥 *Community Akhand Diya*: `{res['community_total']:,} Sparks`"
