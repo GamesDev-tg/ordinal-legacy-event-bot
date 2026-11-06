@@ -26,6 +26,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def add_performance_headers(request: Request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/static/"):
+        response.headers["Cache-Control"] = "public, max-age=86400, stale-while-revalidate=3600"
+    elif path in ("/", "/index.html"):
+        response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=120"
+    return response
+
 @app.on_event("startup")
 def on_startup():
     init_db()

@@ -4,6 +4,8 @@ let currentSession = null;
 let authHeader = "";
 let wickRegenInterval = null;
 let secondsUntilNextWick = 0;
+let boostCountdownInterval = null;
+let secondsUntilBoostEnds = 0;
 
 function getCurrentUserId() {
     if (currentUser && currentUser.telegram_id) return currentUser.telegram_id;
@@ -359,8 +361,71 @@ function updateUI(authData) {
     document.getElementById('ref-points-count').innerText = `${u.referral_points_earned}/15 Pts`;
     document.getElementById('total-refs-count').innerText = `${u.total_referrals_count} Friends`;
 
+    // Active Gharana 2x Boost Card
+    const boostData = authData.gharana_boost || u.active_gharana_boost;
+    if (boostData) {
+        updateGharanaBoostUI(boostData, u.gharana_id);
+    }
+
     // Highlight user's unlocked tiers in the ladder
     updateTierLadder(u.tier_level);
+}
+
+function updateGharanaBoostUI(boost, userGharanaId) {
+    const card = document.getElementById('gharana-boost-card');
+    const icon = document.getElementById('boost-gharana-icon');
+    const title = document.getElementById('boost-gharana-title');
+    const subtitle = document.getElementById('boost-gharana-subtitle');
+    const badge = document.getElementById('boost-multiplier-badge');
+
+    if (!card || !boost) return;
+
+    if (icon) icon.innerText = boost.active_gharana_emoji || "⚡";
+    if (title) title.innerText = `${boost.active_gharana_name} 2X Surge`;
+
+    const isUserBoosted = (userGharanaId === boost.active_gharana_id);
+    if (isUserBoosted) {
+        card.classList.add('boost-active-for-user');
+        if (subtitle) subtitle.innerText = "🔥 2X ACTIVE FOR YOUR HOUSE! Double sparks on all games!";
+        if (badge) {
+            badge.innerText = "⚡ 2X ACTIVE";
+            badge.style.background = "linear-gradient(135deg, #F59E0B, #EA580C)";
+            badge.style.color = "#000";
+        }
+    } else {
+        card.classList.remove('boost-active-for-user');
+        if (subtitle) subtitle.innerText = `10-min surge • Next: ${boost.next_gharana_emoji || ""} ${boost.next_gharana_name || ""}`;
+        if (badge) {
+            badge.innerText = "1X";
+            badge.style.background = "#334155";
+            badge.style.color = "#94A3B8";
+        }
+    }
+
+    secondsUntilBoostEnds = boost.seconds_remaining || 0;
+    startBoostTimer();
+}
+
+function startBoostTimer() {
+    if (boostCountdownInterval) clearInterval(boostCountdownInterval);
+    const timer = document.getElementById('boost-countdown-timer');
+    if (!timer) return;
+
+    const renderBoostTime = () => {
+        if (secondsUntilBoostEnds <= 0) {
+            timer.innerText = "00:00";
+            if (boostCountdownInterval) clearInterval(boostCountdownInterval);
+            refreshUserData();
+            return;
+        }
+        const m = Math.floor(secondsUntilBoostEnds / 60);
+        const s = secondsUntilBoostEnds % 60;
+        timer.innerText = `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+        secondsUntilBoostEnds--;
+    };
+
+    renderBoostTime();
+    boostCountdownInterval = setInterval(renderBoostTime, 1000);
 }
 
 function updateTierLadder(currentTierLevel) {
@@ -673,6 +738,12 @@ async function onGameFinished(rawScore, durationMs) {
             } else if (resData.community_total >= 200000) {
                 window.festivalAudio?.playSuccessChime();
                 showCelebrationModal("MAHA AKHAND JYOTI IGNITED! 🪔🎆", "Sacred Victory! The community has achieved 200,000 Sparks! The Akhand Diya burns eternally!");
+            } else if (resData.is_boosted) {
+                window.festivalAudio?.playSuccessChime();
+                showCelebrationModal(
+                    "⚡ 2X GHARANA SURGE! 🔥",
+                    `Glorious! Your House is blessed with the 2X Surge!\n\n• Base Score: +${resData.base_score || rawScore} Sparks\n• Multiplier: ⚡ 2X DOUBLE BONUS\n• Sparks Awarded: +${resData.points_awarded} Sparks!\n\n• Your Score: ${resData.new_user_total} Pts\n• Community Total: ${resData.community_total.toLocaleString()} Sparks`
+                );
             } else {
                 window.festivalAudio?.playSuccessChime();
                 showCelebrationModal(
@@ -765,10 +836,14 @@ async function loadCommunityLeaderboard() {
         const listEl = document.getElementById('gharana-list');
         const medals = ["🥇", "🥈", "🥉", "✨"];
         const emblems = { 1: "☀️", 2: "🔥", 3: "🌙", 4: "💨" };
-        listEl.innerHTML = data.top_gharanas.map((g, idx) => `
-            <div class="user-profile-strip" style="margin: 0 0 10px 0; border-left: 3px solid ${idx === 0 ? '#F59E0B' : '#64748B'};">
+        const boostGid = data.active_gharana_boost ? data.active_gharana_boost.active_gharana_id : null;
+        listEl.innerHTML = data.top_gharanas.map((g, idx) => {
+            const isBoosted = (g.gharana_id === boostGid);
+            const boostBadge = isBoosted ? '<span style="background:linear-gradient(135deg, #F59E0B, #EA580C); color:#000; font-size:0.65rem; font-weight:800; padding:2px 6px; border-radius:10px; margin-left:6px; letter-spacing:0.3px; display:inline-block;">⚡ 2X BOOST</span>' : '';
+            return `
+            <div class="user-profile-strip" style="margin: 0 0 10px 0; border-left: 3px solid ${isBoosted ? '#F59E0B' : (idx === 0 ? '#F59E0B' : '#64748B')}; ${isBoosted ? 'box-shadow: 0 0 12px rgba(245, 158, 11, 0.25);' : ''}">
                 <div class="user-tag">
-                    <span class="user-name">${medals[idx] || "•"} ${emblems[g.gharana_id] || ""} ${g.name}</span>
+                    <span class="user-name">${medals[idx] || "•"} ${emblems[g.gharana_id] || ""} ${g.name} ${boostBadge}</span>
                     <span style="font-size:0.75rem; color:#94A3B8;">${g.members} Members • ${g.total_points.toLocaleString()} Total Sparks</span>
                 </div>
                 <div class="user-score-box">
@@ -776,7 +851,8 @@ async function loadCommunityLeaderboard() {
                     <span style="font-size:0.7rem; color:#94A3B8;">avg pts</span>
                 </div>
             </div>
-        `).join('');
+            `;
+        }).join('');
     } catch (e) {
         console.error("Failed to load community state", e);
     }

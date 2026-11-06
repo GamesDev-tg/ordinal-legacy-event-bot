@@ -63,11 +63,11 @@ def set_cache(key: str, value: Any, ttl_seconds: float = 30.0):
 
 def delete_cache(key: str):
     """
-    Invalidates a specific cached key from memory and temp cache file.
+    Invalidates a specific cached key from memory.
+    Disk sync is deferred to maintain ultra-fast sub-millisecond response times.
     """
     with _CACHE_LOCK:
         _MEMORY_CACHE.pop(key, None)
-    _sync_to_disk()
 
 def clear_all_cache():
     """
@@ -83,15 +83,15 @@ def clear_all_cache():
 
 def invalidate_event_cache(user_id: Optional[int] = None):
     """
-    Instantly invalidates all community, leaderboard, and user caches so bot
-    and mini-app display 100% synchronized, up-to-the-millisecond progress.
+    Instantly invalidates all community, leaderboard, and user caches in a single
+    microsecond in-memory operation so bot and mini-app stay 100% synchronized.
     """
-    delete_cache("api_community_state")
-    delete_cache("bot_cmd_top")
-    delete_cache("bot_cmd_stats")
-    delete_cache("bot_cmd_gharanas")
-    delete_cache("bot_cmd_widget")
-    # Also invalidate event pause setting cache so pause/resume takes effect immediately
-    delete_cache("setting_event_paused")
+    keys = [
+        "api_community_state", "bot_cmd_top", "bot_cmd_stats",
+        "bot_cmd_gharanas", "bot_cmd_widget", "setting_event_paused"
+    ]
     if user_id:
-        delete_cache(f"reg_user_{user_id}")
+        keys.extend([f"reg_user_{user_id}", f"verified_{user_id}"])
+    with _CACHE_LOCK:
+        for k in keys:
+            _MEMORY_CACHE.pop(k, None)

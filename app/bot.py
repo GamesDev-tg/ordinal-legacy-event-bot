@@ -102,10 +102,16 @@ def is_user_verified_for_games(user_id: int) -> bool:
     """Checks if user has verified official group membership before playing mini-games."""
     if is_admin(user_id):
         return True
+    cached_v = get_cache(f"verified_{user_id}")
+    if cached_v is not None:
+        return bool(cached_v)
     conn = get_db_connection()
     row = conn.execute("SELECT joined_groups FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
     conn.close()
-    return bool(row and row["joined_groups"])
+    is_v = bool(row and row["joined_groups"])
+    if is_v:
+        set_cache(f"verified_{user_id}", True, ttl_seconds=300.0)
+    return is_v
 
 def escape_md(text: Any) -> str:
     """Escapes HTML entities safely for Telegram messages while preserving underscores in usernames."""
@@ -489,6 +495,10 @@ async def verify_user_all_groups(user_id: int) -> tuple[bool, list]:
     return True, []
 
 def register_user_if_new(telegram_id: int, username: str, first_name: str) -> dict:
+    cache_key = f"reg_user_{telegram_id}"
+    cached = get_cache(cache_key)
+    if cached is not None and (not username or cached.get("username") == username):
+        return cached
     conn = get_db_connection()
     with conn:
         user = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
@@ -526,6 +536,7 @@ def register_user_if_new(telegram_id: int, username: str, first_name: str) -> di
                 user = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
         res_user = dict(user)
     conn.close()
+    set_cache(cache_key, res_user, ttl_seconds=60.0)
     return res_user
 
 def execute_in_chat_game(user_id: int, game_type: int) -> dict:
@@ -964,11 +975,8 @@ async def handle_bot_message(message: Dict[str, Any]):
     try:
         loop = asyncio.get_running_loop()
         loop.create_task(check_and_trigger_auto_backup())
+        loop.run_in_executor(None, check_and_trigger_referral_reconciliation)
     except (RuntimeError, Exception):
-        pass
-    try:
-        check_and_trigger_referral_reconciliation()
-    except Exception:
         pass
 
     # 2. Early Referral Capture: process referral parameters immediately upon /start, /shagun or /bind
