@@ -51,6 +51,7 @@ def get_full_user_profile(telegram_id: int) -> UserProfile:
     gharana_name = settings.GHARANAS.get(user["gharana_id"], "Unknown")
     tier_name = get_tier_name(user["tier_level"])
     
+    is_v = bool(user["joined_groups"])
     return UserProfile(
         telegram_id=user["telegram_id"],
         username=user["username"],
@@ -71,7 +72,9 @@ def get_full_user_profile(telegram_id: int) -> UserProfile:
         tier=user["tier_level"],
         partner=companion_dict,
         shubh_refill_available=shubh_available,
-        seconds_until_next_wick=secs_until_next
+        seconds_until_next_wick=secs_until_next,
+        joined_groups=is_v,
+        is_verified=is_v
     )
 
 @router.post("/telegram", response_model=AuthResponse)
@@ -91,12 +94,20 @@ def auth_telegram(req: TelegramAuthRequest):
     comm = conn.execute("SELECT total_sparks, target_sparks, current_stage FROM community_state WHERE id = 1").fetchone()
     conn.close()
     
+    from app.database import is_event_paused, get_stage_info
+    stage_num, stage_desc = get_stage_info(comm["total_sparks"])
+    
+    from app.bot import send_bot_log_sync
+    send_bot_log_sync(f"🌐 Player <code>{telegram_id}</code> (@{username or 'anon'}) launched Maha Deepotsav Mini-App.")
+
     return AuthResponse(
         success=True,
         user=profile,
         community_sparks=comm["total_sparks"],
         target_sparks=comm["target_sparks"],
-        current_stage=comm["current_stage"]
+        current_stage=stage_num,
+        stage_description=stage_desc,
+        event_paused=is_event_paused()
     )
 
 @router.get("/demo/{telegram_id}", response_model=AuthResponse)
@@ -107,12 +118,16 @@ def auth_demo(telegram_id: int):
     comm = conn.execute("SELECT total_sparks, target_sparks, current_stage FROM community_state WHERE id = 1").fetchone()
     conn.close()
     
+    from app.database import is_event_paused, get_stage_info
+    stage_num, stage_desc = get_stage_info(comm["total_sparks"])
     return AuthResponse(
         success=True,
         user=profile,
         community_sparks=comm["total_sparks"],
         target_sparks=comm["target_sparks"],
-        current_stage=comm["current_stage"]
+        current_stage=stage_num,
+        stage_description=stage_desc,
+        event_paused=is_event_paused()
     )
 
 @router.post("/widget", response_model=AuthResponse)
@@ -130,10 +145,18 @@ def auth_widget(data: dict):
     comm = conn.execute("SELECT total_sparks, target_sparks, current_stage FROM community_state WHERE id = 1").fetchone()
     conn.close()
     
+    from app.database import is_event_paused, get_stage_info
+    stage_num, stage_desc = get_stage_info(comm["total_sparks"])
+    
+    from app.bot import send_bot_log_sync
+    send_bot_log_sync(f"🌐 Player <code>{telegram_id}</code> (@{username or 'anon'}) logged in via Web Login Widget.")
+
     return AuthResponse(
         success=True,
         user=profile,
         community_sparks=comm["total_sparks"],
         target_sparks=comm["target_sparks"],
-        current_stage=comm["current_stage"]
+        current_stage=stage_num,
+        stage_description=stage_desc,
+        event_paused=is_event_paused()
     )

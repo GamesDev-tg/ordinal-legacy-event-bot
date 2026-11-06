@@ -13,8 +13,11 @@ def api_referral_claim(
     x_telegram_id: Optional[str] = Header(None)
 ):
     from app.bot import send_bot_log_sync
+    from app.cache import invalidate_event_cache
     user_id = extract_telegram_id(authorization, x_telegram_id)
     res = process_referral_claim(req.referrer_telegram_id, user_id)
+    invalidate_event_cache(user_id)
+    invalidate_event_cache(req.referrer_telegram_id)
     send_bot_log_sync(f"🤝 *Companion / Shagun Invite*: `{req.referrer_telegram_id}` bonded with `{user_id}` (Companion: {res['is_companion']}).")
     return ReferralClaimResponse(**res)
 
@@ -24,7 +27,9 @@ def api_gift_wick(
     x_telegram_id: Optional[str] = Header(None)
 ):
     from app.bot import send_bot_log_sync
+    from app.cache import invalidate_event_cache
     user_id = extract_telegram_id(authorization, x_telegram_id)
     res = send_companion_wick_gift(user_id)
+    invalidate_event_cache(user_id)
     send_bot_log_sync(f"🪔 *Diya Wick Gift*: Player `{user_id}` gifted a free wick to companion.")
     return GiftWickResponse(**res)

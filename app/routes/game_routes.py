@@ -29,8 +29,8 @@ def extract_telegram_id(authorization: Optional[str], x_telegram_id: Optional[st
         user = conn.execute("SELECT id, joined_groups FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
         conn.close()
 
-    from app.bot import is_admin
-    if not user["joined_groups"] and not is_admin(user_id) and settings.BOT_TOKEN != "mock_bot_token_for_dev":
+    from app.bot import is_admin, is_mock_token
+    if not user["joined_groups"] and not is_admin(user_id) and not is_mock_token():
         raise HTTPException(status_code=403, detail="Unauthorized: You must join all 3 official community groups and verify in the bot first!")
 
     return user_id
@@ -63,6 +63,10 @@ def api_game_start(
             }
         )
     res = start_game_session(user_id, req.game_type)
+    from app.bot import send_bot_log_sync
+    game_names = {1: "Chakri Whirl", 2: "Rangoli Trace", 3: "Mithai Catcher"}
+    g_title = game_names.get(req.game_type, f"Game {req.game_type}")
+    send_bot_log_sync(f"🕹️ Player <code>{user_id}</code> started {g_title} (Wicks remaining: {res['wicks_remaining']}).")
     return GameStartResponse(**res)
 
 @router.post("/captcha_verify")
@@ -76,6 +80,8 @@ def api_captcha_verify(
     answer_idx = int(req.get("answer_index", -1))
     token = req.get("token")
     ok, msg = verify_captcha_answer(user_id, answer_idx, token)
+    from app.bot import send_bot_log_sync
+    send_bot_log_sync(f"🛡️ Player <code>{user_id}</code> Sacred Jyoti Captcha: {'✅ PASSED' if ok else '❌ FAILED'}.")
     res = {"success": ok, "message": msg}
     if not ok:
         new_ch = get_or_create_captcha(user_id)
@@ -93,15 +99,11 @@ def api_game_finish(
     x_telegram_id: Optional[str] = Header(None)
 ):
     from app.bot import send_bot_log_sync
-    from app.cache import delete_cache
+    from app.cache import invalidate_event_cache
     from app.captcha_engine import record_game_play_and_check_captcha
     user_id = extract_telegram_id(authorization, x_telegram_id)
     res = finish_game_session(user_id, req.session_id, req.nonce, req.raw_score, req.duration_ms)
-    delete_cache("api_community_state")
-    delete_cache("bot_cmd_top")
-    delete_cache("bot_cmd_stats")
-    delete_cache("bot_cmd_gharanas")
-    delete_cache("bot_cmd_widget")
+    invalidate_event_cache(user_id)
     record_game_play_and_check_captcha(user_id)
     send_bot_log_sync(f"🎮 Player `{user_id}` completed mini-game run (+{res['points_awarded']} Sparks). Total: *{res['new_user_total']} Pts* | Community: *{res['community_total']:,} Sparks*")
     if res.get("tier_unlocked"):
@@ -114,7 +116,9 @@ def api_shubh_refill(
     x_telegram_id: Optional[str] = Header(None)
 ):
     from app.bot import send_bot_log_sync
+    from app.cache import invalidate_event_cache
     user_id = extract_telegram_id(authorization, x_telegram_id)
     res = claim_shubh_refill(user_id)
+    invalidate_event_cache(user_id)
     send_bot_log_sync(f"✨ Player `{user_id}` claimed Shubh Muhurat Blessing (+5 wicks & pts). Score: *{res['points_total']} Pts*")
     return ShubhRefillResponse(**res)

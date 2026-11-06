@@ -36,6 +36,9 @@ def api_admin_add_points(req: AdminAddPointsRequest):
         conn.execute("UPDATE community_state SET total_sparks = ? WHERE id = 1", (comm_total,))
     conn.close()
     
+    from app.cache import invalidate_event_cache
+    invalidate_event_cache(req.target_telegram_id)
+    
     return AdminAddPointsResponse(
         success=True,
         target_telegram_id=req.target_telegram_id,
@@ -260,6 +263,8 @@ def api_admin_reset_wicks(admin_id: int, target_telegram_id: int):
             raise HTTPException(status_code=404, detail="Target user not found.")
         conn.execute("UPDATE users SET diya_wicks = ? WHERE telegram_id = ?", (settings.STAMINA_BANK_CAP, target_telegram_id))
     conn.close()
+    from app.cache import invalidate_event_cache
+    invalidate_event_cache(target_telegram_id)
     return {"success": True, "target_telegram_id": target_telegram_id, "wicks": settings.STAMINA_BANK_CAP, "message": "Restored full Diya Wicks."}
 
 @router.get("/stats")
@@ -308,6 +313,8 @@ def api_admin_reset_event(req: AdminResetEventRequest):
         )
     generate_full_backup()
     res = reset_event_data()
+    from app.cache import clear_all_cache
+    clear_all_cache()
     return AdminResetEventResponse(
         success=True,
         message=res["message"],

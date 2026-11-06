@@ -213,8 +213,14 @@ class TestFullE2ESimulation(unittest.TestCase):
         self.assertEqual(calculate_tier(5000), 5)
 
         # Community 5 segments
-        self.assertEqual(get_stage_info(0)[0], 0)
-        self.assertEqual(get_stage_info(40000)[0], 1)
+        s0_num, s0_text = get_stage_info(1358)
+        self.assertEqual(s0_num, 0)
+        self.assertIn("1,358 / 40,000 Sparks", s0_text)
+
+        s1_num, s1_text = get_stage_info(40000)
+        self.assertEqual(s1_num, 1)
+        self.assertIn("40,000 / 80,000 Sparks", s1_text)
+
         self.assertEqual(get_stage_info(80000)[0], 2)
         self.assertEqual(get_stage_info(120000)[0], 3)
         self.assertEqual(get_stage_info(160000)[0], 4)

@@ -120,7 +120,7 @@ def send_bot_log_sync(text: str):
             print(f"[BOT LOG]: {text.encode('ascii', 'replace').decode('ascii')}")
         except Exception:
             pass
-    logs_chat = get_effective_logs_chat_id()
+    logs_chat = get_effective_logs_chat_id() or get_effective_backup_chat_id()
     if logs_chat and not is_mock_token():
         try:
             url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage"
@@ -160,7 +160,7 @@ async def send_bot_log(text: str):
         print(f"[BOT LOG]: {text}")
     except Exception:
         pass
-    logs_chat = get_effective_logs_chat_id()
+    logs_chat = get_effective_logs_chat_id() or get_effective_backup_chat_id()
     if logs_chat and not is_mock_token():
         try:
             loop = asyncio.get_running_loop()
@@ -399,38 +399,38 @@ async def check_telegram_membership(user_id: int, chat_identifier: str) -> bool:
             # If status is left or kicked, check if the bot is even an administrator in this group.
             # If the bot is NOT an administrator, getChatMember is unreliable and Telegram forbids
             # non-admin bots from accessing group participant statuses.
-                bot_check_url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/getChatAdministrators"
-                admin_resp = await client.get(bot_check_url, params={"chat_id": chat_handle})
-                admin_data = admin_resp.json()
-                if not admin_data.get("ok"):
-                    print(f"[MEMBERSHIP PASS] Permitted {chat_handle} for {user_id} (bot lacks admin access to verify)")
-                    return True
-                
-                admins = admin_data.get("result", [])
-                bot_is_admin = any(
-                    a.get("user", {}).get("is_bot") and 
-                    a.get("user", {}).get("username", "").lower() == (settings.BOT_USERNAME or "ordinallegacyeventbot").lower() 
-                    for a in admins
-                )
-                if not bot_is_admin:
-                    print(f"[MEMBERSHIP PASS] Permitted {chat_handle} for {user_id} (bot is not group admin)")
-                    return True
-                
-                return False
-            else:
-                desc = data.get("description", "").lower()
-                print(f"[MEMBERSHIP CHECK INFO] {chat_handle} for {user_id}: {data.get('description')}")
-                bypass_errors = [
-                    "chat not found", "not a member", "forbidden", "not enough rights",
-                    "inaccessible", "admin_required", "administrator rights", "channel_private",
-                    "user not found", "participant_id_invalid", "method is available only",
-                    "user_not_participant", "user is not a member", "chat_admin_required",
-                    "bot is not a member", "peer_id_invalid", "bad request: user_not_participant"
-                ]
-                if any(err in desc for err in bypass_errors) or "ordinallegacyeventinfo" in chat_handle.lower():
-                    print(f"[MEMBERSHIP PASS] Permitted {chat_handle} for {user_id} (API bypass: {desc})")
-                    return True
-                return False
+            bot_check_url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/getChatAdministrators"
+            admin_resp = await client.get(bot_check_url, params={"chat_id": chat_handle})
+            admin_data = admin_resp.json()
+            if not admin_data.get("ok"):
+                print(f"[MEMBERSHIP PASS] Permitted {chat_handle} for {user_id} (bot lacks admin access to verify)")
+                return True
+            
+            admins = admin_data.get("result", [])
+            bot_is_admin = any(
+                a.get("user", {}).get("is_bot") and 
+                a.get("user", {}).get("username", "").lower() == (settings.BOT_USERNAME or "ordinallegacyeventbot").lower() 
+                for a in admins
+            )
+            if not bot_is_admin:
+                print(f"[MEMBERSHIP PASS] Permitted {chat_handle} for {user_id} (bot is not group admin)")
+                return True
+            
+            return False
+        else:
+            desc = data.get("description", "").lower()
+            print(f"[MEMBERSHIP CHECK INFO] {chat_handle} for {user_id}: {data.get('description')}")
+            bypass_errors = [
+                "chat not found", "not a member", "forbidden", "not enough rights",
+                "inaccessible", "admin_required", "administrator rights", "channel_private",
+                "user not found", "participant_id_invalid", "method is available only",
+                "user_not_participant", "user is not a member", "chat_admin_required",
+                "bot is not a member", "peer_id_invalid", "bad request: user_not_participant"
+            ]
+            if any(err in desc for err in bypass_errors) or "ordinallegacyeventinfo" in chat_handle.lower():
+                print(f"[MEMBERSHIP PASS] Permitted {chat_handle} for {user_id} (API bypass: {desc})")
+                return True
+            return False
     except Exception as e:
         print(f"[MEMBERSHIP CHECK EXCEPTION]: {e}")
         return True
@@ -458,11 +458,6 @@ async def verify_user_all_groups(user_id: int) -> tuple[bool, list]:
     return True, []
 
 def register_user_if_new(telegram_id: int, username: str, first_name: str) -> dict:
-    cache_key = f"reg_user_{telegram_id}"
-    cached_user = get_cache(cache_key)
-    if cached_user is not None and not (username and username != cached_user.get("username")):
-        return cached_user
-
     conn = get_db_connection()
     with conn:
         user = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
@@ -500,7 +495,6 @@ def register_user_if_new(telegram_id: int, username: str, first_name: str) -> di
                 user = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
         res_user = dict(user)
     conn.close()
-    set_cache(cache_key, res_user, ttl_seconds=30.0)
     return res_user
 
 def execute_in_chat_game(user_id: int, game_type: int) -> dict:
@@ -553,8 +547,8 @@ def execute_in_chat_game(user_id: int, game_type: int) -> dict:
             comm_total = comm["total_sparks"] if comm else 0
             new_wicks = u["diya_wicks"] - 1
 
-        from app.cache import delete_cache
-        delete_cache("api_community_state")
+        from app.cache import invalidate_event_cache
+        invalidate_event_cache(user_id)
         
         return {
             "success": True,
@@ -1184,18 +1178,19 @@ async def handle_bot_message(message: Dict[str, Any]):
 
     elif text == "/status":
         conn = get_db_connection()
-        update_user_stamina(conn, user_id)
-        comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
-        u = conn.execute("SELECT points_total, tier_level, diya_wicks, referral_points_earned FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
-        comp_row = conn.execute(
-            '''SELECT u.telegram_id, u.first_name, u.username, u.tier_level
-               FROM referrals r
-               JOIN users u ON u.telegram_id = (
-                   CASE WHEN r.referrer_id = ? THEN r.referred_id ELSE r.referrer_id END
-               )
-               WHERE (r.referrer_id = ? OR r.referred_id = ?) AND r.is_companion = 1''',
-            (user_id, user_id, user_id)
-        ).fetchone()
+        with conn:
+            update_user_stamina(conn, user_id)
+            comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
+            u = conn.execute("SELECT points_total, tier_level, diya_wicks, referral_points_earned FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
+            comp_row = conn.execute(
+                '''SELECT u.telegram_id, u.first_name, u.username, u.tier_level
+                   FROM referrals r
+                   JOIN users u ON u.telegram_id = (
+                       CASE WHEN r.referrer_id = ? THEN r.referred_id ELSE r.referrer_id END
+                   )
+                   WHERE (r.referrer_id = ? OR r.referred_id = ?) AND r.is_companion = 1''',
+                (user_id, user_id, user_id)
+            ).fetchone()
         conn.close()
         
         sparks_total = comm["total_sparks"] if comm else 0
@@ -2252,24 +2247,25 @@ async def handle_bot_message(message: Dict[str, Any]):
 
     elif text in ("/mydata", "/profile", "/data"):
         conn = get_db_connection()
-        update_user_stamina(conn, user_id)
-        u = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
-        
-        comp_row = conn.execute(
-            '''SELECT u.first_name, u.username, u.tier_level
-               FROM referrals r
-               JOIN users u ON u.telegram_id = (
-                   CASE WHEN r.referrer_id = ? THEN r.referred_id ELSE r.referrer_id END
-               )
-               WHERE (r.referrer_id = ? OR r.referred_id = ?) AND r.is_companion = 1''',
-            (user_id, user_id, user_id)
-        ).fetchone()
-        
-        total_refs = conn.execute("SELECT COUNT(*) as c FROM referrals WHERE referrer_id = ?", (user_id,)).fetchone()["c"]
-        total_runs = conn.execute("SELECT COUNT(*) as c FROM game_sessions WHERE telegram_id = ? AND is_valid = 1", (user_id,)).fetchone()["c"]
-        three_pts = conn.execute("SELECT COUNT(*) as c FROM game_sessions WHERE telegram_id = ? AND score_awarded = 3 AND is_valid = 1", (user_id,)).fetchone()["c"]
-        two_pts = conn.execute("SELECT COUNT(*) as c FROM game_sessions WHERE telegram_id = ? AND score_awarded = 2 AND is_valid = 1", (user_id,)).fetchone()["c"]
-        one_pt = conn.execute("SELECT COUNT(*) as c FROM game_sessions WHERE telegram_id = ? AND score_awarded = 1 AND is_valid = 1", (user_id,)).fetchone()["c"]
+        with conn:
+            update_user_stamina(conn, user_id)
+            u = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
+            
+            comp_row = conn.execute(
+                '''SELECT u.first_name, u.username, u.tier_level
+                   FROM referrals r
+                   JOIN users u ON u.telegram_id = (
+                       CASE WHEN r.referrer_id = ? THEN r.referred_id ELSE r.referrer_id END
+                   )
+                   WHERE (r.referrer_id = ? OR r.referred_id = ?) AND r.is_companion = 1''',
+                (user_id, user_id, user_id)
+            ).fetchone()
+            
+            total_refs = conn.execute("SELECT COUNT(*) as c FROM referrals WHERE referrer_id = ?", (user_id,)).fetchone()["c"]
+            total_runs = conn.execute("SELECT COUNT(*) as c FROM game_sessions WHERE telegram_id = ? AND is_valid = 1", (user_id,)).fetchone()["c"]
+            three_pts = conn.execute("SELECT COUNT(*) as c FROM game_sessions WHERE telegram_id = ? AND score_awarded = 3 AND is_valid = 1", (user_id,)).fetchone()["c"]
+            two_pts = conn.execute("SELECT COUNT(*) as c FROM game_sessions WHERE telegram_id = ? AND score_awarded = 2 AND is_valid = 1", (user_id,)).fetchone()["c"]
+            one_pt = conn.execute("SELECT COUNT(*) as c FROM game_sessions WHERE telegram_id = ? AND score_awarded = 1 AND is_valid = 1", (user_id,)).fetchone()["c"]
         conn.close()
         
         tier = u["tier_level"]

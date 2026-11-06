@@ -85,6 +85,10 @@ def update_user_stamina(conn, telegram_id: int) -> int:
                 "UPDATE users SET diya_wicks = ?, last_wick_regen = ? WHERE telegram_id = ?",
                 (temp_wicks, new_regen_time.isoformat(), telegram_id)
             )
+        try:
+            conn.commit()
+        except Exception:
+            pass
         return temp_wicks
 
     return current_wicks
@@ -135,6 +139,10 @@ def claim_shubh_refill(telegram_id: int) -> dict:
             (new_wicks, new_points, new_tier, today_str, now_str, telegram_id)
         )
         conn.execute("UPDATE community_state SET total_sparks = total_sparks + ? WHERE id = 1", (bonus_points,))
+        comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
+        comm_total = comm["total_sparks"] if comm else 0
+        new_stage, _ = get_stage_info(comm_total)
+        conn.execute("UPDATE community_state SET current_stage = ? WHERE id = 1", (new_stage,))
     conn.close()
     
     return {
@@ -224,7 +232,7 @@ def finish_game_session(telegram_id: int, session_id: str, nonce: str, raw_score
         comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
         comm_total = comm["total_sparks"]
         
-        new_stage, _ = get_stage_info(comm_total)
+        new_stage, stage_name = get_stage_info(comm_total)
         conn.execute("UPDATE community_state SET current_stage = ? WHERE id = 1", (new_stage,))
         
     conn.close()
@@ -236,5 +244,7 @@ def finish_game_session(telegram_id: int, session_id: str, nonce: str, raw_score
         "community_total": comm_total,
         "tier_unlocked": tier_unlocked,
         "new_tier_level": new_tier,
-        "tier_name": get_tier_name(new_tier)
+        "tier_name": get_tier_name(new_tier),
+        "new_stage": new_stage,
+        "stage_description": stage_name
     }

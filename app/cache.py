@@ -74,3 +74,16 @@ def clear_all_cache():
             os.remove(CACHE_FILE_PATH)
     except Exception:
         pass
+
+def invalidate_event_cache(user_id: Optional[int] = None):
+    """
+    Instantly invalidates all community, leaderboard, and user caches so bot
+    and mini-app display 100% synchronized, up-to-the-millisecond progress.
+    """
+    delete_cache("api_community_state")
+    delete_cache("bot_cmd_top")
+    delete_cache("bot_cmd_stats")
+    delete_cache("bot_cmd_gharanas")
+    delete_cache("bot_cmd_widget")
+    if user_id:
+        delete_cache(f"reg_user_{user_id}")

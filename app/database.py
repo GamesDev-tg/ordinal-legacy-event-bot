@@ -140,7 +140,7 @@ def get_db_connection():
             raw_conn.autocommit = True
             return PostgresConnectionWrapper(raw_conn, from_pool=False)
     else:
-        conn = sqlite3.connect(settings.DATABASE_PATH)
+        conn = sqlite3.connect(settings.DATABASE_PATH, timeout=30.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON;")
         conn.execute("PRAGMA journal_mode = WAL;")
@@ -355,16 +355,16 @@ def get_tier_reward(tier: int) -> str:
 
 def get_stage_info(sparks: int) -> tuple[int, str]:
     if sparks >= 200000:
-        return 5, "Stage 5: Maha Akhand Jyoti (All 5 Segments Cleared: 🪙 Coins + 🔮 Pearls + 🎟 Tickets + 🐾 Pets!)"
+        return 5, f"Stage 5: Maha Akhand Jyoti Fully Ignited! ({sparks:,} Sparks • All Milestones Cleared!)"
     elif sparks >= 160000:
-        return 4, "Stage 4: Segment 4 Cleared (🐾 Pets Reward Unlocked for All!)"
+        return 4, f"Stage 4: Grand Deepotsav ({sparks:,} / 200,000 Sparks to Ignite 🪔 Maha Akhand Jyoti)"
     elif sparks >= 120000:
-        return 3, "Stage 3: Segment 3 Cleared (🎟 Tickets Reward Unlocked for All!)"
+        return 3, f"Stage 3: Celestial Harmony ({sparks:,} / 160,000 Sparks to Clear 🐾 Pets)"
     elif sparks >= 80000:
-        return 2, "Stage 2: Segment 2 Cleared (🔮 Pearls Reward Unlocked for All!)"
+        return 2, f"Stage 2: Sacred Radiance ({sparks:,} / 120,000 Sparks to Clear 🎟 Tickets)"
     elif sparks >= 40000:
-        return 1, "Stage 1: Segment 1 Cleared (🪙 Coins Reward Unlocked for All!)"
-    return 0, "Stage 0: Lighting the Wick (0 / 40,000 Sparks to Clear 🪙 Coins)"
+        return 1, f"Stage 1: The First Glow ({sparks:,} / 80,000 Sparks to Clear 🔮 Pearls)"
+    return 0, f"Stage 0: Lighting the Wick ({sparks:,} / 40,000 Sparks to Clear 🪙 Coins)"
 
 def generate_full_backup() -> dict:
     conn = get_db_connection()

@@ -25,6 +25,8 @@ class UserProfile(BaseModel):
     partner: Optional[Dict[str, Any]] = None
     shubh_refill_available: bool = True
     seconds_until_next_wick: int = 0
+    joined_groups: bool = False
+    is_verified: bool = False
 
 class AuthResponse(BaseModel):
     success: bool
@@ -32,6 +34,8 @@ class AuthResponse(BaseModel):
     community_sparks: int
     target_sparks: int
     current_stage: int
+    stage_description: str = ""
+    event_paused: bool = False
 
 class GameStartRequest(BaseModel):
     game_type: int = Field(..., ge=1, le=3, description="1: Chakri, 2: Rangoli, 3: Mithai")
@@ -56,6 +60,8 @@ class GameFinishResponse(BaseModel):
     tier_unlocked: bool
     new_tier_level: int
     tier_name: str
+    new_stage: Optional[int] = 0
+    stage_description: Optional[str] = ""
 
 class ReferralClaimRequest(BaseModel):
     referrer_telegram_id: int

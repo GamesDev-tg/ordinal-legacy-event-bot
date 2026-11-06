@@ -406,5 +406,32 @@ class TestBotAsync(unittest.TestCase):
                 self.assertTrue(res)
         run_coro_sync(_run())
 
+    def test_user_profile_fields_and_auth_response(self):
+        demo_id = random.randint(100000, 999999)
+        resp = auth_demo(demo_id)
+        self.assertTrue(resp.success)
+        dumped_user = resp.user.model_dump() if hasattr(resp.user, "model_dump") else resp.user.dict()
+        dumped_resp = resp.model_dump() if hasattr(resp, "model_dump") else resp.dict()
+        self.assertIn("is_verified", dumped_user)
+        self.assertIn("joined_groups", dumped_user)
+        self.assertIn("event_paused", dumped_resp)
+
+    def test_cache_invalidation_sync(self):
+        from app.cache import set_cache, get_cache, invalidate_event_cache
+        uid = 987654
+        set_cache("bot_cmd_top", "stale_top")
+        set_cache("api_community_state", "stale_comm")
+        set_cache(f"reg_user_{uid}", {"user": "stale"})
+        
+        self.assertEqual(get_cache("bot_cmd_top"), "stale_top")
+        self.assertEqual(get_cache("api_community_state"), "stale_comm")
+        self.assertEqual(get_cache(f"reg_user_{uid}"), {"user": "stale"})
+        
+        invalidate_event_cache(uid)
+        
+        self.assertIsNone(get_cache("bot_cmd_top"))
+        self.assertIsNone(get_cache("api_community_state"))
+        self.assertIsNone(get_cache(f"reg_user_{uid}"))
+
 if __name__ == "__main__":
     unittest.main()

@@ -62,44 +62,44 @@ document.addEventListener("DOMContentLoaded", async () => {
         refreshUserData();
     });
 
-    // Periodic live stamina & community sparks sync every 20 seconds
-    setInterval(refreshUserData, 20000);
+    // Periodic live stamina & community sparks sync every 5 seconds for fast progress
+    setInterval(refreshUserData, 5000);
 });
 
 async function refreshUserData() {
-    if (!authHeader) return;
     try {
-        if (authHeader.trim().startsWith('{')) {
-            const resp = await fetch('/api/auth/widget', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: authHeader
-            });
-            const data = await resp.json();
-            if (resp.ok && data.success) {
-                currentUser = data.user;
-                updateUI(data);
-                return data;
-            }
-        } else {
-            const resp = await fetch('/api/auth/telegram', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ init_data: authHeader })
-            });
-            const data = await resp.json();
-            if (resp.ok && data.success) {
-                currentUser = data.user;
-                updateUI(data);
-                return data;
+        if (authHeader) {
+            if (authHeader.trim().startsWith('{')) {
+                const resp = await fetch('/api/auth/widget', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: authHeader
+                });
+                const data = await resp.json();
+                if (resp.ok && data.success) {
+                    currentUser = data.user;
+                    updateUI(data);
+                    return data;
+                }
+            } else {
+                const resp = await fetch('/api/auth/telegram', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ init_data: authHeader })
+                });
+                const data = await resp.json();
+                if (resp.ok && data.success) {
+                    currentUser = data.user;
+                    updateUI(data);
+                    return data;
+                }
             }
         }
     } catch (e) {
         console.warn("Background user refresh warning:", e);
     }
-}
 
-    // Fallback if authHeader was invalid / dev user
+    // Fallback if authHeader was invalid / dev user / missing
     const urlParams = new URLSearchParams(window.location.search);
     const tgId = urlParams.get('tg_id') || window.Telegram?.WebApp?.initDataUnsafe?.user?.id || (currentUser ? currentUser.telegram_id : null);
     if (tgId) {
@@ -112,10 +112,13 @@ async function refreshUserData() {
             const fallbackData = await fallbackResp.json();
             if (fallbackData.success) {
                 currentUser = fallbackData.user;
+                if (!authHeader) authHeader = `dev_user_${tgId}`;
                 updateUI(fallbackData);
                 return fallbackData;
             }
-        } catch (e2) {}
+        } catch (e2) {
+            console.warn("Fallback user refresh error:", e2);
+        }
     }
 }
 
@@ -225,17 +228,25 @@ function updateUI(authData) {
     document.getElementById('progress-pct').innerText = `${pct}%`;
 
     // Community Milestone 5 Segments of 200k Sparks
-    const stageNames = {
-        0: "Stage 0: Lighting the Wick (0 / 40k to Coins)",
-        1: "Stage 1: Segment 1 (🪙 Coins Cleared!)",
-        2: "Stage 2: Segment 2 (🔮 Pearls Cleared!)",
-        3: "Stage 3: Segment 3 (🎟 Tickets Cleared!)",
-        4: "Stage 4: Segment 4 (🐾 Pets Cleared!)",
-        5: "Stage 5: Maha Akhand Jyoti (🏆 All Rewards Cleared!)"
-    };
+    let stageDesc = authData.stage_description;
+    if (!stageDesc) {
+        if (sparks >= 200000) {
+            stageDesc = `Stage 5: Maha Akhand Jyoti (${sparks.toLocaleString()} Sparks • All Cleared!)`;
+        } else if (sparks >= 160000) {
+            stageDesc = `Stage 4: Grand Deepotsav (${sparks.toLocaleString()} / 200,000 Sparks to Jyoti)`;
+        } else if (sparks >= 120000) {
+            stageDesc = `Stage 3: Celestial Harmony (${sparks.toLocaleString()} / 160,000 Sparks to Pets)`;
+        } else if (sparks >= 80000) {
+            stageDesc = `Stage 2: Sacred Radiance (${sparks.toLocaleString()} / 120,000 Sparks to Tickets)`;
+        } else if (sparks >= 40000) {
+            stageDesc = `Stage 1: The First Glow (${sparks.toLocaleString()} / 80,000 Sparks to Pearls)`;
+        } else {
+            stageDesc = `Stage 0: Lighting the Wick (${sparks.toLocaleString()} / 40,000 to Coins)`;
+        }
+    }
     const stageBadge = document.getElementById('stage-badge');
     if (stageBadge) {
-        stageBadge.innerText = stageNames[authData.current_stage] || `Stage ${authData.current_stage}`;
+        stageBadge.innerText = stageDesc;
     }
 
     // Event Paused Status Banner
@@ -260,6 +271,27 @@ function updateUI(authData) {
     } else {
         const pb = document.getElementById('event-paused-banner');
         if (pb) pb.remove();
+    }
+
+    // Unverified Community Group Gate Banner
+    if (u.joined_groups === false && !u.is_admin) {
+        let gb = document.getElementById('unverified-gate-banner');
+        if (!gb) {
+            gb = document.createElement('div');
+            gb.id = 'unverified-gate-banner';
+            gb.style.cssText = 'background:linear-gradient(135deg, #B45309, #D97706); color:#FFF; padding:12px 16px; border-radius:12px; margin:12px 16px; text-align:center; font-size:0.82rem; font-weight:600; box-shadow:0 4px 12px rgba(180, 83, 9, 0.35); cursor:pointer;';
+            gb.innerHTML = '⚠️ <b>ACTION REQUIRED: Verify Official Community Groups</b><br><span style="font-size:0.75rem; font-weight:normal; opacity:0.95;">Join our 3 official groups and tap Verify in @OrdinalLegacyEventBot to play! (Tap here to open bot)</span>';
+            gb.onclick = () => {
+                const link = "https://t.me/OrdinalLegacyEventBot";
+                if (window.Telegram?.WebApp?.openTelegramLink) window.Telegram.WebApp.openTelegramLink(link);
+                else window.open(link, "_blank");
+            };
+            const mainArena = document.getElementById('tab-arena');
+            if (mainArena) mainArena.prepend(gb);
+        }
+    } else {
+        const gb = document.getElementById('unverified-gate-banner');
+        if (gb) gb.remove();
     }
 
     // Shubh Muhurat Refill Banner
@@ -502,12 +534,22 @@ async function launchMiniGame(gameType) {
         });
         const sessionData = await resp.json();
         if (!resp.ok) {
+            try { window.Telegram?.WebApp?.disableClosingConfirmation(); } catch (e) {}
             const errDetail = sessionData.detail;
             if (errDetail && (errDetail.captcha_required || (typeof errDetail === 'object' && errDetail.question))) {
                 showCaptchaModal(errDetail, () => launchMiniGame(gameType));
                 return;
             }
-            alert(typeof sessionData.detail === 'string' ? sessionData.detail : (sessionData.detail?.message || "Failed to start game"));
+            const msg = typeof sessionData.detail === 'string' ? sessionData.detail : (sessionData.detail?.message || "Failed to start game");
+            if (msg.includes("community groups") || msg.includes("verify in the bot")) {
+                if (confirm("⚠️ You must join our official community groups and verify in the bot first!\n\nOpen @OrdinalLegacyEventBot to verify now?")) {
+                    const botLink = "https://t.me/OrdinalLegacyEventBot";
+                    if (window.Telegram?.WebApp?.openTelegramLink) window.Telegram.WebApp.openTelegramLink(botLink);
+                    else window.open(botLink, "_blank");
+                }
+                return;
+            }
+            alert(msg);
             return;
         }
 
@@ -575,6 +617,16 @@ async function onGameFinished(rawScore, durationMs) {
             document.getElementById('user-points').innerText = `${resData.new_user_total} Pts`;
             document.getElementById('user-tier-label').innerText = `${resData.tier_name} (Tier ${resData.new_tier_level})`;
             document.getElementById('sparks-display').innerText = `${resData.community_total.toLocaleString()} Sparks`;
+            const pct = Math.min(100, ((resData.community_total / 200000) * 100)).toFixed(1);
+            const progressFill = document.getElementById('flame-progress');
+            if (progressFill) progressFill.style.width = `${pct}%`;
+            const progressPct = document.getElementById('progress-pct');
+            if (progressPct) progressPct.innerText = `${pct}%`;
+            
+            if (resData.stage_description) {
+                const stageBadge = document.getElementById('stage-badge');
+                if (stageBadge) stageBadge.innerText = resData.stage_description;
+            }
             
             updateTierLadder(resData.new_tier_level);
 
