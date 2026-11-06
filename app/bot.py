@@ -62,12 +62,16 @@ def format_to_telegram_html(text: Any) -> str:
     """
     Converts text formatted with Markdown (*bold*, `code`, [link](url)) into valid Telegram HTML
     while removing any illegal HTML tags.
+    Preserves clean underscores in usernames like @Demonlord_X_02.
     """
     if text is None:
         return ""
     
     s = str(text)
     
+    # Clean up accidental escaped underscores so usernames stay clean and clickable
+    s = s.replace(r"\_", "_")
+
     # 1. Convert markdown links: [text](http...) -> <a href="http...">text</a>
     s = re.sub(r'\[([^\]]+)\]\((https?:\/\/[^\s\)]+)\)', r'<a href="\2">\1</a>', s)
     
@@ -76,8 +80,11 @@ def format_to_telegram_html(text: Any) -> str:
     
     # 3. Convert bold: *bold* -> <b>bold</b>
     s = re.sub(r'(?<!\w)\*([^\*\n]+)\*(?!\w)', r'<b>\1</b>', s)
+
+    # 4. Convert italics: _italic_ -> <i>italic</i> (when isolated by spaces/boundaries)
+    s = re.sub(r'(?<!\w)_([^_ \n]+)_(?!\w)', r'<i>\1</i>', s)
     
-    # 4. Sanitize any unsupported HTML tags
+    # 5. Sanitize any unsupported HTML tags
     s = sanitize_telegram_html(s)
     
     return s
@@ -99,13 +106,11 @@ def is_user_verified_for_games(user_id: int) -> bool:
     return bool(row and row["joined_groups"])
 
 def escape_md(text: Any) -> str:
-    """Escapes Telegram legacy Markdown formatting characters (*, _, `, [) safely."""
+    """Escapes HTML entities safely for Telegram messages while preserving underscores in usernames."""
     if text is None:
         return ""
-    s = str(text)
-    for ch in ("\\", "*", "_", "`", "["):
-        s = s.replace(ch, f"\\{ch}")
-    return s
+    s = str(text).replace(r"\_", "_").replace(r"\*", "*")
+    return html.escape(s)
 
 def send_bot_log_sync(text: str):
     try:
@@ -1911,24 +1916,28 @@ async def handle_bot_message(message: Dict[str, Any]):
         three_pts = conn.execute("SELECT COUNT(*) as c FROM game_sessions WHERE telegram_id = ? AND score_awarded = 3 AND is_valid = 1", (tid,)).fetchone()["c"]
         conn.close()
         
-        comp_str = f"{comp_row['first_name'] or comp_row['username']} (`{comp_row['telegram_id']}`)" if comp_row else "None"
+        if comp_row:
+            c_tag = f"@{comp_row['username']}" if comp_row['username'] else (comp_row['first_name'] or f"ID {comp_row['telegram_id']}")
+            comp_str = f"{c_tag} (`{comp_row['telegram_id']}`)"
+        else:
+            comp_str = "None"
+            
         g_name = settings.GHARANAS.get(u["gharana_id"], "Unknown")
+        display_name = f"@{u['username']}" if u['username'] else (u['first_name'] or f"Player {u['telegram_id']}")
+        u_handle = f"@{u['username']}" if u['username'] else "None"
         
-        safe_pname = escape_md(u['first_name'] or u['username'])
-        safe_puname = escape_md(u['username']) if u['username'] else 'N/A'
-        safe_comp_str = escape_md(comp_str)
         profile_msg = (
-            f"👤 *Player Profile: {safe_pname}*\n\n"
-            f"• Telegram ID: `{u['telegram_id']}`\n"
-            f"• Username: @{safe_puname}\n"
-            f"• Gharana: *{g_name}*\n"
-            f"• Hard Points: *{u['points_total']} Pts*\n"
-            f"• Tier: *{get_tier_name(u['tier_level'])}* (Tier {u['tier_level']})\n"
-            f"• Diya Wicks: *{u['diya_wicks']}/10*\n"
-            f"• Diya Companion: *{safe_comp_str}*\n"
-            f"• Friends Invited: *{total_refs}* (Points earned: {u['referral_points_earned']}/{settings.MAX_REFERRAL_POINTS})\n"
-            f"• Completed Runs: *{games_count}* (Flawless 3-pt runs: {three_pts})\n"
-            f"• Joined: `{u['created_at']}`"
+            f"👤 <b>Player Profile: {html.escape(display_name)}</b>\n\n"
+            f"• Telegram ID: <code>{u['telegram_id']}</code>\n"
+            f"• Username: <b>{html.escape(u_handle)}</b>\n"
+            f"• Gharana: <b>{g_name}</b>\n"
+            f"• Hard Points: <b>{u['points_total']} Pts</b>\n"
+            f"• Tier: <b>{get_tier_name(u['tier_level'])}</b> (Tier {u['tier_level']})\n"
+            f"• Diya Wicks: <b>{u['diya_wicks']}/10</b>\n"
+            f"• Diya Companion: <b>{html.escape(comp_str)}</b>\n"
+            f"• Friends Invited: <b>{total_refs}</b> (Points earned: {u['referral_points_earned']}/{settings.MAX_REFERRAL_POINTS})\n"
+            f"• Completed Runs: <b>{games_count}</b> (Flawless 3-pt runs: {three_pts})\n"
+            f"• Joined: <code>{u['created_at']}</code>"
         )
         await send_telegram_message(chat_id, profile_msg)
         return
@@ -1947,13 +1956,20 @@ async def handle_bot_message(message: Dict[str, Any]):
         ''').fetchall()
         conn.close()
         
-        msg = "🌟 *Maha Deepotsav Top 10 Lampbearers:*\n\n"
+        msg = "🌟 <b>Maha Deepotsav Top 10 Lampbearers:</b>\n\n"
         medals = ["🥇", "🥈", "🥉"] + ["✨"] * 7
         for idx, r in enumerate(rows):
-            raw_name = f"@{r['username']}" if r['username'] else (r['first_name'] or f"User_{r['telegram_id']}")
-            safe_name = str(raw_name).replace("_", "\\_").replace("*", "\\*")
+            if r['username']:
+                u_tag = f"@{r['username'].lstrip('@')}"
+            elif r['first_name']:
+                clean_fn = re.sub(r'[\r\n\t]+', ' ', r['first_name']).strip()
+                u_tag = clean_fn or f"User_{r['telegram_id']}"
+            else:
+                u_tag = f"User_{r['telegram_id']}"
+            safe_name = html.escape(u_tag)
             g_name = settings.GHARANAS.get(r['gharana_id'], "")
-            msg += f"{medals[idx]} *#{idx+1}. {safe_name}* — *{r['points_total']} Pts*\n   _{get_tier_name(r['tier_level'])} • {g_name}_\n\n"
+            msg += f"{medals[idx]} <b>#{idx+1}. {safe_name}</b> — <b>{r['points_total']} Pts</b>\n   <i>{get_tier_name(r['tier_level'])} • {g_name}</i>\n\n"
+        delete_cache("bot_cmd_top")
         set_cache("bot_cmd_top", msg, ttl_seconds=10.0)
         await send_telegram_message(chat_id, msg)
         return
@@ -2282,12 +2298,12 @@ async def handle_bot_message(message: Dict[str, Any]):
         shubh_status = "✅ Claimed today" if u["shubh_refill_date"] == today_str else "✨ Available now (/shubh)"
         
         safe_fname = escape_md(first_name)
-        safe_uname = escape_md(username) if username else "N/A"
+        u_handle = f"@{username}" if username else "None"
         mydata_msg = (
             f"👤 *PLAYER EVENT DOSSIER: {safe_fname}*\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"🆔 *Telegram ID*: `{user_id}`\n"
-            f"🏷 *Username*: @{safe_uname}\n"
+            f"🏷 *Username*: {u_handle}\n"
             f"🏰 *Initiated House*: *{g_name}*\n"
             f"🛡 *Official Gate*: {'✅ Verified Member' if u['joined_groups'] else '⚠️ Unverified'}\n\n"
             f"🔥 *Sparks Contributed*: *{pts:,} Sparks*\n"
@@ -2467,7 +2483,13 @@ async def handle_bot_message(message: Dict[str, Any]):
         else:
             for idx, mvp in enumerate(top_mvps):
                 m = medals[idx] if idx < len(medals) else f"{idx+1}."
-                name = mvp["username"] and f"@{mvp['username']}" or mvp["first_name"] or f"ID {mvp['telegram_id']}"
+                if mvp["username"]:
+                    name = f"@{mvp['username'].lstrip('@')}"
+                elif mvp["first_name"]:
+                    clean_mname = re.sub(r'[\r\n\t]+', ' ', mvp['first_name']).strip()
+                    name = clean_mname or f"ID {mvp['telegram_id']}"
+                else:
+                    name = f"ID {mvp['telegram_id']}"
                 contrib_pct = (mvp["points_total"] / total_sparks * 100) if total_sparks > 0 else 0.0
                 lines.append(f"{m} <b>{html.escape(name)}</b> (<code>{mvp['telegram_id']}</code>): <b>{mvp['points_total']:,} Pts</b> ({contrib_pct:.1f}% of sparks)")
 
@@ -2530,7 +2552,13 @@ async def handle_bot_message(message: Dict[str, Any]):
         medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
         for idx, p in enumerate(top_players):
             m = medals[idx] if idx < len(medals) else f"{idx+1}."
-            name = p["first_name"] or p["username"] or f"Player {p['telegram_id']}"
+            if p["username"]:
+                name = f"@{p['username'].lstrip('@')}"
+            elif p["first_name"]:
+                clean_pname = re.sub(r'[\r\n\t]+', ' ', p['first_name']).strip()
+                name = clean_pname or f"Player {p['telegram_id']}"
+            else:
+                name = f"Player {p['telegram_id']}"
             lines.append(f"{m} <b>{html.escape(name)}</b> — <code>{p['points_total']} Pts</code> (Tier {p['tier_level']})")
         
         lines.append("\n👉 Run <code>/exportrewards</code> to download complete CSV spreadsheet!")
@@ -2560,7 +2588,13 @@ async def handle_bot_message(message: Dict[str, Any]):
             lines.append("<i>No players in this tier yet.</i>")
         else:
             for idx, r in enumerate(rows, 1):
-                u_tag = f"@{r['username']}" if r["username"] else (r["first_name"] or f"ID {r['telegram_id']}")
+                if r["username"]:
+                    u_tag = f"@{r['username'].lstrip('@')}"
+                elif r["first_name"]:
+                    clean_rname = re.sub(r'[\r\n\t]+', ' ', r['first_name']).strip()
+                    u_tag = clean_rname or f"ID {r['telegram_id']}"
+                else:
+                    u_tag = f"ID {r['telegram_id']}"
                 lines.append(f"{idx}. <b>{html.escape(u_tag)}</b> (<code>{r['telegram_id']}</code>): <b>{r['points_total']} Pts</b>")
         if total_in_tier > 50:
             lines.append(f"\n<i>...and {total_in_tier - 50} more. Use /exportrewards for full list.</i>")
