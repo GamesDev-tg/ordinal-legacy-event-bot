@@ -7,6 +7,8 @@ let secondsUntilNextWick = 0;
 
 document.addEventListener("DOMContentLoaded", async () => {
     const tg = window.Telegram?.WebApp;
+    const isTelegramWebApp = !!(tg && tg.initData && tg.initData.length > 5);
+
     if (tg) {
         tg.ready();
         tg.expand();
@@ -14,15 +16,41 @@ document.addEventListener("DOMContentLoaded", async () => {
         try { tg.disableClosingConfirmation(); } catch (e) {}
     }
 
-    const urlParams = new URLSearchParams(window.location.search);
-    const devTgId = urlParams.get('tg_id') || "123456789";
-    const initData = tg?.initData || `dev_user_${devTgId}`;
-    authHeader = initData;
-
     setupTabs();
     setupAudioToggle();
     setupStaminaRefreshButton();
-    await authenticateUser(initData);
+
+    if (isTelegramWebApp) {
+        authHeader = tg.initData;
+        await authenticateUser(authHeader);
+    } else {
+        // Web browser environment
+        const savedWebUser = localStorage.getItem('ordinal_web_user');
+        if (savedWebUser) {
+            try {
+                const userObj = JSON.parse(savedWebUser);
+                const success = await authenticateViaWidget(userObj);
+                if (success) {
+                    showWebUserChip(userObj);
+                } else {
+                    localStorage.removeItem('ordinal_web_user');
+                    showWebLoginModal();
+                }
+            } catch (e) {
+                localStorage.removeItem('ordinal_web_user');
+                showWebLoginModal();
+            }
+        } else {
+            const urlParams = new URLSearchParams(window.location.search);
+            const devTgId = urlParams.get('tg_id');
+            if (devTgId) {
+                authHeader = `dev_user_${devTgId}`;
+                await authenticateUser(authHeader);
+            } else {
+                showWebLoginModal();
+            }
+        }
+    }
 
     // Auto-refresh when user returns to mini-app or switches focus from bot chat
     document.addEventListener("visibilitychange", () => {
@@ -41,20 +69,35 @@ document.addEventListener("DOMContentLoaded", async () => {
 async function refreshUserData() {
     if (!authHeader) return;
     try {
-        const resp = await fetch('/api/auth/telegram', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ init_data: authHeader })
-        });
-        const data = await resp.json();
-        if (resp.ok && data.success) {
-            currentUser = data.user;
-            updateUI(data);
-            return data;
+        if (authHeader.trim().startsWith('{')) {
+            const resp = await fetch('/api/auth/widget', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: authHeader
+            });
+            const data = await resp.json();
+            if (resp.ok && data.success) {
+                currentUser = data.user;
+                updateUI(data);
+                return data;
+            }
+        } else {
+            const resp = await fetch('/api/auth/telegram', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ init_data: authHeader })
+            });
+            const data = await resp.json();
+            if (resp.ok && data.success) {
+                currentUser = data.user;
+                updateUI(data);
+                return data;
+            }
         }
     } catch (e) {
         console.warn("Background user refresh warning:", e);
     }
+}
 
     // Fallback if authHeader was invalid / dev user
     const urlParams = new URLSearchParams(window.location.search);
@@ -459,8 +502,9 @@ async function launchMiniGame(gameType) {
         });
         const sessionData = await resp.json();
         if (!resp.ok) {
-            if (sessionData.detail && sessionData.detail.captcha_required) {
-                showCaptchaModal(sessionData.detail, () => launchMiniGame(gameType));
+            const errDetail = sessionData.detail;
+            if (errDetail && (errDetail.captcha_required || (typeof errDetail === 'object' && errDetail.question))) {
+                showCaptchaModal(errDetail, () => launchMiniGame(gameType));
                 return;
             }
             alert(typeof sessionData.detail === 'string' ? sessionData.detail : (sessionData.detail?.message || "Failed to start game"));
@@ -650,57 +694,204 @@ async function loadCommunityLeaderboard() {
     }
 }
 
+function closeCaptchaModal() {
+    const modal = document.getElementById('captcha-modal');
+    if (modal) {
+        modal.classList.remove('active');
+        modal.style.display = 'none';
+    }
+}
+
 function showCaptchaModal(captchaData, onSuccess) {
-    const modal = document.getElementById('celebration-modal');
-    const title = document.getElementById('celebration-title');
-    const text = document.getElementById('celebration-text');
-    if (!modal || !title || !text) {
-        alert(captchaData.message || "Please verify you are human in Telegram bot chat!");
+    const modal = document.getElementById('captcha-modal');
+    const qBox = document.getElementById('captcha-question-box');
+    const optsBox = document.getElementById('captcha-options-container');
+    const statusMsg = document.getElementById('captcha-status-msg');
+    
+    if (!modal || !qBox || !optsBox) {
+        alert(captchaData.message || "Sacred Jyoti Check: Verify human presence before playing.");
         return;
     }
-    title.innerText = "SACRED JYOTI CHECK 🔒";
     
-    let optsHtml = '<div style="display:flex; flex-direction:column; gap:8px; margin-top:14px;">';
-    captchaData.options.forEach((opt, idx) => {
-        optsHtml += `<button class="claim-shubh-btn" style="padding:10px; font-size:0.85rem; background:#1E293B; border:1px solid #F59E0B; cursor:pointer;" onclick="submitCaptchaVerification(${idx}, '${captchaData.token}')">${opt}</button>`;
-    });
-    optsHtml += '</div>';
+    window._currentCaptchaToken = captchaData.token;
+    if (statusMsg) {
+        statusMsg.innerText = "";
+        statusMsg.style.color = "#94A3B8";
+    }
 
-    text.innerHTML = `
-        <div style="font-size:0.9rem; line-height:1.4; color:#E2E8F0; margin-bottom:10px;">
-            ${captchaData.question.replace(/\n/g, '<br/>')}
-        </div>
-        ${optsHtml}
-    `;
+    // Clean formatting for Question
+    const cleanQ = (captchaData.question || "")
+        .replace(/\*(.*?)\*/g, '<b>$1</b>')
+        .replace(/\`(.*?)\`/g, '<div style="font-size:1.3rem; letter-spacing:4px; margin:8px 0; padding:6px; background:#1E293B; border-radius:6px; font-weight:700;">$1</div>')
+        .replace(/\n/g, '<br/>');
+
+    qBox.innerHTML = cleanQ;
+
+    optsBox.innerHTML = "";
+    (captchaData.options || []).forEach((opt, idx) => {
+        const btn = document.createElement('button');
+        btn.className = "play-action-btn";
+        btn.style.cssText = "width:100%; padding:10px; font-size:0.92rem; background:#1E293B; border:1px solid #F59E0B; border-radius:8px; color:#F8FAFC; cursor:pointer; font-weight:600; transition:all 0.15s ease;";
+        btn.innerText = opt;
+        btn.onclick = () => submitCaptchaVerification(idx, window._currentCaptchaToken);
+        optsBox.appendChild(btn);
+    });
+
+    modal.style.display = 'flex';
     modal.classList.add('active');
     window._pendingCaptchaSuccess = onSuccess;
 }
 
 async function submitCaptchaVerification(answerIdx, token) {
+    const statusMsg = document.getElementById('captcha-status-msg');
+    const optsBox = document.getElementById('captcha-options-container');
+    if (optsBox) {
+        Array.from(optsBox.children).forEach(b => { b.disabled = true; b.style.opacity = '0.5'; });
+    }
+    if (statusMsg) {
+        statusMsg.innerText = "⏳ Verifying sacred flame...";
+        statusMsg.style.color = "#F59E0B";
+    }
+
     try {
+        const currentUid = currentUser ? currentUser.telegram_id : (window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 123456789);
         const resp = await fetch('/api/game/captcha_verify', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': authHeader,
-                'x-telegram-id': String(currentUser.telegram_id)
+                'x-telegram-id': String(currentUid)
             },
             body: JSON.stringify({ answer_index: answerIdx, token: token })
         });
         const data = await resp.json();
         if (resp.ok && data.success) {
-            closeCelebrationModal();
-            alert("✨ Sacred Jyoti Verification Passed!");
-            if (typeof window._pendingCaptchaSuccess === 'function') {
-                const cb = window._pendingCaptchaSuccess;
-                window._pendingCaptchaSuccess = null;
-                cb();
+            if (statusMsg) {
+                statusMsg.innerText = "✨ Verified! Starting game...";
+                statusMsg.style.color = "#10B981";
             }
+            window.festivalAudio?.playSuccessChime();
+            setTimeout(() => {
+                closeCaptchaModal();
+                if (typeof window._pendingCaptchaSuccess === 'function') {
+                    const cb = window._pendingCaptchaSuccess;
+                    window._pendingCaptchaSuccess = null;
+                    cb();
+                }
+            }, 600);
         } else {
-            alert(data.message || "Incorrect verification answer. Please try again.");
-            closeCelebrationModal();
+            if (statusMsg) {
+                statusMsg.innerText = "❌ Incorrect! Loading fresh challenge...";
+                statusMsg.style.color = "#EF4444";
+            }
+            if (data.new_challenge) {
+                setTimeout(() => {
+                    showCaptchaModal(data.new_challenge, window._pendingCaptchaSuccess);
+                }, 800);
+            } else {
+                setTimeout(closeCaptchaModal, 1500);
+            }
         }
     } catch (e) {
-        alert("Verification failed. Please retry.");
+        if (statusMsg) {
+            statusMsg.innerText = "⚠️ Network verification error. Please retry.";
+            statusMsg.style.color = "#EF4444";
+        }
+        if (optsBox) {
+            Array.from(optsBox.children).forEach(b => { b.disabled = false; b.style.opacity = '1'; });
+        }
     }
+}
+
+// ==================== WEB BROWSER LOGIN WIDGET ====================
+
+function showWebLoginModal() {
+    const modal = document.getElementById('web-login-modal');
+    if (!modal) return;
+    modal.style.display = 'flex';
+    modal.classList.add('active');
+
+    const container = document.getElementById('telegram-widget-wrapper');
+    if (container && !container.hasChildNodes()) {
+        const script = document.createElement('script');
+        script.async = true;
+        script.src = "https://telegram.org/js/telegram-widget.js?22";
+        script.setAttribute("data-telegram-login", "OrdinalLegacyEventBot");
+        script.setAttribute("data-size", "large");
+        script.setAttribute("data-radius", "10");
+        script.setAttribute("data-onauth", "onTelegramAuth(user)");
+        script.setAttribute("data-request-access", "write");
+        container.appendChild(script);
+    }
+}
+
+function hideWebLoginModal() {
+    const modal = document.getElementById('web-login-modal');
+    if (modal) {
+        modal.classList.remove('active');
+        modal.style.display = 'none';
+    }
+}
+
+function showWebUserChip(user) {
+    const chip = document.getElementById('web-user-chip');
+    const nameSpan = document.getElementById('web-user-name');
+    if (chip && nameSpan) {
+        const tag = user.username ? `@${user.username}` : (user.first_name || `ID ${user.id}`);
+        nameSpan.innerText = tag;
+        chip.style.display = 'flex';
+    }
+}
+
+function logoutWebUser() {
+    if (confirm("Log out of your Telegram account on this browser?")) {
+        localStorage.removeItem('ordinal_web_user');
+        const chip = document.getElementById('web-user-chip');
+        if (chip) chip.style.display = 'none';
+        showWebLoginModal();
+    }
+}
+
+window.onTelegramAuth = async function(user) {
+    console.log("[TELEGRAM WIDGET AUTH]:", user);
+    try {
+        const resp = await fetch('/api/auth/widget', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(user)
+        });
+        const data = await resp.json();
+        if (resp.ok && data.success) {
+            currentUser = data.user;
+            authHeader = JSON.stringify(user);
+            localStorage.setItem('ordinal_web_user', JSON.stringify(user));
+            hideWebLoginModal();
+            updateUI(data);
+            showWebUserChip(user);
+        } else {
+            alert(data.detail || "Telegram authentication failed. Please try again.");
+        }
+    } catch (e) {
+        alert("Failed to communicate with server. Please retry.");
+    }
+};
+
+async function authenticateViaWidget(userObj) {
+    try {
+        const resp = await fetch('/api/auth/widget', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(userObj)
+        });
+        const data = await resp.json();
+        if (resp.ok && data.success) {
+            currentUser = data.user;
+            authHeader = JSON.stringify(userObj);
+            updateUI(data);
+            return true;
+        }
+    } catch (e) {
+        console.warn("Saved widget session failed to authenticate:", e);
+    }
+    return false;
 }

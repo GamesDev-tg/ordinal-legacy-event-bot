@@ -114,3 +114,26 @@ def auth_demo(telegram_id: int):
         target_sparks=comm["target_sparks"],
         current_stage=comm["current_stage"]
     )
+
+@router.post("/widget", response_model=AuthResponse)
+def auth_widget(data: dict):
+    from app.auth import verify_telegram_widget_data
+    verified = verify_telegram_widget_data(data)
+    telegram_id = int(verified["id"])
+    username = str(verified.get("username") or "")
+    first_name = str(verified.get("first_name") or "Lampbearer")
+    
+    register_user_if_new(telegram_id, username, first_name)
+    profile = get_full_user_profile(telegram_id)
+    
+    conn = get_db_connection()
+    comm = conn.execute("SELECT total_sparks, target_sparks, current_stage FROM community_state WHERE id = 1").fetchone()
+    conn.close()
+    
+    return AuthResponse(
+        success=True,
+        user=profile,
+        community_sparks=comm["total_sparks"],
+        target_sparks=comm["target_sparks"],
+        current_stage=comm["current_stage"]
+    )

@@ -842,6 +842,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             "/userinfo", "/user", "/setpoints", "/addpoints", "/add",
             "/setwicks", "/resetwicks", "/refillallwicks", "/resetallwicks",
             "/setgharana", "/bypassverify", "/unverify", "/setcaptcha",
+            "/unlockcaptcha", "/clearcaptcha", "/unlockallcaptcha",
             "/deleteuser", "/broadcast", "/setsparks", "/settarget",
             "/setlogschat", "/setbackupchat", "/getchats", "/testlog",
             "/backup", "/snapshot", "/restore",
@@ -1380,6 +1381,8 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"• `/bypassverify <id>` — Manually grant group verification\n"
             f"• `/unverify <id>` — Reset verification status to unverified\n"
             f"• `/setcaptcha <id>` — Force human verification captcha on player\n"
+            f"• `/unlockcaptcha <id>` — Instantly lift captcha lock for player\n"
+            f"• `/unlockallcaptcha` — Lift captcha locks for all players\n"
             f"• `/deleteuser <id>` — Delete unwanted/test user record\n\n"
             f"📢 *Broadcast & Milestones:*\n"
             f"• `/broadcast <msg>` — Send announcement to all players\n"
@@ -1713,6 +1716,28 @@ async def handle_bot_message(message: Dict[str, Any]):
         lock_user_captcha(target_uid)
         await send_telegram_message(chat_id, f"🔒 Captcha lock activated on player `{target_uid}`.")
         await send_captcha_prompt(target_uid, target_uid, "Security Verification Triggered by Admin:")
+        return
+
+    elif text.startswith(("/unlockcaptcha", "/clearcaptcha")):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+        parts = text.split()
+        target_uid = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else user_id
+        from app.captcha_engine import unlock_user_captcha
+        unlock_user_captcha(target_uid)
+        await send_telegram_message(chat_id, f"🔓 Captcha lock lifted for player `{target_uid}`. They can now play freely.")
+        await send_bot_log(f"🔓 Admin `{user_id}` unlocked captcha for `{target_uid}`.")
+        return
+
+    elif text in ("/unlockallcaptcha", "/clearcaptchas", "/resetcaptcha"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+        from app.captcha_engine import unlock_all_users_captcha
+        cleared = unlock_all_users_captcha()
+        await send_telegram_message(chat_id, f"🔓 Lifted all active captcha locks ({cleared} players unlocked).")
+        await send_bot_log(f"🔓 Admin `{user_id}` cleared all captcha locks ({cleared} players).")
         return
 
     elif text.startswith("/deleteuser"):

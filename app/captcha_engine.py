@@ -185,3 +185,10 @@ def unlock_user_captcha(user_id: int):
     _USER_CAPTCHA_LOCKED[user_id] = False
     _USER_GAME_COUNTS[user_id] = 0
     _ACTIVE_CAPTCHAS.pop(user_id, None)
+
+def unlock_all_users_captcha() -> int:
+    unlocked_count = len([uid for uid, locked in _USER_CAPTCHA_LOCKED.items() if locked])
+    _USER_CAPTCHA_LOCKED.clear()
+    _USER_GAME_COUNTS.clear()
+    _ACTIVE_CAPTCHAS.clear()
+    return unlocked_count

@@ -71,12 +71,20 @@ def api_captcha_verify(
     authorization: Optional[str] = Header(None),
     x_telegram_id: Optional[str] = Header(None)
 ):
-    from app.captcha_engine import verify_captcha_answer
+    from app.captcha_engine import verify_captcha_answer, get_or_create_captcha
     user_id = extract_telegram_id(authorization, x_telegram_id)
     answer_idx = int(req.get("answer_index", -1))
     token = req.get("token")
     ok, msg = verify_captcha_answer(user_id, answer_idx, token)
-    return {"success": ok, "message": msg}
+    res = {"success": ok, "message": msg}
+    if not ok:
+        new_ch = get_or_create_captcha(user_id)
+        res["new_challenge"] = {
+            "question": new_ch["question"],
+            "options": new_ch["options"],
+            "token": new_ch["token"]
+        }
+    return res
 
 @router.post("/finish", response_model=GameFinishResponse)
 def api_game_finish(

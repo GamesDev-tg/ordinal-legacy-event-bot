@@ -15,6 +15,11 @@
             <span>ORDINAL LEGACY</span>
         </div>
         <div style="display:flex; align-items:center; gap:8px;">
+            <div id="web-user-chip" style="display:none; align-items:center; gap:4px; background:#1E293B; border:1px solid #334155; border-radius:16px; padding:4px 10px; font-size:0.75rem; color:#F59E0B; cursor:pointer;" onclick="logoutWebUser()" title="Logged in on Web. Tap to logout/switch">
+                <span>👤</span>
+                <span id="web-user-name">User</span>
+                <span style="color:#64748B; font-size:0.65rem; margin-left:2px;">✕</span>
+            </div>
             <button id="audio-toggle-btn" style="background:transparent; border:none; font-size:1.2rem; cursor:pointer;">🔊</button>
             <div class="stamina-badge" id="stamina-badge-btn" style="cursor:pointer;" title="Tap to refresh wicks">
                 <span>🔥</span>
@@ -243,6 +248,46 @@
             <h2 id="celebration-title" style="color:var(--gold); margin-bottom:8px;">CONGRATULATIONS!</h2>
             <p id="celebration-msg" style="color:#CBD5E1; font-size:0.9rem; margin-bottom:16px; line-height:1.4;"></p>
             <button class="play-action-btn" style="width:100%; padding:10px;" onclick="closeCelebrationModal()">DIVINE BLESSINGS 🙏</button>
+        </div>
+    </div>
+
+    <!-- Sacred Jyoti Captcha Verification Modal -->
+    <div id="captcha-modal" class="celebration-modal" style="display:none; z-index:99999;" onclick="event.stopPropagation()">
+        <div class="celebration-box" onclick="event.stopPropagation()" style="max-width:360px; text-align:center;">
+            <div style="font-size:3rem; margin-bottom:6px;">🪔</div>
+            <h2 style="color:var(--gold); font-size:1.15rem; margin-bottom:4px; letter-spacing:0.5px;">SACRED JYOTI CHECK</h2>
+            <p style="color:#94A3B8; font-size:0.75rem; margin-bottom:12px;">Confirm human presence to continue festival games</p>
+            <div id="captcha-question-box" style="background:#0F172A; border:1px solid #334155; border-radius:10px; padding:12px; margin-bottom:14px; text-align:center; font-size:0.88rem; color:#F8FAFC; line-height:1.4;">
+                Loading challenge...
+            </div>
+            <div id="captcha-options-container" style="display:flex; flex-direction:column; gap:8px;">
+                <!-- Captcha option buttons rendered dynamically -->
+            </div>
+            <div id="captcha-status-msg" style="margin-top:10px; font-size:0.78rem; min-height:20px; font-weight:600;"></div>
+            <button class="play-action-btn" style="margin-top:12px; width:100%; padding:8px; background:#334155; font-size:0.8rem; border-color:#475569;" onclick="closeCaptchaModal()">
+                CLOSE
+            </button>
+        </div>
+    </div>
+
+    <!-- Web Browser Login Modal (Shown when opening outside Telegram WebApp) -->
+    <div id="web-login-modal" class="celebration-modal" style="display:none; z-index:99998;" onclick="event.stopPropagation()">
+        <div class="celebration-box" onclick="event.stopPropagation()" style="max-width:380px; text-align:center;">
+            <div style="font-size:3.5rem; margin-bottom:8px;">🪔</div>
+            <h2 style="color:var(--gold); font-size:1.25rem; margin-bottom:6px;">PLAY ON WEB BROWSER</h2>
+            <p style="color:#94A3B8; font-size:0.82rem; margin-bottom:16px; line-height:1.4;">
+                Log in with your Telegram account to load your Diya Wicks, scores, and Gharana across devices!
+            </p>
+            <div id="telegram-widget-wrapper" style="min-height:50px; display:flex; justify-content:center; align-items:center; margin-bottom:16px;">
+                <!-- Telegram Login Widget injected here -->
+            </div>
+            <div style="font-size:0.75rem; color:#64748B; margin-bottom:12px;">OR</div>
+            <a href="https://t.me/OrdinalLegacyEventBot" target="_blank" class="play-action-btn" style="display:block; text-decoration:none; padding:10px; font-size:0.85rem; width:100%; margin-bottom:8px;">
+                📲 OPEN TELEGRAM BOT DIRECTLY
+            </a>
+            <button class="play-action-btn" style="width:100%; padding:8px; background:#1E293B; font-size:0.75rem; border-color:#334155; color:#94A3B8;" onclick="hideWebLoginModal()">
+                BROWSE AS GUEST
+            </button>
         </div>
     </div>
 
