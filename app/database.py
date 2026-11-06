@@ -499,6 +499,15 @@ def set_system_setting(key: str, value: str):
     finally:
         conn.close()
 
+def is_event_paused() -> bool:
+    """Returns True if the event has been paused/frozen by an administrator."""
+    val = get_system_setting("event_paused", "0")
+    return val in ("1", "true", "yes", "paused")
+
+def set_event_paused(paused: bool):
+    """Pauses or resumes the event games."""
+    set_system_setting("event_paused", "1" if paused else "0")
+
 def get_effective_logs_chat_id() -> Optional[int]:
     val = get_system_setting("logs_chat_id", settings.LOGS_CHAT_ID)
     if val and (val.lstrip("-").isdigit()):

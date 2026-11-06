@@ -103,6 +103,7 @@ class CommunityStateResponse(BaseModel):
     stage_name: str
     active_players_count: int
     top_gharanas: List[Dict[str, Any]]
+    event_paused: bool = False
 
 class RewardExportRow(BaseModel):
     rank: int

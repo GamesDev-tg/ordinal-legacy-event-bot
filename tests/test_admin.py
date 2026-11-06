@@ -203,5 +203,69 @@ class TestAdmin(unittest.TestCase):
         conn.close()
         self.assertIsNone(dummy)
 
+    def test_event_pause_and_resume_controls(self):
+        from app.database import is_event_paused, set_event_paused
+        from app.routes.game_routes import api_game_start
+        from app.models import GameStartRequest
+        
+        # Initially not paused
+        set_event_paused(False)
+        self.assertFalse(is_event_paused())
+        
+        # Pause event
+        set_event_paused(True)
+        self.assertTrue(is_event_paused())
+        
+        # Non-admin starting game should get 403
+        with self.assertRaises(HTTPException) as ctx:
+            api_game_start(
+                GameStartRequest(game_type=1),
+                x_telegram_id=str(self.target_user)
+            )
+        self.assertEqual(ctx.exception.status_code, 403)
+        self.assertIn("paused", ctx.exception.detail)
+        
+        # Unpause
+        set_event_paused(False)
+        self.assertFalse(is_event_paused())
+
+    def test_admin_commands_audit_and_export(self):
+        import asyncio
+        from app.bot import handle_bot_message
+        
+        def run_sync(coro):
+            try:
+                coro.send(None)
+            except StopIteration as e:
+                return e.value
+        
+        # Test /stopevent
+        msg = {
+            "chat": {"id": self.admin_id, "type": "private"},
+            "from": {"id": self.admin_id, "username": "admin"},
+            "text": "/stopevent"
+        }
+        run_sync(handle_bot_message(msg))
+        
+        from app.database import is_event_paused, set_event_paused
+        self.assertTrue(is_event_paused())
+        
+        # Test /auditscores
+        msg["text"] = "/auditscores"
+        run_sync(handle_bot_message(msg))
+        
+        # Test /tierusers 0
+        msg["text"] = "/tierusers 0"
+        run_sync(handle_bot_message(msg))
+        
+        # Test /exportrewards
+        msg["text"] = "/exportrewards"
+        run_sync(handle_bot_message(msg))
+        
+        # Test /resumeevent
+        msg["text"] = "/resumeevent"
+        run_sync(handle_bot_message(msg))
+        self.assertFalse(is_event_paused())
+
 if __name__ == "__main__":
     unittest.main()

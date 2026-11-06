@@ -42,7 +42,14 @@ def api_game_start(
     x_telegram_id: Optional[str] = Header(None)
 ):
     from app.captcha_engine import is_user_captcha_locked, get_or_create_captcha
+    from app.database import is_event_paused
+    from app.bot import is_admin
     user_id = extract_telegram_id(authorization, x_telegram_id)
+    if is_event_paused() and not is_admin(user_id):
+        raise HTTPException(
+            status_code=403,
+            detail="⏳ The festival games are currently paused by administrators for score auditing. Final scores and winners will be announced soon!"
+        )
     if is_user_captcha_locked(user_id):
         ch = get_or_create_captcha(user_id)
         raise HTTPException(

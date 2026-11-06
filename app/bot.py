@@ -533,6 +533,16 @@ async def send_captcha_prompt(chat_id: int, user_id: int, reason: str = ""):
     await send_telegram_message(chat_id, header, {"inline_keyboard": [row1, row2]})
 
 async def run_in_chat_chakri(chat_id: int, user_id: int):
+    from app.database import is_event_paused
+    if is_event_paused() and not is_admin(user_id):
+        await send_telegram_message(
+            chat_id,
+            "⏳ <b>Festival Arena Paused for Score Auditing</b>\n\n"
+            "The festival arena has been temporarily paused by administrators for final score auditing and winner verification.\n\n"
+            "• You can still view your final dossier and rank via /mydata and /top!\n"
+            "• Stay tuned for the official winners and reward distribution announcement!"
+        )
+        return
     if not is_user_verified_for_games(user_id):
         gate_text = (
             "⚠️ <b>Verification Required!</b>\n\n"
@@ -591,6 +601,16 @@ async def run_in_chat_chakri(chat_id: int, user_id: int):
         await send_telegram_message(chat_id, f"⚠️ *Error playing Chakri*: {str(e)}")
 
 async def run_in_chat_rangoli(chat_id: int, user_id: int):
+    from app.database import is_event_paused
+    if is_event_paused() and not is_admin(user_id):
+        await send_telegram_message(
+            chat_id,
+            "⏳ <b>Festival Arena Paused for Score Auditing</b>\n\n"
+            "The festival arena has been temporarily paused by administrators for final score auditing and winner verification.\n\n"
+            "• You can still view your final dossier and rank via /mydata and /top!\n"
+            "• Stay tuned for the official winners and reward distribution announcement!"
+        )
+        return
     if not is_user_verified_for_games(user_id):
         gate_text = (
             "⚠️ <b>Verification Required!</b>\n\n"
@@ -647,6 +667,16 @@ async def run_in_chat_rangoli(chat_id: int, user_id: int):
         await send_telegram_message(chat_id, f"⚠️ *Error playing Rangoli*: {str(e)}")
 
 async def run_in_chat_mithai(chat_id: int, user_id: int):
+    from app.database import is_event_paused
+    if is_event_paused() and not is_admin(user_id):
+        await send_telegram_message(
+            chat_id,
+            "⏳ <b>Festival Arena Paused for Score Auditing</b>\n\n"
+            "The festival arena has been temporarily paused by administrators for final score auditing and winner verification.\n\n"
+            "• You can still view your final dossier and rank via /mydata and /top!\n"
+            "• Stay tuned for the official winners and reward distribution announcement!"
+        )
+        return
     if not is_user_verified_for_games(user_id):
         gate_text = (
             "⚠️ <b>Verification Required!</b>\n\n"
@@ -1008,6 +1038,16 @@ async def handle_bot_message(message: Dict[str, Any]):
         return
 
     elif text == "/play":
+        from app.database import is_event_paused
+        if is_event_paused() and not is_admin(user_id):
+            await send_telegram_message(
+                chat_id,
+                "⏳ <b>Festival Arena Paused for Score Auditing</b>\n\n"
+                "The festival arena has been temporarily paused by administrators for final score auditing and winner verification.\n\n"
+                "• You can still view your final dossier and rank via /mydata and /top!\n"
+                "• Stay tuned for the official winners and reward distribution announcement!"
+            )
+            return
         from app.captcha_engine import is_user_captcha_locked
         if is_user_captcha_locked(user_id):
             await send_captcha_prompt(chat_id, user_id, "Automated action prevention: Please verify human presence before entering the arena.")
@@ -1258,6 +1298,13 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"• `/addadmin <id>` — Add new administrator\n"
             f"• `/deladmin <id>` — Remove administrator\n"
             f"• `/admins` — View list of administrators\n\n"
+            f"⏸️ <b>Event Controls & Score Auditing:</b>\n"
+            f"• `/stopevent` — Freeze game plays for final score audit\n"
+            f"• `/resumeevent` — Unfreeze game plays and resume festival\n"
+            f"• `/auditscores` — View complete final scores & tier breakdown\n"
+            f"• `/tierusers <level>` — List all players in a tier (e.g. /tierusers 5)\n"
+            f"• `/exportrewards` — Download complete CSV rewards spreadsheet\n"
+            f"• `/eventstatus` — Check whether games are active or paused\n\n"
             f"⚙️ *Database & Multi-Level Resets:*\n"
             f"• `/resetscores CONFIRM` — Reset points/wicks (KEEPS all users & referrals!)\n"
             f"• `/refillallwicks` — Refill 10/10 wicks for all players instantly\n"
@@ -1267,7 +1314,6 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"• `/syncreferrals` — Reconcile & sync ground-truth referral counts\n"
             f"• `/resetreferrals CONFIRM` — Clear all referral bonds & reset referral points\n"
             f"• `/query <SQL>` — Execute raw SQL query (Admin Only)\n"
-            f"• `/exportrewards` — Export player rewards breakdown\n"
             f"• `/syncbot` — Synchronize public commands in BotFather"
         )
         if not is_private:
@@ -2161,6 +2207,152 @@ async def handle_bot_message(message: Dict[str, Any]):
         from app.referral_engine import reconcile_all_referrals
         res = reconcile_all_referrals()
         await send_telegram_message(chat_id, f"✅ *Referral Reconciliation Complete*: Synced {res['synced_users']} user accounts with exact referral table records.")
+        return
+
+    elif text in ("/stopevent", "/pauseevent"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ <b>Access Denied</b>: Admin privileges required.")
+            return
+        from app.database import set_event_paused
+        set_event_paused(True)
+        delete_cache("api_community_state")
+        msg = (
+            "⏸️ <b>Maha Deepotsav Games Frozen</b>\n\n"
+            "All game plays across Telegram Chat and the Web Mini-App have been paused for score auditing.\n\n"
+            "• Players can still view their final stats via /mydata and /top, but cannot start new game runs.\n"
+            "• Use /auditscores to inspect the final score audit.\n"
+            "• Use /tierusers &lt;level&gt; to list winners by tier.\n"
+            "• Use /exportrewards to download the complete CSV winners list.\n"
+            "• Use /resumeevent to unfreeze when ready."
+        )
+        await send_telegram_message(chat_id, msg)
+        await send_bot_log(f"⏸️ <b>Event Frozen</b>: Admin `{user_id}` paused game plays for final score audit.")
+        return
+
+    elif text in ("/resumeevent", "/startevent", "/unpauseevent"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ <b>Access Denied</b>: Admin privileges required.")
+            return
+        from app.database import set_event_paused
+        set_event_paused(False)
+        delete_cache("api_community_state")
+        msg = (
+            "▶️ <b>Maha Deepotsav Games Resumed</b>\n\n"
+            "Game plays in Chat and Mini-App are now active again!"
+        )
+        await send_telegram_message(chat_id, msg)
+        await send_bot_log(f"▶️ <b>Event Resumed</b>: Admin `{user_id}` unpaused game plays.")
+        return
+
+    elif text in ("/eventstatus", "/pausestatus"):
+        from app.database import is_event_paused
+        paused = is_event_paused()
+        conn = get_db_connection()
+        total_p = conn.execute("SELECT COUNT(*) as c FROM users").fetchone()["c"]
+        active_p = conn.execute("SELECT COUNT(*) as c FROM users WHERE points_total > 0").fetchone()["c"]
+        comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
+        conn.close()
+        sparks = comm["total_sparks"] if comm else 0
+        status_str = "⏸️ <b>PAUSED FOR AUDIT</b>" if paused else "🟢 <b>ACTIVE & RUNNING</b>"
+        msg = (
+            f"📊 <b>Maha Deepotsav Arena Status</b>\n\n"
+            f"• State: {status_str}\n"
+            f"• Total Registered: <b>{total_p:,} Players</b>\n"
+            f"• Active Scoring: <b>{active_p:,} Players</b>\n"
+            f"• Total Sparks: <b>{sparks:,} Sparks</b>\n\n"
+            f"{'👉 Games are currently frozen for auditing.' if paused else '👉 Games are actively playable in chat and mini-app.'}"
+        )
+        await send_telegram_message(chat_id, msg)
+        return
+
+    elif text == "/auditscores":
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ <b>Access Denied</b>: Admin privileges required.")
+            return
+        conn = get_db_connection()
+        top_players = conn.execute(
+            "SELECT telegram_id, username, first_name, points_total, tier_level, gharana_id FROM users ORDER BY points_total DESC LIMIT 10"
+        ).fetchall()
+        tier_counts = conn.execute(
+            "SELECT tier_level, COUNT(*) as c FROM users GROUP BY tier_level ORDER BY tier_level DESC"
+        ).fetchall()
+        comm = conn.execute("SELECT total_sparks, target_sparks FROM community_state WHERE id = 1").fetchone()
+        conn.close()
+        
+        tc_dict = {row["tier_level"]: row["c"] for row in tier_counts}
+        stage_num, stage_name = get_stage_info(comm["total_sparks"])
+        
+        lines = [
+            "🏆 <b>FINAL SCORE AUDIT & WINNERS BREAKDOWN</b>\n",
+            f"🔥 <b>Community Akhand Diya</b>: <code>{comm['total_sparks']:,} / {comm['target_sparks']:,} Sparks</code>",
+            f"✨ <b>Community Stage</b>: <code>{stage_name}</code> (Stage {stage_num})\n",
+            "🎖️ <b>Lampbearers by Tier</b>:",
+            f"• Tier 5 (5,000+ Pts): <b>{tc_dict.get(5, 0)}</b> guardians",
+            f"• Tier 4 (4,000–4,999): <b>{tc_dict.get(4, 0)}</b> lampbearers",
+            f"• Tier 3 (2,750–3,999): <b>{tc_dict.get(3, 0)}</b> artisans",
+            f"• Tier 2 (1,500–2,749): <b>{tc_dict.get(2, 0)}</b> initiates",
+            f"• Tier 1 (500–1,499): <b>{tc_dict.get(1, 0)}</b> novices",
+            f"• Tier 0 (0–499): <b>{tc_dict.get(0, 0)}</b> wanderers\n",
+            "🌟 <b>Top 10 Final Standings</b>:"
+        ]
+        medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+        for idx, p in enumerate(top_players):
+            m = medals[idx] if idx < len(medals) else f"{idx+1}."
+            name = p["first_name"] or p["username"] or f"Player {p['telegram_id']}"
+            lines.append(f"{m} <b>{html.escape(name)}</b> — <code>{p['points_total']} Pts</code> (Tier {p['tier_level']})")
+        
+        lines.append("\n👉 Run <code>/exportrewards</code> to download complete CSV spreadsheet!")
+        await send_telegram_message(chat_id, "\n".join(lines))
+        return
+
+    elif text.startswith("/tierusers") or text.startswith("/tierplayers"):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ <b>Access Denied</b>: Admin privileges required.")
+            return
+        parts = text.split()
+        if len(parts) < 2 or not parts[1].isdigit():
+            await send_telegram_message(chat_id, "Usage: <code>/tierusers &lt;tier_level&gt;</code> (e.g. <code>/tierusers 5</code>)")
+            return
+        t_level = int(parts[1])
+        t_name = get_tier_name(t_level)
+        conn = get_db_connection()
+        rows = conn.execute(
+            "SELECT telegram_id, username, first_name, points_total FROM users WHERE tier_level = ? ORDER BY points_total DESC LIMIT 50",
+            (t_level,)
+        ).fetchall()
+        total_in_tier = conn.execute("SELECT COUNT(*) as c FROM users WHERE tier_level = ?", (t_level,)).fetchone()["c"]
+        conn.close()
+        
+        lines = [f"🏅 <b>Lampbearers in Tier {t_level}: {t_name}</b> (Total: {total_in_tier})\n"]
+        if not rows:
+            lines.append("<i>No players in this tier yet.</i>")
+        else:
+            for idx, r in enumerate(rows, 1):
+                u_tag = f"@{r['username']}" if r["username"] else (r["first_name"] or f"ID {r['telegram_id']}")
+                lines.append(f"{idx}. <b>{html.escape(u_tag)}</b> (<code>{r['telegram_id']}</code>): <b>{r['points_total']} Pts</b>")
+        if total_in_tier > 50:
+            lines.append(f"\n<i>...and {total_in_tier - 50} more. Use /exportrewards for full list.</i>")
+        await send_telegram_message(chat_id, "\n".join(lines))
+        return
+
+    elif text == "/exportrewards":
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ <b>Access Denied</b>: Admin privileges required.")
+            return
+        await send_telegram_message(chat_id, "⏳ Generating rewards CSV export...")
+        from app.routes.admin_routes import api_export_rewards
+        rows = api_export_rewards(user_id)
+        csv_lines = ["Rank,Telegram ID,Username,First Name,Points Total,Tier Level,Tier Name,Reward Category,Reward Details"]
+        for r in rows:
+            uname = r.username or ""
+            fname = (r.first_name or "").replace(",", " ")
+            details = (r.details or "").replace(",", ";")
+            csv_lines.append(f"{r.rank},{r.telegram_id},{uname},{fname},{r.points_total},{r.tier_level},{r.tier_name},{r.reward_category},{details}")
+        csv_bytes = "\n".join(csv_lines).encode("utf-8")
+        now_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S")
+        filename = f"ordinal_event_rewards_{now_str}.csv"
+        await send_telegram_document(chat_id, csv_bytes, filename, f"📊 <b>Ordinal Legacy Event Rewards Export</b> ({len(rows)} players)")
+        await send_bot_log(f"📊 <b>Rewards Exported</b>: Admin `{user_id}` generated rewards CSV ({len(rows)} players).")
         return
 
     elif text in ("/help", "/commands", "/menu"):

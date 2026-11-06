@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 from app.models import CommunityStateResponse
-from app.database import get_db_connection, get_stage_info
+from app.database import get_db_connection, get_stage_info, is_event_paused
 from app.config import settings
 from app.cache import get_cache, set_cache
 
@@ -48,6 +48,8 @@ def api_community_state():
         })
     conn.close()
     
+    paused = is_event_paused()
+    
     resp = CommunityStateResponse(
         total_sparks=total_sparks,
         target_sparks=target_sparks,
@@ -55,7 +57,8 @@ def api_community_state():
         current_stage=stage_num,
         stage_name=stage_name,
         active_players_count=active_count,
-        top_gharanas=top_gharanas
+        top_gharanas=top_gharanas,
+        event_paused=paused
     )
     # Cache for 5 seconds in temp cache to support hundreds of concurrent players
     try:

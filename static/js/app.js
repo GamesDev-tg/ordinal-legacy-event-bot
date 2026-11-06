@@ -142,6 +142,30 @@ function updateUI(authData) {
         stageBadge.innerText = stageNames[authData.current_stage] || `Stage ${authData.current_stage}`;
     }
 
+    // Event Paused Status Banner
+    if (authData.event_paused) {
+        let pb = document.getElementById('event-paused-banner');
+        if (!pb) {
+            pb = document.createElement('div');
+            pb.id = 'event-paused-banner';
+            pb.style.background = 'linear-gradient(135deg, #DC2626, #991B1B)';
+            pb.style.color = '#FFFFFF';
+            pb.style.padding = '12px 16px';
+            pb.style.borderRadius = '12px';
+            pb.style.margin = '12px 0';
+            pb.style.textAlign = 'center';
+            pb.style.fontWeight = 'bold';
+            pb.style.fontSize = '0.85rem';
+            pb.style.boxShadow = '0 4px 12px rgba(220, 38, 38, 0.4)';
+            pb.innerHTML = '⏳ <b>FESTIVAL GAMES FROZEN FOR SCORE AUDITING</b><br><span style="font-size:0.75rem; font-weight:normal; opacity:0.95;">Admins are auditing final scores and verifying winners. Please check your final rank in /mydata!</span>';
+            const container = document.querySelector('.container') || document.body;
+            container.prepend(pb);
+        }
+    } else {
+        const pb = document.getElementById('event-paused-banner');
+        if (pb) pb.remove();
+    }
+
     // Shubh Muhurat Refill Banner
     const shubhBtn = document.getElementById('shubh-action-btn');
     const shubhTxt = document.getElementById('shubh-status-txt');
