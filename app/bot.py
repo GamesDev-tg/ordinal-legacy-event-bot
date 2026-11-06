@@ -833,7 +833,8 @@ async def handle_bot_message(message: Dict[str, Any]):
         cmd_head = text.split()[0].lower()
         ALLOWED_GROUP_COMMANDS = {
             "/top", "/topusers", "/status", "/gharanas", "/leaderboard", 
-            "/tiers", "/stats", "/captcha", "/testcaptcha", "/eventstatus", "/pausestatus"
+            "/tiers", "/stats", "/captcha", "/testcaptcha", "/eventstatus", "/pausestatus",
+            "/adminstats", "/userstats", "/playerstats", "/eventstats"
         }
         ADMIN_COMMANDS = {
             "/admin", "/adminhelp", "/admins", "/addadmin", "/deladmin",
@@ -846,6 +847,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             "/stopevent", "/pauseevent", "/resumeevent", "/startevent", "/unpauseevent",
             "/eventstatus", "/pausestatus", "/auditscores", "/tierusers", "/tierplayers",
             "/findtier", "/exportrewards",
+            "/adminstats", "/userstats", "/playerstats", "/eventstats",
             "/resetscores", "/resetpoints", "/resetshubh", "/resetallshubh",
             "/resetevent", "/cleandummy", "/purgedummy", "/syncreferrals",
             "/resetreferrals", "/query", "/syncbot"
@@ -1389,6 +1391,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"• `/deladmin <id>` — Remove administrator\n"
             f"• `/admins` — View list of administrators\n\n"
             f"⏸️ <b>Event Controls & Score Auditing:</b>\n"
+            f"• `/adminstats` — Deep audit of all players, active users & total contributions (also `/userstats`)\n"
             f"• `/stopevent` — Freeze game plays for final score audit\n"
             f"• `/resumeevent` — Unfreeze game plays and resume festival\n"
             f"• `/auditscores` — View complete final scores & tier breakdown\n"
@@ -1841,7 +1844,7 @@ async def handle_bot_message(message: Dict[str, Any]):
         await send_telegram_message(chat_id, msg)
         return
 
-    elif text.startswith(("/userinfo", "/user")):
+    elif text.startswith("/userinfo") or text == "/user" or text.startswith("/user "):
         if not is_admin(user_id):
             await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
             return
@@ -2338,6 +2341,109 @@ async def handle_bot_message(message: Dict[str, Any]):
         await send_bot_log(f"▶️ <b>Event Resumed</b>: Admin `{user_id}` unpaused game plays.")
         return
 
+    elif text in ("/adminstats", "/userstats", "/playerstats", "/eventstats") or text.startswith(("/adminstats ", "/userstats ", "/playerstats ", "/eventstats ")):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ <b>Access Denied</b>: Admin privileges required.")
+            return
+
+        conn = get_db_connection()
+        total_users = conn.execute("SELECT COUNT(*) as c FROM users").fetchone()["c"]
+        active_users = conn.execute("SELECT COUNT(*) as c FROM users WHERE points_total > 0").fetchone()["c"]
+        verified_users = conn.execute("SELECT COUNT(*) as c FROM users WHERE joined_groups = 1").fetchone()["c"]
+        
+        unique_gamers = conn.execute("SELECT COUNT(DISTINCT telegram_id) as c FROM game_sessions WHERE is_valid = 1").fetchone()["c"]
+        total_sessions = conn.execute("SELECT COUNT(*) as c FROM game_sessions WHERE is_valid = 1").fetchone()["c"]
+        three_pts = conn.execute("SELECT COUNT(*) as c FROM game_sessions WHERE score_awarded = 3 AND is_valid = 1").fetchone()["c"]
+        two_pts = conn.execute("SELECT COUNT(*) as c FROM game_sessions WHERE score_awarded = 2 AND is_valid = 1").fetchone()["c"]
+        one_pt = conn.execute("SELECT COUNT(*) as c FROM game_sessions WHERE score_awarded = 1 AND is_valid = 1").fetchone()["c"]
+        game_points = conn.execute("SELECT COALESCE(SUM(score_awarded), 0) as s FROM game_sessions WHERE is_valid = 1").fetchone()["s"]
+
+        comm = conn.execute("SELECT total_sparks, target_sparks FROM community_state WHERE id = 1").fetchone()
+        total_sparks = comm["total_sparks"] if comm else 0
+        target_sparks = comm["target_sparks"] if comm else settings.GLOBAL_MILESTONE_TARGET
+        comm_pct = min(100.0, (total_sparks / max(1, target_sparks)) * 100)
+        stage_num, stage_name = get_stage_info(total_sparks)
+
+        total_bank_points = conn.execute("SELECT COALESCE(SUM(points_total), 0) as s FROM users").fetchone()["s"]
+        total_ref_points = conn.execute("SELECT COALESCE(SUM(referral_points_earned), 0) as s FROM users").fetchone()["s"]
+        companions = conn.execute("SELECT COUNT(*) as c FROM referrals WHERE is_companion = 1").fetchone()["c"]
+
+        today_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+        today_shubh = conn.execute("SELECT COUNT(*) as c FROM users WHERE shubh_refill_date = ?", (today_str,)).fetchone()["c"]
+
+        tier_counts = conn.execute("SELECT tier_level, COUNT(*) as c FROM users GROUP BY tier_level").fetchall()
+        tc_dict = {row["tier_level"]: row["c"] for row in tier_counts}
+
+        gharana_stats = conn.execute(
+            "SELECT gharana_id, COUNT(*) as members, COALESCE(SUM(points_total), 0) as total_pts FROM users GROUP BY gharana_id ORDER BY total_pts DESC"
+        ).fetchall()
+
+        top_mvps = conn.execute(
+            "SELECT telegram_id, username, first_name, points_total, tier_level FROM users ORDER BY points_total DESC LIMIT 5"
+        ).fetchall()
+        
+        from app.database import is_event_paused
+        paused = is_event_paused()
+        conn.close()
+
+        status_str = "⏸️ <b>PAUSED FOR AUDIT</b>" if paused else "🟢 <b>ACTIVE & RUNNING</b>"
+        active_pct = (active_users / total_users * 100) if total_users > 0 else 0.0
+
+        lines = [
+            "📊 <b>MAHA DEEPOTSAV — COMPREHENSIVE EVENT & USER AUDIT</b>",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━",
+            f"⚡ <b>Event State</b>: {status_str}",
+            f"🔥 <b>Community Akhand Diya</b>: <code>{total_sparks:,} / {target_sparks:,} Sparks</code> (<b>{comm_pct:.1f}%</b>)",
+            f"📍 <b>Milestone Stage</b>: <code>{stage_name}</code> (Stage {stage_num})\n",
+            
+            "👥 <b>USER PARTICIPATION STATS:</b>",
+            f"• Total Registered: <b>{total_users:,} players</b>",
+            f"• Active Scoring Users: <b>{active_users:,} players</b> (<b>{active_pct:.1f}%</b>)",
+            f"• Zero-Score Inactive: <b>{(total_users - active_users):,} players</b>",
+            f"• Group-Verified Members: <b>{verified_users:,} players</b>",
+            f"• Unique Game Players: <b>{unique_gamers:,} players</b>\n",
+
+            "🎯 <b>TOTAL CONTRIBUTIONS DONE:</b>",
+            f"• Total Sparks Generated: <b>{total_sparks:,} Sparks</b>",
+            f"• Total Points in Player Banks: <b>{total_bank_points:,} Pts</b>",
+            f"• Game Runs Completed: <b>{total_sessions:,} runs</b> (<b>{game_points:,} Pts</b>)",
+            f"   - 🌟 Flawless (3 Pts): <code>{three_pts:,}</code>",
+            f"   - ✨ Skilled (2 Pts): <code>{two_pts:,}</code>",
+            f"   - 🪔 Base (1 Pt): <code>{one_pt:,}</code>",
+            f"• Referral Points Earned: <b>{total_ref_points:,} Pts</b> (<b>{companions:,}</b> bonded pairs)",
+            f"• Today's Shubh Muhurat Claims: <b>{today_shubh:,} players</b>\n",
+
+            "🏛️ <b>GHARANA CONTRIBUTIONS:</b>"
+        ]
+
+        gharana_names = {1: "☀️ Surya Gharana", 2: "🔥 Agni Gharana", 3: "🌙 Chandra Gharana", 4: "💨 Vayu Gharana"}
+        for g in gharana_stats:
+            g_name = gharana_names.get(g["gharana_id"], f"Gharana {g['gharana_id']}")
+            lines.append(f"• {g_name}: <b>{g['total_pts']:,} Pts</b> ({g['members']:,} members)")
+
+        lines.append("\n🎖️ <b>TIER LADDER DISTRIBUTION:</b>")
+        lines.append(f"• Tier 5 (5,000+ Pts): <b>{tc_dict.get(5, 0):,}</b>")
+        lines.append(f"• Tier 4 (4,000–4,999): <b>{tc_dict.get(4, 0):,}</b>")
+        lines.append(f"• Tier 3 (2,750–3,999): <b>{tc_dict.get(3, 0):,}</b>")
+        lines.append(f"• Tier 2 (1,500–2,749): <b>{tc_dict.get(2, 0):,}</b>")
+        lines.append(f"• Tier 1 (500–1,499): <b>{tc_dict.get(1, 0):,}</b>")
+        lines.append(f"• Tier 0 (0–499): <b>{tc_dict.get(0, 0):,}</b>\n")
+
+        lines.append("🌟 <b>TOP 5 CONTRIBUTORS:</b>")
+        medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+        if not top_mvps:
+            lines.append("<i>No scores recorded yet.</i>")
+        else:
+            for idx, mvp in enumerate(top_mvps):
+                m = medals[idx] if idx < len(medals) else f"{idx+1}."
+                name = mvp["username"] and f"@{mvp['username']}" or mvp["first_name"] or f"ID {mvp['telegram_id']}"
+                contrib_pct = (mvp["points_total"] / total_sparks * 100) if total_sparks > 0 else 0.0
+                lines.append(f"{m} <b>{html.escape(name)}</b> (<code>{mvp['telegram_id']}</code>): <b>{mvp['points_total']:,} Pts</b> ({contrib_pct:.1f}% of sparks)")
+
+        lines.append("\n👉 Run <code>/exportrewards</code> to export complete user dataset as CSV.")
+        await send_telegram_message(chat_id, "\n".join(lines))
+        return
+
     elif text in ("/eventstatus", "/pausestatus"):
         from app.database import is_event_paused
         paused = is_event_paused()
@@ -2354,7 +2460,8 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"• Total Registered: <b>{total_p:,} Players</b>\n"
             f"• Active Scoring: <b>{active_p:,} Players</b>\n"
             f"• Total Sparks: <b>{sparks:,} Sparks</b>\n\n"
-            f"{'👉 Games are currently frozen for auditing.' if paused else '👉 Games are actively playable in chat and mini-app.'}"
+            f"{'👉 Games are currently frozen for auditing.' if paused else '👉 Games are actively playable in chat and mini-app.'}\n\n"
+            f"💡 <i>Admin tip: Use /adminstats for complete deep-dive participation & contribution analytics.</i>"
         )
         await send_telegram_message(chat_id, msg)
         return

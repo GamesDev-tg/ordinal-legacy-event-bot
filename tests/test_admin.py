@@ -342,5 +342,47 @@ class TestAdmin(unittest.TestCase):
             run_coro(handle_bot_message(msg))
             self.assertTrue(any("Resumed" in m["text"] for m in sent_messages if m["chat_id"] == group_id))
 
+    def test_adminstats_and_userstats_commands(self):
+        from app.bot import handle_bot_message
+        from unittest.mock import patch
+        sent_messages = []
+
+        async def fake_send_message(chat_id, text, **kwargs):
+            sent_messages.append({"chat_id": chat_id, "text": text})
+            return True
+
+        with patch("app.bot.send_telegram_message", side_effect=fake_send_message):
+            # 1. Admin running /adminstats in private chat
+            msg = {
+                "chat": {"id": self.admin_id, "type": "private"},
+                "from": {"id": self.admin_id, "username": "admin_chief"},
+                "text": "/adminstats"
+            }
+            run_coro(handle_bot_message(msg))
+            self.assertTrue(any("COMPREHENSIVE EVENT & USER AUDIT" in m["text"] for m in sent_messages))
+            self.assertTrue(any("USER PARTICIPATION STATS" in m["text"] for m in sent_messages))
+            self.assertTrue(any("TOTAL CONTRIBUTIONS DONE" in m["text"] for m in sent_messages))
+
+            # 2. Admin running /userstats alias directly in group chat
+            sent_messages.clear()
+            group_id = -100987654321
+            msg = {
+                "chat": {"id": group_id, "type": "supergroup"},
+                "from": {"id": self.admin_id, "username": "admin_chief"},
+                "text": "/userstats"
+            }
+            run_coro(handle_bot_message(msg))
+            self.assertTrue(any("COMPREHENSIVE EVENT & USER AUDIT" in m["text"] for m in sent_messages if m["chat_id"] == group_id))
+
+            # 3. Non-admin running /adminstats in group -> Access Denied
+            sent_messages.clear()
+            msg = {
+                "chat": {"id": group_id, "type": "supergroup"},
+                "from": {"id": self.non_admin_id, "username": "normal_guy"},
+                "text": "/adminstats"
+            }
+            run_coro(handle_bot_message(msg))
+            self.assertTrue(any("Access Denied" in m["text"] for m in sent_messages if m["chat_id"] == group_id))
+
 if __name__ == "__main__":
     unittest.main()
