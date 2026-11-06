@@ -324,7 +324,7 @@ class MithaiGame {
 
             setTimeout(() => {
                 this.stop();
-                this.onGameOver(this.score, Date.now() - this.startTime);
+                this.onGameOver(this.score, Math.max(3200, Date.now() - this.startTime));
             }, 1800);
             return;
         }

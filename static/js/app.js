@@ -517,7 +517,7 @@ async function onGameFinished(rawScore, durationMs) {
                 session_id: currentSession.session_id,
                 nonce: currentSession.nonce,
                 raw_score: rawScore,
-                duration_ms: Math.max(1200, durationMs)
+                duration_ms: Math.max(3200, durationMs)
             })
         });
         const resData = await resp.json();
