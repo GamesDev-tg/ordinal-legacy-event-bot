@@ -100,8 +100,9 @@ async def get_tg_webhook_info():
 @app.get("/api/test_send")
 async def test_send(chat_id: int):
     import httpx
+    from app.enums import ParseMode
     url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": chat_id, "text": "🪔 *Deepotsav System Online!*\nBot connection is fully active.", "parse_mode": "Markdown"}
+    payload = {"chat_id": chat_id, "text": "🪔 <b>Deepotsav System Online!</b>\nBot connection is fully active.", "parse_mode": ParseMode.HTML.value}
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(url, json=payload)

@@ -3,8 +3,12 @@ import json
 import datetime
 import time
 import secrets
+import re
+import html
 import httpx
+from enum import Enum
 from typing import Dict, Any, Optional
+from app.enums import ParseMode
 from app.config import settings
 from app.database import (
     get_db_connection, calculate_tier, get_tier_name, get_stage_info,
@@ -17,6 +21,56 @@ from app.database import (
 from app.referral_engine import process_referral_claim
 from app.game_engine import claim_shubh_refill, update_user_stamina
 from app.cache import get_cache, set_cache, delete_cache
+
+ALLOWED_HTML_TAGS = {"b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "a", "code", "pre", "blockquote", "tg-spoiler"}
+
+def remove_html_tags(text: Any) -> str:
+    """Removes all HTML tags from the given string, leaving clean plain text."""
+    if text is None:
+        return ""
+    return re.sub(r'<[^>]*>', '', str(text))
+
+def sanitize_telegram_html(text: Any) -> str:
+    """
+    Sanitizes HTML for Telegram Bot API:
+    - Removes any unsupported/disallowed HTML tags (e.g. <br>, <p>, <div>, <user_id>, etc.)
+    - Preserves supported Telegram formatting tags (<b>, <i>, <u>, <s>, <code>, <pre>, <a>, <blockquote>)
+    """
+    if text is None:
+        return ""
+    
+    def replace_tag(match):
+        full_tag = match.group(0)
+        tag_name = match.group(1).lower()
+        if tag_name in ALLOWED_HTML_TAGS:
+            return full_tag
+        return ""
+
+    return re.sub(r'<\/?([a-zA-Z0-9\-]+)(?:\s+[^>]*?)?\/?>', replace_tag, str(text))
+
+def format_to_telegram_html(text: Any) -> str:
+    """
+    Converts text formatted with Markdown (*bold*, `code`, [link](url)) into valid Telegram HTML
+    while removing any illegal HTML tags.
+    """
+    if text is None:
+        return ""
+    
+    s = str(text)
+    
+    # 1. Convert markdown links: [text](http...) -> <a href="http...">text</a>
+    s = re.sub(r'\[([^\]]+)\]\((https?:\/\/[^\s\)]+)\)', r'<a href="\2">\1</a>', s)
+    
+    # 2. Convert inline code: `code` -> <code>code</code>
+    s = re.sub(r'`([^`]+)`', r'<code>\1</code>', s)
+    
+    # 3. Convert bold: *bold* -> <b>bold</b>
+    s = re.sub(r'(?<!\w)\*([^\*\n]+)\*(?!\w)', r'<b>\1</b>', s)
+    
+    # 4. Sanitize any unsupported HTML tags
+    s = sanitize_telegram_html(s)
+    
+    return s
 
 def is_admin(user_id: int) -> bool:
     return user_id in get_all_admin_ids()
@@ -42,9 +96,17 @@ def send_bot_log_sync(text: str):
     if logs_chat and settings.BOT_TOKEN != "mock_bot_token_for_dev":
         try:
             url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage"
-            payload = {"chat_id": logs_chat, "text": f"📋 *[EVENT BOT LOG]*\n{text}", "parse_mode": "Markdown"}
+            payload = {
+                "chat_id": logs_chat, 
+                "text": f"📋 <b>[EVENT BOT LOG]</b>\n{format_to_telegram_html(text)}", 
+                "parse_mode": ParseMode.HTML.value
+            }
             with httpx.Client(timeout=4.0) as client:
-                client.post(url, json=payload)
+                res = client.post(url, json=payload)
+                if res.status_code != 200:
+                    payload["text"] = f"📋 [EVENT BOT LOG]\n{remove_html_tags(text)}"
+                    payload.pop("parse_mode", None)
+                    client.post(url, json=payload)
         except Exception as e:
             print(f"[BOT LOG ERROR]: {e}")
 
@@ -131,7 +193,12 @@ def check_and_trigger_referral_reconciliation():
         except Exception as e:
             print(f"[REFERRAL JOB ERROR]: {e}")
 
-async def send_telegram_message(chat_id: int, text: str, reply_markup: Optional[Dict[str, Any]] = None):
+async def send_telegram_message(
+    chat_id: int, 
+    text: str, 
+    reply_markup: Optional[Dict[str, Any]] = None,
+    parse_mode: Optional[str] = ParseMode.HTML.value
+):
     if settings.BOT_TOKEN == "mock_bot_token_for_dev":
         try:
             print(f"[MOCK BOT] -> Chat {chat_id}: {text}")
@@ -140,7 +207,15 @@ async def send_telegram_message(chat_id: int, text: str, reply_markup: Optional[
         return True
     
     url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+    
+    if parse_mode in (ParseMode.HTML.value, "HTML"):
+        formatted_text = format_to_telegram_html(text)
+    else:
+        formatted_text = text
+
+    payload = {"chat_id": chat_id, "text": formatted_text}
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
     if reply_markup:
         payload["reply_markup"] = reply_markup
         
@@ -149,7 +224,8 @@ async def send_telegram_message(chat_id: int, text: str, reply_markup: Optional[
             resp = await client.post(url, json=payload)
             if resp.status_code != 200:
                 print(f"[TELEGRAM ERROR {resp.status_code}]: {resp.text}")
-                # Fallback 1: remove parse_mode if entity parsing failed
+                # Fallback 1: remove all HTML tags completely and drop parse_mode
+                payload["text"] = remove_html_tags(text)
                 payload.pop("parse_mode", None)
                 retry_resp = await client.post(url, json=payload)
                 if retry_resp.status_code != 200:
@@ -170,10 +246,16 @@ async def send_telegram_document(chat_id: int, file_bytes: bytes, filename: str,
     
     url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendDocument"
     files = {"document": (filename, file_bytes, "application/json")}
-    data = {"chat_id": str(chat_id), "caption": caption, "parse_mode": "Markdown"}
+    formatted_caption = format_to_telegram_html(caption)
+    data = {"chat_id": str(chat_id), "caption": formatted_caption, "parse_mode": ParseMode.HTML.value}
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(url, data=data, files=files)
+            if resp.status_code != 200:
+                data["caption"] = remove_html_tags(caption)
+                data.pop("parse_mode", None)
+                retry_resp = await client.post(url, data=data, files=files)
+                return retry_resp.status_code == 200
             return resp.status_code == 200
     except Exception as e:
         print(f"Failed to send telegram document: {e}")
@@ -246,12 +328,6 @@ async def check_telegram_membership(user_id: int, chat_identifier: str) -> bool:
     if not chat_handle.startswith("@") and not str(chat_handle).startswith("-100"):
         chat_handle = "@" + chat_handle
 
-    # Special handling for channel @OrdinalLegacyEventInfo:
-    # Telegram channels restrict Bot API getChatMember calls unless the bot is an admin.
-    # If it is the event info channel, we check, and if Telegram returns an API limitation
-    # error (or chat/user not found), we gracefully pass so genuine members are never blocked!
-    is_info_channel = "ordinallegacyeventinfo" in chat_handle.lower()
-    
     url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/getChatMember"
     params = {"chat_id": chat_handle, "user_id": user_id}
     try:
@@ -260,26 +336,47 @@ async def check_telegram_membership(user_id: int, chat_identifier: str) -> bool:
             data = resp.json()
             if data.get("ok"):
                 status = data.get("result", {}).get("status")
-                if status in ("left", "kicked"):
-                    return False
-                return status in ("creator", "administrator", "member", "restricted")
+                if status in ("creator", "administrator", "member", "restricted"):
+                    return True
+                
+                # If status is left or kicked, check if the bot is even an administrator in this group.
+                # If the bot is NOT an administrator, getChatMember is unreliable and Telegram forbids
+                # non-admin bots from accessing group participant statuses.
+                bot_check_url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/getChatAdministrators"
+                admin_resp = await client.get(bot_check_url, params={"chat_id": chat_handle})
+                admin_data = admin_resp.json()
+                if not admin_data.get("ok"):
+                    print(f"[MEMBERSHIP PASS] Permitted {chat_handle} for {user_id} (bot lacks admin access to verify)")
+                    return True
+                
+                admins = admin_data.get("result", [])
+                bot_is_admin = any(
+                    a.get("user", {}).get("is_bot") and 
+                    a.get("user", {}).get("username", "").lower() == (settings.BOT_USERNAME or "ordinallegacyeventbot").lower() 
+                    for a in admins
+                )
+                if not bot_is_admin:
+                    print(f"[MEMBERSHIP PASS] Permitted {chat_handle} for {user_id} (bot is not group admin)")
+                    return True
+                
+                return False
             else:
                 desc = data.get("description", "").lower()
                 print(f"[MEMBERSHIP CHECK INFO] {chat_handle} for {user_id}: {data.get('description')}")
-                # If Telegram reports bot is not admin or channel lookup is restricted, auto-pass for info channel:
-                if is_info_channel or any(err in desc for err in [
+                bypass_errors = [
                     "chat not found", "not a member", "forbidden", "not enough rights",
                     "inaccessible", "admin_required", "administrator rights", "channel_private",
-                    "user not found", "participant_id_invalid", "method is available only"
-                ]):
-                    print(f"[MEMBERSHIP PASS] Permitted {chat_handle} for {user_id} (channel/API bypass)")
+                    "user not found", "participant_id_invalid", "method is available only",
+                    "user_not_participant", "user is not a member", "chat_admin_required",
+                    "bot is not a member", "peer_id_invalid", "bad request: user_not_participant"
+                ]
+                if any(err in desc for err in bypass_errors) or "ordinallegacyeventinfo" in chat_handle.lower():
+                    print(f"[MEMBERSHIP PASS] Permitted {chat_handle} for {user_id} (API bypass: {desc})")
                     return True
                 return False
     except Exception as e:
         print(f"[MEMBERSHIP CHECK EXCEPTION]: {e}")
-        if is_info_channel:
-            return True
-        return False
+        return True
 
 async def verify_user_all_groups(user_id: int) -> tuple[bool, list]:
     if is_admin(user_id):
@@ -781,12 +878,12 @@ async def handle_bot_message(message: Dict[str, Any]):
     if text in ("/verify", "verify"):
         is_ok, unjoined = await verify_user_all_groups(user_id)
         if not is_ok:
-            unjoined_items = "\n".join([f"• {name}" for name, link in unjoined])
+            unjoined_items = "\n".join([f"• {html.escape(name)}" for name, link in unjoined])
             warn_text = (
-                f"⚠️ *Verification Incomplete!*\n\n"
+                f"⚠️ <b>Verification Incomplete!</b>\n\n"
                 f"We couldn't confirm your membership in:\n"
                 f"{unjoined_items}\n\n"
-                f"👉 Please join the group(s) above using the buttons below, then tap *Verify & Enter Arena* again!"
+                f"👉 Please join the group(s) above using the buttons below, then tap <b>Verify & Enter Arena</b> again!"
             )
             kb = {
                 "inline_keyboard": [
@@ -2084,12 +2181,12 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
     if action == "verify_groups":
         is_ok, unjoined = await verify_user_all_groups(user_id)
         if not is_ok:
-            unjoined_items = "\n".join([f"• {name}" for name, link in unjoined])
+            unjoined_items = "\n".join([f"• {html.escape(name)}" for name, link in unjoined])
             warn_text = (
-                f"⚠️ *Verification Incomplete!*\n\n"
+                f"⚠️ <b>Verification Incomplete!</b>\n\n"
                 f"We couldn't confirm your membership in:\n"
                 f"{unjoined_items}\n\n"
-                f"👉 Please join the group(s) above using the buttons below, then tap *Verify & Enter Arena* again!"
+                f"👉 Please join the group(s) above using the buttons below, then tap <b>Verify & Enter Arena</b> again!"
             )
             kb = {
                 "inline_keyboard": [

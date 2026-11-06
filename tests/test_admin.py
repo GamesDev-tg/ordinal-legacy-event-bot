@@ -23,10 +23,14 @@ class TestAdmin(unittest.TestCase):
         cls.test_db = os.path.join(tempfile.gettempdir(), f"test_admin_{random.randint(10000, 99999)}.db")
         settings.DATABASE_PATH = cls.test_db
         settings.ADMIN_IDS = [999001]
+        from app.cache import delete_cache
+        delete_cache("all_admin_ids")
         init_db()
 
     @classmethod
     def tearDownClass(cls):
+        from app.cache import delete_cache
+        delete_cache("all_admin_ids")
         if os.path.exists(cls.test_db):
             try:
                 os.remove(cls.test_db)
@@ -34,6 +38,8 @@ class TestAdmin(unittest.TestCase):
                 pass
 
     def setUp(self):
+        from app.cache import delete_cache
+        delete_cache("all_admin_ids")
         self.admin_id = 999001
         self.non_admin_id = 999002
         self.target_user = random.randint(100000, 900000)

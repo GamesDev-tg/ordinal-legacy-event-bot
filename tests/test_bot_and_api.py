@@ -366,5 +366,41 @@ class TestBotAsync(unittest.TestCase):
                 self.assertIn("wait a moment", last_call[1].get("text", ""))
         run_coro_sync(_run())
 
+    def test_parse_mode_enum_and_html_sanitizer(self):
+        from app.enums import ParseMode
+        from app.bot import remove_html_tags, sanitize_telegram_html, format_to_telegram_html
+        
+        self.assertEqual(ParseMode.HTML.value, "HTML")
+        self.assertEqual(ParseMode.MARKDOWN.value, "Markdown")
+        
+        # Test remove_html_tags
+        raw = "<b>Hello</b> <script>alert('x')</script> World <br>!"
+        self.assertEqual(remove_html_tags(raw), "Hello alert('x') World !")
+        
+        # Test sanitize_telegram_html (removes unallowed tags, keeps b, code, a)
+        unsafe_html = "<div><p><b>Bold</b> <code>Code</code> <script>bad()</script></p></div>"
+        cleaned = sanitize_telegram_html(unsafe_html)
+        self.assertEqual(cleaned, "<b>Bold</b> <code>Code</code> bad()")
+        
+        # Test format_to_telegram_html converts Markdown to HTML
+        md_text = "*Bold Text* and `inline code` and [Our Channel](https://t.me/OrdinalLegacy)"
+        converted = format_to_telegram_html(md_text)
+        self.assertIn("<b>Bold Text</b>", converted)
+        self.assertIn("<code>inline code</code>", converted)
+        self.assertIn('<a href="https://t.me/OrdinalLegacy">Our Channel</a>', converted)
+
+    def test_membership_check_resilience(self):
+        from unittest.mock import patch, AsyncMock
+        from app.bot import check_telegram_membership
+        
+        async def _run():
+            # Test when Telegram returns USER_NOT_PARTICIPANT or non-admin error
+            mock_resp = AsyncMock()
+            mock_resp.json.return_value = {"ok": False, "description": "Bad Request: USER_NOT_PARTICIPANT"}
+            with patch("httpx.AsyncClient.get", return_value=mock_resp):
+                res = await check_telegram_membership(123456, "https://t.me/OrdinalLegacy")
+                self.assertTrue(res)
+        run_coro_sync(_run())
+
 if __name__ == "__main__":
     unittest.main()
