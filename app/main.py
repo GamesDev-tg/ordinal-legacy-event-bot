@@ -45,10 +45,35 @@ async def telegram_webhook(request: Request):
             await handle_bot_message(update["message"])
         elif "callback_query" in update:
             await handle_bot_callback_query(update["callback_query"])
+        elif "chat_member" in update:
+            from app.bot import handle_bot_chat_member
+            await handle_bot_chat_member(update["chat_member"])
+        elif "my_chat_member" in update:
+            from app.bot import handle_bot_chat_member
+            await handle_bot_chat_member(update["my_chat_member"])
         return {"ok": True}
     except Exception as e:
         print(f"Error handling webhook update: {e}")
         return {"ok": False, "error": str(e)}
+
+@app.get("/api/set_webhook")
+async def api_set_webhook():
+    import httpx
+    if settings.BOT_TOKEN == "mock_bot_token_for_dev":
+        return {"ok": True, "mock": True}
+    url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/setWebhook"
+    webhook_url = "https://ordinal-legacy-event-bot.vercel.app/webhook"
+    payload = {
+        "url": webhook_url,
+        "allowed_updates": ["message", "callback_query", "chat_member", "my_chat_member"],
+        "drop_pending_updates": False
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, json=payload)
+            return resp.json()
+    except Exception as e:
+        return {"error": str(e)}
 
 @app.get("/api/cron/backup")
 async def api_cron_backup():

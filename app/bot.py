@@ -75,6 +75,15 @@ def format_to_telegram_html(text: Any) -> str:
 def is_admin(user_id: int) -> bool:
     return user_id in get_all_admin_ids()
 
+def is_user_verified_for_games(user_id: int) -> bool:
+    """Checks if user has verified official group membership before playing mini-games."""
+    if is_admin(user_id) or settings.BOT_TOKEN == "mock_bot_token_for_dev":
+        return True
+    conn = get_db_connection()
+    row = conn.execute("SELECT joined_groups FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
+    conn.close()
+    return bool(row and row["joined_groups"])
+
 def escape_md(text: Any) -> str:
     """Escapes Telegram legacy Markdown formatting characters (*, _, `, [) safely."""
     if text is None:
@@ -524,6 +533,22 @@ async def send_captcha_prompt(chat_id: int, user_id: int, reason: str = ""):
     await send_telegram_message(chat_id, header, {"inline_keyboard": [row1, row2]})
 
 async def run_in_chat_chakri(chat_id: int, user_id: int):
+    if not is_user_verified_for_games(user_id):
+        gate_text = (
+            "⚠️ <b>Verification Required!</b>\n\n"
+            "Active membership in all 3 official community groups is required to play festival mini-games.\n\n"
+            "👉 Please join the groups below and tap <b>Verify & Enter Arena</b>:"
+        )
+        gate_kb = {
+            "inline_keyboard": [
+                [{"text": f"1. Join {settings.GROUP_NAME_1}", "url": settings.GROUP_LINK_1}],
+                [{"text": f"2. Join {settings.GROUP_NAME_2}", "url": settings.GROUP_LINK_2}],
+                [{"text": f"3. Join {settings.GROUP_NAME_3}", "url": settings.GROUP_LINK_3}],
+                [{"text": "Verify & Enter Arena", "callback_data": f"verify_groups:{user_id}"}]
+            ]
+        }
+        await send_telegram_message(chat_id, gate_text, gate_kb)
+        return
     from app.captcha_engine import is_user_captcha_locked, record_game_play_and_check_captcha
     if is_user_captcha_locked(user_id):
         await send_captcha_prompt(chat_id, user_id, "Automated action prevention: Please verify human presence.")
@@ -566,6 +591,22 @@ async def run_in_chat_chakri(chat_id: int, user_id: int):
         await send_telegram_message(chat_id, f"⚠️ *Error playing Chakri*: {str(e)}")
 
 async def run_in_chat_rangoli(chat_id: int, user_id: int):
+    if not is_user_verified_for_games(user_id):
+        gate_text = (
+            "⚠️ <b>Verification Required!</b>\n\n"
+            "Active membership in all 3 official community groups is required to play festival mini-games.\n\n"
+            "👉 Please join the groups below and tap <b>Verify & Enter Arena</b>:"
+        )
+        gate_kb = {
+            "inline_keyboard": [
+                [{"text": f"1. Join {settings.GROUP_NAME_1}", "url": settings.GROUP_LINK_1}],
+                [{"text": f"2. Join {settings.GROUP_NAME_2}", "url": settings.GROUP_LINK_2}],
+                [{"text": f"3. Join {settings.GROUP_NAME_3}", "url": settings.GROUP_LINK_3}],
+                [{"text": "Verify & Enter Arena", "callback_data": f"verify_groups:{user_id}"}]
+            ]
+        }
+        await send_telegram_message(chat_id, gate_text, gate_kb)
+        return
     from app.captcha_engine import is_user_captcha_locked, record_game_play_and_check_captcha
     if is_user_captcha_locked(user_id):
         await send_captcha_prompt(chat_id, user_id, "Automated action prevention: Please verify human presence.")
@@ -606,6 +647,22 @@ async def run_in_chat_rangoli(chat_id: int, user_id: int):
         await send_telegram_message(chat_id, f"⚠️ *Error playing Rangoli*: {str(e)}")
 
 async def run_in_chat_mithai(chat_id: int, user_id: int):
+    if not is_user_verified_for_games(user_id):
+        gate_text = (
+            "⚠️ <b>Verification Required!</b>\n\n"
+            "Active membership in all 3 official community groups is required to play festival mini-games.\n\n"
+            "👉 Please join the groups below and tap <b>Verify & Enter Arena</b>:"
+        )
+        gate_kb = {
+            "inline_keyboard": [
+                [{"text": f"1. Join {settings.GROUP_NAME_1}", "url": settings.GROUP_LINK_1}],
+                [{"text": f"2. Join {settings.GROUP_NAME_2}", "url": settings.GROUP_LINK_2}],
+                [{"text": f"3. Join {settings.GROUP_NAME_3}", "url": settings.GROUP_LINK_3}],
+                [{"text": "Verify & Enter Arena", "callback_data": f"verify_groups:{user_id}"}]
+            ]
+        }
+        await send_telegram_message(chat_id, gate_text, gate_kb)
+        return
     from app.captcha_engine import is_user_captcha_locked, record_game_play_and_check_captcha
     if is_user_captcha_locked(user_id):
         await send_captcha_prompt(chat_id, user_id, "Automated action prevention: Please verify human presence.")
@@ -2270,3 +2327,63 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
                 await send_telegram_message(chat_id, f"❌ *Incorrect Answer!* Try this fresh check:")
                 await send_captcha_prompt(chat_id, user_id, "Anti-Automation Verification Retry:")
         return
+
+async def handle_bot_chat_member(chat_member_update: Dict[str, Any]):
+    """
+    Triggered when a user joins, leaves, or is removed from a group or channel.
+    If a user leaves any official group chat, revoke verification and notify them to re-verify.
+    """
+    try:
+        new_member = chat_member_update.get("new_chat_member", {})
+        status = new_member.get("status")
+        user_info = new_member.get("user", {})
+        user_id = user_info.get("id")
+        
+        if not user_id or user_info.get("is_bot") or is_admin(user_id):
+            return
+
+        chat = chat_member_update.get("chat", {})
+        chat_username = (chat.get("username") or "").lower()
+        chat_title = chat.get("title") or "Official Community Group"
+        chat_id_str = str(chat.get("id", ""))
+
+        official_handles = {"ordinallegacy", "ordinallegacyeventinfo", "ordinal_legacy"}
+        is_official = chat_username in official_handles or any(h in chat_title.lower() for h in ["ordinal legacy", "common discussion", "event info"])
+        if not is_official:
+            for glink in (settings.GROUP_LINK_1, settings.GROUP_LINK_2, settings.GROUP_LINK_3):
+                h = glink.split("t.me/")[-1].strip("/").lower()
+                if h and (h == chat_username or h in chat_id_str):
+                    is_official = True
+                    break
+        
+        if not is_official:
+            return
+
+        if status in ("left", "kicked", "banned"):
+            conn = get_db_connection()
+            with conn:
+                conn.execute("UPDATE users SET joined_groups = 0 WHERE telegram_id = ?", (user_id,))
+            conn.close()
+            
+            print(f"[GROUP LEAVE DETECTED]: User {user_id} left {chat_title} (@{chat_username}). Verification reset to 0.")
+            
+            notice_msg = (
+                f"⚠️ <b>Official Group Membership Update</b>\n\n"
+                f"We noticed that you left our community group: <b>{html.escape(chat_title)}</b>.\n\n"
+                f"Active membership in all official groups is required to participate in Maha Deepotsav and play mini-games.\n\n"
+                f"👉 Please rejoin the group using the button below and tap <b>Verify & Enter Arena</b> to resume playing!"
+            )
+            rejoin_url = f"https://t.me/{chat_username}" if chat_username else settings.GROUP_LINK_1
+            kb = {
+                "inline_keyboard": [
+                    [{"text": f"Rejoin {chat_title}", "url": rejoin_url}],
+                    [{"text": "Verify & Enter Arena", "callback_data": f"verify_groups:{user_id}"}]
+                ]
+            }
+            await send_telegram_message(user_id, notice_msg, reply_markup=kb)
+            await send_bot_log(f"🚪 <b>Player Left Group</b>: User <code>{user_id}</code> left <b>{html.escape(chat_title)}</b>. Verification revoked.")
+            
+        elif status in ("member", "administrator", "creator", "restricted"):
+            print(f"[GROUP JOIN DETECTED]: User {user_id} joined {chat_title}.")
+    except Exception as e:
+        print(f"[CHAT MEMBER UPDATE ERROR]: {e}")

@@ -219,3 +219,34 @@ class TestFullE2ESimulation(unittest.TestCase):
         self.assertEqual(get_stage_info(120000)[0], 3)
         self.assertEqual(get_stage_info(160000)[0], 4)
         self.assertEqual(get_stage_info(200000)[0], 5)
+
+    def test_leave_group_chat_revokes_verification_and_blocks_game(self):
+        """When a user leaves an official group chat, verification is revoked and mini-games are blocked."""
+        from app.bot import handle_bot_chat_member, run_in_chat_chakri
+        from unittest.mock import patch
+        
+        conn = get_db_connection()
+        conn.execute("UPDATE users SET joined_groups = 1 WHERE telegram_id = ?", (self.user_exotic,))
+        conn.close()
+        
+        leave_update = {
+            "chat": {
+                "id": -100999888,
+                "title": "Ordinal Legacy Main",
+                "username": "OrdinalLegacy",
+                "type": "supergroup"
+            },
+            "from": {"id": self.user_exotic, "is_bot": False},
+            "old_chat_member": {"user": {"id": self.user_exotic}, "status": "member"},
+            "new_chat_member": {"user": {"id": self.user_exotic}, "status": "left"}
+        }
+        run_coro(handle_bot_chat_member(leave_update))
+        
+        conn = get_db_connection()
+        u = conn.execute("SELECT joined_groups FROM users WHERE telegram_id = ?", (self.user_exotic,)).fetchone()
+        conn.close()
+        self.assertEqual(u["joined_groups"], 0)
+        
+        with patch("app.bot.execute_in_chat_game") as mock_exec:
+            run_coro(run_in_chat_chakri(self.user_exotic, self.user_exotic))
+            mock_exec.assert_not_called()
