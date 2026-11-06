@@ -3,7 +3,7 @@ from typing import List
 
 class Settings:
     BOT_TOKEN: str = (os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("BOT_TOKEN") or "mock_bot_token_for_dev").strip("'\" ")
-    BOT_USERNAME: str = (os.getenv("TELEGRAM_BOT_USERNAME") or os.getenv("BOT_USERNAME") or "OrdinalLegacyEventBot").strip("'\" ")
+    BOT_USERNAME: str = (os.getenv("TELEGRAM_BOT_USERNAME") or os.getenv("BOT_USERNAME") or "OrdinalLegacyEventBot").strip("'\" ").lstrip("@")
     
     _app_url = (os.getenv("MINI_APP_URL") or "https://ordinal-legacy-event-bot.vercel.app").strip("'\" ")
     if "localhost" in _app_url and (os.getenv("VERCEL") or os.getenv("RENDER")):

@@ -820,8 +820,9 @@ async def handle_bot_message(message: Dict[str, Any]):
         rest_part = f" {parts[1]}" if len(parts) > 1 else ""
         if "@" in cmd_part:
             cmd_name, at_target = cmd_part.split("@", 1)
-            bot_user = (settings.BOT_USERNAME or "").lower()
-            if bot_user and at_target.lower() != bot_user:
+            bot_user = (settings.BOT_USERNAME or "OrdinalLegacyEventBot").lstrip("@").lower()
+            target_clean = at_target.lstrip("@").lower()
+            if bot_user and target_clean != bot_user and "ordinal" not in target_clean:
                 # Command targeted at another bot in the group; ignore silently
                 return
             text = f"{cmd_name}{rest_part}".strip()
@@ -1181,7 +1182,7 @@ async def handle_bot_message(message: Dict[str, Any]):
         comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
         u = conn.execute("SELECT points_total, tier_level, diya_wicks, referral_points_earned FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
         comp_row = conn.execute(
-            '''SELECT u.first_name, u.username, u.tier_level
+            '''SELECT u.telegram_id, u.first_name, u.username, u.tier_level
                FROM referrals r
                JOIN users u ON u.telegram_id = (
                    CASE WHEN r.referrer_id = ? THEN r.referred_id ELSE r.referrer_id END
@@ -1191,24 +1192,29 @@ async def handle_bot_message(message: Dict[str, Any]):
         ).fetchone()
         conn.close()
         
-        stage_num, stage_name = get_stage_info(comm["total_sparks"])
-        tier_name = get_tier_name(u["tier_level"])
+        sparks_total = comm["total_sparks"] if comm else 0
+        stage_num, stage_name = get_stage_info(sparks_total)
+        pts = u["points_total"] if u else 0
+        t_lvl = u["tier_level"] if u else 0
+        wicks = u["diya_wicks"] if u else 10
+        ref_pts = u["referral_points_earned"] if u else 0
+        tier_name = get_tier_name(t_lvl)
         if comp_row:
-            comp_display = comp_row['first_name'] or comp_row['username'] or f"Player {comp_row['telegram_id']}"
+            comp_display = comp_row.get('first_name') or comp_row.get('username') or f"Player {comp_row.get('telegram_id', '')}"
             companion_text = f"*{escape_md(comp_display)}* ({get_tier_name(comp_row['tier_level'])})"
         else:
             companion_text = "_None yet (Invite 1 friend!)_"
         
         status_msg = (
             f"🪔 *Maha Deepotsav Status Report*\n\n"
-            f"🔥 *Community Sparks*: `{comm['total_sparks']:,}` / `{settings.GLOBAL_MILESTONE_TARGET:,}`\n"
+            f"🔥 *Community Sparks*: `{sparks_total:,}` / `{settings.GLOBAL_MILESTONE_TARGET:,}`\n"
             f"🌟 *Current Stage*: {stage_name}\n\n"
             f"👤 *Your Profile*:\n"
-            f"• Points: *{u['points_total']}*\n"
-            f"• Tier: *{tier_name}* (Tier {u['tier_level']})\n"
-            f"• Diya Wicks: *{u['diya_wicks']}/10*\n"
+            f"• Points: *{pts}*\n"
+            f"• Tier: *{tier_name}* (Tier {t_lvl})\n"
+            f"• Diya Wicks: *{wicks}/10*\n"
             f"• Diya Companion: {companion_text}\n"
-            f"• Shagun Points: *{u['referral_points_earned']}/{settings.MAX_REFERRAL_POINTS}*"
+            f"• Shagun Points: *{ref_pts}/{settings.MAX_REFERRAL_POINTS}*"
         )
         await send_telegram_message(chat_id, status_msg)
         return
