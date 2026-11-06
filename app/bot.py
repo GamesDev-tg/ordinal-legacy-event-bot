@@ -6,10 +6,20 @@ import secrets
 import re
 import html
 import httpx
+import asyncio
 from enum import Enum
 from typing import Dict, Any, Optional
 from app.enums import ParseMode
 from app.config import settings
+
+_async_http_client: Optional[httpx.AsyncClient] = None
+
+def get_async_http_client() -> httpx.AsyncClient:
+    global _async_http_client
+    if _async_http_client is None or getattr(_async_http_client, "is_closed", False):
+        limits = httpx.Limits(max_keepalive_connections=30, max_connections=60, keepalive_expiry=60.0)
+        _async_http_client = httpx.AsyncClient(timeout=10.0, limits=limits)
+    return _async_http_client
 from app.database import (
     get_db_connection, calculate_tier, get_tier_name, get_stage_info,
     generate_full_backup, reset_event_data, get_all_admin_ids, add_admin_id,
@@ -123,8 +133,37 @@ def send_bot_log_sync(text: str):
         except Exception as e:
             print(f"[BOT LOG ERROR]: {e}")
 
+async def _dispatch_bot_log_async(logs_chat: int, text: str):
+    try:
+        url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage"
+        payload = {
+            "chat_id": logs_chat, 
+            "text": f"📋 <b>[EVENT BOT LOG]</b>\n{format_to_telegram_html(text)}", 
+            "parse_mode": ParseMode.HTML.value
+        }
+        client = get_async_http_client()
+        res = await client.post(url, json=payload)
+        if res.status_code != 200:
+            payload["text"] = f"📋 [EVENT BOT LOG]\n{remove_html_tags(text)}"
+            payload.pop("parse_mode", None)
+            await client.post(url, json=payload)
+    except Exception as e:
+        print(f"[BOT LOG ERROR]: {e}")
+
 async def send_bot_log(text: str):
-    send_bot_log_sync(text)
+    try:
+        print(f"[BOT LOG]: {text}")
+    except Exception:
+        pass
+    logs_chat = get_effective_logs_chat_id()
+    if logs_chat and not is_mock_token():
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_dispatch_bot_log_async(logs_chat, text))
+        except RuntimeError:
+            send_bot_log_sync(text)
+        except Exception:
+            send_bot_log_sync(text)
 
 async def dispatch_backup_snapshot(reason: str = "Manual Admin Snapshot", target_chat_id: Optional[int] = None) -> bool:
     snap = generate_full_backup()
@@ -233,21 +272,21 @@ async def send_telegram_message(
         payload["reply_markup"] = reply_markup
         
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(url, json=payload)
-            if resp.status_code != 200:
-                print(f"[TELEGRAM ERROR {resp.status_code}]: {resp.text}")
-                # Fallback 1: remove all HTML tags completely and drop parse_mode
-                payload["text"] = remove_html_tags(text)
-                payload.pop("parse_mode", None)
-                retry_resp = await client.post(url, json=payload)
-                if retry_resp.status_code != 200:
-                    # Fallback 2: remove reply_markup if web_app button URL invalid
-                    payload.pop("reply_markup", None)
-                    last_resp = await client.post(url, json=payload)
-                    return last_resp.status_code == 200
-                return retry_resp.status_code == 200
-            return resp.status_code == 200
+        client = get_async_http_client()
+        resp = await client.post(url, json=payload)
+        if resp.status_code != 200:
+            print(f"[TELEGRAM ERROR {resp.status_code}]: {resp.text}")
+            # Fallback 1: remove all HTML tags completely and drop parse_mode
+            payload["text"] = remove_html_tags(text)
+            payload.pop("parse_mode", None)
+            retry_resp = await client.post(url, json=payload)
+            if retry_resp.status_code != 200:
+                # Fallback 2: remove reply_markup if web_app button URL invalid
+                payload.pop("reply_markup", None)
+                last_resp = await client.post(url, json=payload)
+                return last_resp.status_code == 200
+            return retry_resp.status_code == 200
+        return resp.status_code == 200
     except Exception as e:
         print(f"Failed to send telegram message: {e}")
         return False
@@ -262,14 +301,14 @@ async def send_telegram_document(chat_id: int, file_bytes: bytes, filename: str,
     formatted_caption = format_to_telegram_html(caption)
     data = {"chat_id": str(chat_id), "caption": formatted_caption, "parse_mode": ParseMode.HTML.value}
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(url, data=data, files=files)
-            if resp.status_code != 200:
-                data["caption"] = remove_html_tags(caption)
-                data.pop("parse_mode", None)
-                retry_resp = await client.post(url, data=data, files=files)
-                return retry_resp.status_code == 200
-            return resp.status_code == 200
+        client = get_async_http_client()
+        resp = await client.post(url, data=data, files=files)
+        if resp.status_code != 200:
+            data["caption"] = remove_html_tags(caption)
+            data.pop("parse_mode", None)
+            retry_resp = await client.post(url, data=data, files=files)
+            return retry_resp.status_code == 200
+        return resp.status_code == 200
     except Exception as e:
         print(f"Failed to send telegram document: {e}")
         return False
@@ -287,9 +326,9 @@ async def answer_telegram_callback_query(callback_query_id: str, text: Optional[
         payload["text"] = text
         payload["show_alert"] = show_alert
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.post(url, json=payload)
-            return resp.status_code == 200
+        client = get_async_http_client()
+        resp = await client.post(url, json=payload)
+        return resp.status_code == 200
     except Exception as e:
         print(f"Failed to answer telegram callback query: {e}")
         return False
@@ -320,9 +359,9 @@ async def sync_telegram_bot_commands() -> bool:
     ]
     url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/setMyCommands"
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(url, json={"commands": commands})
-            return resp.status_code == 200 and resp.json().get("ok", False)
+        client = get_async_http_client()
+        resp = await client.post(url, json={"commands": commands})
+        return resp.status_code == 200 and resp.json().get("ok", False)
     except Exception as e:
         print(f"Failed to set bot commands: {e}")
         return False
@@ -344,17 +383,17 @@ async def check_telegram_membership(user_id: int, chat_identifier: str) -> bool:
     url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/getChatMember"
     params = {"chat_id": chat_handle, "user_id": user_id}
     try:
-        async with httpx.AsyncClient(timeout=6.0) as client:
-            resp = await client.get(url, params=params)
-            data = resp.json()
-            if data.get("ok"):
-                status = data.get("result", {}).get("status")
-                if status in ("creator", "administrator", "member", "restricted"):
-                    return True
-                
-                # If status is left or kicked, check if the bot is even an administrator in this group.
-                # If the bot is NOT an administrator, getChatMember is unreliable and Telegram forbids
-                # non-admin bots from accessing group participant statuses.
+        client = get_async_http_client()
+        resp = await client.get(url, params=params)
+        data = resp.json()
+        if data.get("ok"):
+            status = data.get("result", {}).get("status")
+            if status in ("creator", "administrator", "member", "restricted"):
+                return True
+            
+            # If status is left or kicked, check if the bot is even an administrator in this group.
+            # If the bot is NOT an administrator, getChatMember is unreliable and Telegram forbids
+            # non-admin bots from accessing group participant statuses.
                 bot_check_url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/getChatAdministrators"
                 admin_resp = await client.get(bot_check_url, params={"chat_id": chat_handle})
                 admin_data = admin_resp.json()
@@ -401,9 +440,12 @@ async def verify_user_all_groups(user_id: int) -> tuple[bool, list]:
         (settings.GROUP_NAME_3, settings.GROUP_LINK_3),
     ]
     unjoined = []
-    for name, link in groups:
-        is_member = await check_telegram_membership(user_id, link)
-        if not is_member:
+    results = await asyncio.gather(
+        *(check_telegram_membership(user_id, link) for _, link in groups),
+        return_exceptions=True
+    )
+    for (name, link), res in zip(groups, results):
+        if res is not True:
             unjoined.append((name, link))
     
     if unjoined:
@@ -411,6 +453,11 @@ async def verify_user_all_groups(user_id: int) -> tuple[bool, list]:
     return True, []
 
 def register_user_if_new(telegram_id: int, username: str, first_name: str) -> dict:
+    cache_key = f"reg_user_{telegram_id}"
+    cached_user = get_cache(cache_key)
+    if cached_user is not None and not (username and username != cached_user.get("username")):
+        return cached_user
+
     conn = get_db_connection()
     with conn:
         user = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
@@ -446,8 +493,10 @@ def register_user_if_new(telegram_id: int, username: str, first_name: str) -> di
                     (cur_username, cur_first_name, telegram_id)
                 )
                 user = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
+        res_user = dict(user)
     conn.close()
-    return dict(user)
+    set_cache(cache_key, res_user, ttl_seconds=30.0)
+    return res_user
 
 def execute_in_chat_game(user_id: int, game_type: int) -> dict:
     conn = get_db_connection()
@@ -827,12 +876,16 @@ async def handle_bot_message(message: Dict[str, Any]):
         print(f"[REGISTRATION ERROR]: {e}")
         user = {"gharana_id": 1, "points_total": 0, "tier_level": 0, "diya_wicks": 10, "joined_groups": 0}
 
-    # 1. Background 6-hour automatic backup check & periodic referral count reconciliation job
+    # 1. Non-blocking background 6-hour automatic backup check & periodic referral reconciliation job
     try:
-        await check_and_trigger_auto_backup()
+        loop = asyncio.get_running_loop()
+        loop.create_task(check_and_trigger_auto_backup())
+    except (RuntimeError, Exception):
+        pass
+    try:
         check_and_trigger_referral_reconciliation()
-    except Exception as e:
-        print(f"[AUTO BACKUP/RECONCILE ERROR]: {e}")
+    except Exception:
+        pass
 
     # 2. Early Referral Capture: process referral parameters immediately upon /start, /shagun or /bind
     # This ensures new players who click invite links have their referral recorded BEFORE any group gate!
@@ -2439,10 +2492,10 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
     if not user_id or not chat_id:
         return
 
-    # 1. Anti-spam rate-limit guard (max 1 button click per second per user)
+    # 1. Anti-spam rate-limit guard (debounced at 350ms to keep clicks feeling instantaneous)
     now = time.time()
     last_click = _BUTTON_CLICK_COOLDOWN.get(user_id, 0.0)
-    if now - last_click < 1.0:
+    if now - last_click < 0.35:
         await answer_telegram_callback_query(
             callback_id,
             text="⏳ Please wait a moment before tapping again!",
