@@ -140,10 +140,13 @@ def get_db_connection():
             raw_conn.autocommit = True
             return PostgresConnectionWrapper(raw_conn, from_pool=False)
     else:
-        conn = sqlite3.connect(settings.DATABASE_PATH, timeout=30.0)
+        conn = sqlite3.connect(settings.DATABASE_PATH, timeout=30.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON;")
         conn.execute("PRAGMA journal_mode = WAL;")
+        conn.execute("PRAGMA busy_timeout = 5000;")
+        conn.execute("PRAGMA synchronous = NORMAL;")
+        conn.execute("PRAGMA cache_size = -8000;")
         return conn
 
 def init_postgres_db():
@@ -477,7 +480,10 @@ def get_system_setting(key: str, default: Optional[str] = None) -> Optional[str]
         row = conn.execute("SELECT value FROM system_settings WHERE key = ?", (key,)).fetchone()
         val = row["value"] if row else default
         if val is not None:
-            set_cache(f"setting_{key}", val, ttl_seconds=60.0)
+            # Use short TTL for critical operational settings (paused, chat IDs)
+            critical_keys = ("event_paused", "logs_chat_id", "backup_chat_id", "extra_admin_ids")
+            ttl = 10.0 if any(k in key for k in critical_keys) else 60.0
+            set_cache(f"setting_{key}", val, ttl_seconds=ttl)
         return val
     except Exception:
         return default

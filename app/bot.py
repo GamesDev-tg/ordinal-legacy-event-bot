@@ -7,6 +7,8 @@ import re
 import html
 import httpx
 import asyncio
+import queue
+import threading
 from enum import Enum
 from typing import Dict, Any, Optional
 from app.enums import ParseMode
@@ -17,7 +19,7 @@ _async_http_client: Optional[httpx.AsyncClient] = None
 def get_async_http_client() -> httpx.AsyncClient:
     global _async_http_client
     if _async_http_client is None or getattr(_async_http_client, "is_closed", False):
-        limits = httpx.Limits(max_keepalive_connections=30, max_connections=60, keepalive_expiry=60.0)
+        limits = httpx.Limits(max_keepalive_connections=50, max_connections=100, keepalive_expiry=60.0)
         _async_http_client = httpx.AsyncClient(timeout=10.0, limits=limits)
     return _async_http_client
 from app.database import (
@@ -112,6 +114,73 @@ def escape_md(text: Any) -> str:
     s = str(text).replace(r"\_", "_").replace(r"\*", "*")
     return html.escape(s)
 
+_BOT_LOG_QUEUE = queue.Queue(maxsize=3000)
+_LOG_WORKER_STARTED = False
+_LOG_WORKER_LOCK = threading.Lock()
+
+def _bot_log_worker():
+    """
+    Dedicated background worker for streaming logs to Telegram Log GC / Store Channel.
+    - Non-blocking: API requests and bot commands return in <0.1ms without waiting for Telegram HTTP.
+    - Throttling & Batching: batches rapid logs and respects Telegram's 1 msg/sec group limit.
+    - Handles HTTP 429 backoff gracefully without failing user operations.
+    """
+    with httpx.Client(timeout=8.0) as client:
+        while True:
+            try:
+                item = _BOT_LOG_QUEUE.get()
+                if item is None:
+                    break
+                
+                logs_chat = get_effective_logs_chat_id() or get_effective_backup_chat_id()
+                if logs_chat and not is_mock_token():
+                    # Batch up to 3 pending logs if more are waiting in queue
+                    batched = [item]
+                    while not _BOT_LOG_QUEUE.empty() and len(batched) < 3:
+                        try:
+                            batched.append(_BOT_LOG_QUEUE.get_nowait())
+                        except queue.Empty:
+                            break
+                    
+                    combined_body = "\n\n".join([format_to_telegram_html(b) for b in batched])
+                    url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage"
+                    payload = {
+                        "chat_id": logs_chat, 
+                        "text": f"📋 <b>[EVENT BOT LOG]</b>\n{combined_body}", 
+                        "parse_mode": ParseMode.HTML.value
+                    }
+                    try:
+                        res = client.post(url, json=payload)
+                        if res.status_code == 429:
+                            try:
+                                retry_after = int(res.json().get("parameters", {}).get("retry_after", 3))
+                            except Exception:
+                                retry_after = 3
+                            time.sleep(retry_after)
+                            client.post(url, json=payload)
+                        elif res.status_code != 200:
+                            plain_body = "\n\n".join([remove_html_tags(b) for b in batched])
+                            payload["text"] = f"📋 [EVENT BOT LOG]\n{plain_body}"
+                            payload.pop("parse_mode", None)
+                            client.post(url, json=payload)
+                    except Exception as e:
+                        print(f"[BOT LOG WORKER ERROR]: {e}")
+                
+                _BOT_LOG_QUEUE.task_done()
+                time.sleep(0.4)
+            except Exception as outer_e:
+                print(f"[BOT LOG WORKER LOOP ERROR]: {outer_e}")
+                time.sleep(1.0)
+
+def ensure_log_worker_started():
+    global _LOG_WORKER_STARTED
+    if not _LOG_WORKER_STARTED:
+        with _LOG_WORKER_LOCK:
+            if not _LOG_WORKER_STARTED:
+                t = threading.Thread(target=_bot_log_worker, name="BotLogWorker", daemon=True)
+                t.start()
+                _LOG_WORKER_STARTED = True
+
 def send_bot_log_sync(text: str):
     try:
         print(f"[BOT LOG]: {text}")
@@ -122,53 +191,14 @@ def send_bot_log_sync(text: str):
             pass
     logs_chat = get_effective_logs_chat_id() or get_effective_backup_chat_id()
     if logs_chat and not is_mock_token():
+        ensure_log_worker_started()
         try:
-            url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage"
-            payload = {
-                "chat_id": logs_chat, 
-                "text": f"📋 <b>[EVENT BOT LOG]</b>\n{format_to_telegram_html(text)}", 
-                "parse_mode": ParseMode.HTML.value
-            }
-            with httpx.Client(timeout=4.0) as client:
-                res = client.post(url, json=payload)
-                if res.status_code != 200:
-                    payload["text"] = f"📋 [EVENT BOT LOG]\n{remove_html_tags(text)}"
-                    payload.pop("parse_mode", None)
-                    client.post(url, json=payload)
-        except Exception as e:
-            print(f"[BOT LOG ERROR]: {e}")
-
-async def _dispatch_bot_log_async(logs_chat: int, text: str):
-    try:
-        url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage"
-        payload = {
-            "chat_id": logs_chat, 
-            "text": f"📋 <b>[EVENT BOT LOG]</b>\n{format_to_telegram_html(text)}", 
-            "parse_mode": ParseMode.HTML.value
-        }
-        client = get_async_http_client()
-        res = await client.post(url, json=payload)
-        if res.status_code != 200:
-            payload["text"] = f"📋 [EVENT BOT LOG]\n{remove_html_tags(text)}"
-            payload.pop("parse_mode", None)
-            await client.post(url, json=payload)
-    except Exception as e:
-        print(f"[BOT LOG ERROR]: {e}")
+            _BOT_LOG_QUEUE.put_nowait(text)
+        except queue.Full:
+            pass
 
 async def send_bot_log(text: str):
-    try:
-        print(f"[BOT LOG]: {text}")
-    except Exception:
-        pass
-    logs_chat = get_effective_logs_chat_id() or get_effective_backup_chat_id()
-    if logs_chat and not is_mock_token():
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(_dispatch_bot_log_async(logs_chat, text))
-        except RuntimeError:
-            send_bot_log_sync(text)
-        except Exception:
-            send_bot_log_sync(text)
+    send_bot_log_sync(text)
 
 async def dispatch_backup_snapshot(reason: str = "Manual Admin Snapshot", target_chat_id: Optional[int] = None) -> bool:
     snap = generate_full_backup()
@@ -545,6 +575,8 @@ def execute_in_chat_game(user_id: int, game_type: int) -> dict:
             
             comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
             comm_total = comm["total_sparks"] if comm else 0
+            new_stage, _ = get_stage_info(comm_total)
+            conn.execute("UPDATE community_state SET current_stage = ? WHERE id = 1", (new_stage,))
             new_wicks = u["diya_wicks"] - 1
 
         from app.cache import invalidate_event_cache
@@ -1284,7 +1316,23 @@ async def handle_bot_message(message: Dict[str, Any]):
         progress_bar = "🔥" * bars + "▫️" * (10 - bars)
         stage_num, stage_name = get_stage_info(sparks)
 
-        sorted_gharanas = sorted(top_gharanas, key=lambda g: float(g["avg_pts"] or 0), reverse=True)
+        found_gids = {g["gharana_id"]: g for g in top_gharanas}
+        complete_gharanas = []
+        for gid, gname in settings.GHARANAS.items():
+            if gid in found_gids:
+                g = found_gids[gid]
+                complete_gharanas.append({
+                    "gharana_id": gid,
+                    "members": g["members"],
+                    "avg_pts": float(g["avg_pts"] or 0)
+                })
+            else:
+                complete_gharanas.append({
+                    "gharana_id": gid,
+                    "members": 0,
+                    "avg_pts": 0.0
+                })
+        sorted_gharanas = sorted(complete_gharanas, key=lambda g: g["avg_pts"], reverse=True)
         gharanas_txt = "\n".join([f"• *{settings.GHARANAS.get(g['gharana_id'])}*: {round(float(g['avg_pts'] or 0), 1)} avg pts ({g['members']} players)" for g in sorted_gharanas])
 
         widget_msg = (
@@ -1321,7 +1369,25 @@ async def handle_bot_message(message: Dict[str, Any]):
         ''').fetchall()
         conn.close()
 
-        sorted_rows = sorted(rows, key=lambda r: (float(r["avg_pts"] or 0), r["pts"] or 0), reverse=True)
+        found_gids = {r["gharana_id"]: r for r in rows}
+        complete_rows = []
+        for gid, gname in settings.GHARANAS.items():
+            if gid in found_gids:
+                r = found_gids[gid]
+                complete_rows.append({
+                    "gharana_id": gid,
+                    "members": r["members"],
+                    "pts": r["pts"] or 0,
+                    "avg_pts": float(r["avg_pts"] or 0)
+                })
+            else:
+                complete_rows.append({
+                    "gharana_id": gid,
+                    "members": 0,
+                    "pts": 0,
+                    "avg_pts": 0.0
+                })
+        sorted_rows = sorted(complete_rows, key=lambda r: (r["avg_pts"], r["pts"]), reverse=True)
         msg = "🏰 *Maha Deepotsav Gharana Standings:*\n\n"
         for idx, r in enumerate(sorted_rows, 1):
             g_name = settings.GHARANAS.get(r["gharana_id"], f"Gharana {r['gharana_id']}")
@@ -1548,10 +1614,16 @@ async def handle_bot_message(message: Dict[str, Any]):
             diff = new_pts - target["points_total"]
             conn.execute("UPDATE users SET points_total = ?, tier_level = ? WHERE telegram_id = ?", (new_pts, new_tier, target_id))
             if diff != 0:
-                conn.execute("UPDATE community_state SET total_sparks = GREATEST(0, total_sparks + ?) WHERE id = 1", (diff,))
+                comm_row = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
+                cur_comm = comm_row["total_sparks"] if comm_row else 0
+                new_comm = max(0, cur_comm + diff)
+                new_stage, _ = get_stage_info(new_comm)
+                conn.execute("UPDATE community_state SET total_sparks = ?, current_stage = ? WHERE id = 1", (new_comm, new_stage))
             comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
             comm_total = comm["total_sparks"] if comm else 0
         conn.close()
+        from app.cache import invalidate_event_cache
+        invalidate_event_cache(target_id)
         await send_telegram_message(
             chat_id,
             f"✅ *Score Updated*: User `{target_id}` points set to *{new_pts}* ({get_tier_name(new_tier)}).\n"
@@ -1589,9 +1661,12 @@ async def handle_bot_message(message: Dict[str, Any]):
             comm_row = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
             cur_comm = comm_row["total_sparks"] if comm_row else 0
             new_comm = max(0, cur_comm + pts)
-            conn.execute("UPDATE community_state SET total_sparks = ? WHERE id = 1", (new_comm,))
+            new_stage, _ = get_stage_info(new_comm)
+            conn.execute("UPDATE community_state SET total_sparks = ?, current_stage = ? WHERE id = 1", (new_comm, new_stage))
             comm_total = new_comm
         conn.close()
+        from app.cache import invalidate_event_cache
+        invalidate_event_cache(target_id)
         
         await send_telegram_message(
             chat_id,
@@ -2290,7 +2365,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             comp_str = f"*{escape_md(comp_display)}*"
         else:
             comp_str = "_None yet (Use /shagun)_"
-        today_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+        today_str = datetime.date.today().isoformat()
         shubh_status = "✅ Claimed today" if u["shubh_refill_date"] == today_str else "✨ Available now (/shubh)"
         
         safe_fname = escape_md(first_name)
@@ -2660,10 +2735,10 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
     if not user_id or not chat_id:
         return
 
-    # 1. Anti-spam rate-limit guard (debounced at 350ms to keep clicks feeling instantaneous)
+    # 1. Anti-spam rate-limit guard (debounced at 200ms to keep clicks feeling instantaneous)
     now = time.time()
     last_click = _BUTTON_CLICK_COOLDOWN.get(user_id, 0.0)
-    if now - last_click < 0.35:
+    if now - last_click < 0.20:
         await answer_telegram_callback_query(
             callback_id,
             text="⏳ Please wait a moment before tapping again!",

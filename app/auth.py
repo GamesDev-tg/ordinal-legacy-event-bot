@@ -79,7 +79,8 @@ def verify_telegram_init_data(init_data: str) -> Dict[str, Any]:
     try:
         parsed_data = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
         if "hash" not in parsed_data:
-            if "user" in parsed_data:
+            tok = (settings.BOT_TOKEN or "").lower()
+            if ("mock" in tok or tok == "test" or not tok) and "user" in parsed_data:
                 try:
                     u = json.loads(parsed_data["user"]) if isinstance(parsed_data["user"], str) else parsed_data["user"]
                     if isinstance(u, dict) and "id" in u:

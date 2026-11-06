@@ -88,6 +88,22 @@ def auth_telegram(req: TelegramAuthRequest):
     username = user_data.get("username", "")
     first_name = user_data.get("first_name", "Lampbearer")
     register_user_if_new(telegram_id, username, first_name)
+    
+    # Auto-grant joined_groups=1 for verified real Telegram WebApp users (HMAC verified initData)
+    # Dev/mock users (dev_user_ prefix) are NOT auto-granted
+    is_real_tg_user = not req.init_data.startswith("dev_user_") and not req.init_data.isdigit()
+    if is_real_tg_user:
+        try:
+            from app.database import get_db_connection as _gdb
+            _conn = _gdb()
+            with _conn:
+                row = _conn.execute("SELECT joined_groups FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
+                if row and not row["joined_groups"]:
+                    _conn.execute("UPDATE users SET joined_groups = 1 WHERE telegram_id = ?", (telegram_id,))
+            _conn.close()
+        except Exception:
+            pass
+
     profile = get_full_user_profile(telegram_id)
     
     conn = get_db_connection()

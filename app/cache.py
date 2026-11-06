@@ -8,6 +8,7 @@ from typing import Any, Optional, Dict
 CACHE_FILE_PATH = os.path.join(tempfile.gettempdir(), "ordinal_event_cache.json")
 _MEMORY_CACHE: Dict[str, Dict[str, Any]] = {}
 _CACHE_LOCK = threading.Lock()
+_write_count = 0
 
 # Load any existing cache from temp file on startup
 try:
@@ -47,13 +48,18 @@ def get_cache(key: str, default: Any = None) -> Any:
 
 def set_cache(key: str, value: Any, ttl_seconds: float = 30.0):
     """
-    Saves a value in both fast in-memory cache and local temp cache file.
+    Saves a value in fast in-memory cache.
+    Disk sync is deferred to avoid blocking hot paths during live events.
     """
     now = time.time()
     entry = {"value": value, "expires_at": now + ttl_seconds}
     with _CACHE_LOCK:
         _MEMORY_CACHE[key] = entry
-    _sync_to_disk()
+    # Only sync to disk every 30 writes to avoid blocking under high load
+    global _write_count
+    _write_count += 1
+    if _write_count % 30 == 0:
+        _sync_to_disk()
 
 def delete_cache(key: str):
     """
@@ -85,5 +91,7 @@ def invalidate_event_cache(user_id: Optional[int] = None):
     delete_cache("bot_cmd_stats")
     delete_cache("bot_cmd_gharanas")
     delete_cache("bot_cmd_widget")
+    # Also invalidate event pause setting cache so pause/resume takes effect immediately
+    delete_cache("setting_event_paused")
     if user_id:
         delete_cache(f"reg_user_{user_id}")

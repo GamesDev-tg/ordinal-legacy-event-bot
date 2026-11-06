@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, BackgroundTasks
 from typing import Optional
 from app.config import settings
 from app.models import GameStartRequest, GameStartResponse, GameFinishRequest, GameFinishResponse, ShubhRefillResponse
@@ -63,10 +63,15 @@ def api_game_start(
             }
         )
     res = start_game_session(user_id, req.game_type)
-    from app.bot import send_bot_log_sync
+    # Non-blocking fire-and-forget log (runs in background thread to not block response)
+    import threading
     game_names = {1: "Chakri Whirl", 2: "Rangoli Trace", 3: "Mithai Catcher"}
     g_title = game_names.get(req.game_type, f"Game {req.game_type}")
-    send_bot_log_sync(f"🕹️ Player <code>{user_id}</code> started {g_title} (Wicks remaining: {res['wicks_remaining']}).")
+    threading.Thread(
+        target=__import__('app.bot', fromlist=['send_bot_log_sync']).send_bot_log_sync,
+        args=(f"🕹️ Player <code>{user_id}</code> started {g_title} (Wicks remaining: {res['wicks_remaining']}).",),
+        daemon=True
+    ).start()
     return GameStartResponse(**res)
 
 @router.post("/captcha_verify")
@@ -98,16 +103,22 @@ def api_game_finish(
     authorization: Optional[str] = Header(None),
     x_telegram_id: Optional[str] = Header(None)
 ):
-    from app.bot import send_bot_log_sync
+    import threading
     from app.cache import invalidate_event_cache
     from app.captcha_engine import record_game_play_and_check_captcha
     user_id = extract_telegram_id(authorization, x_telegram_id)
     res = finish_game_session(user_id, req.session_id, req.nonce, req.raw_score, req.duration_ms)
     invalidate_event_cache(user_id)
     record_game_play_and_check_captcha(user_id)
-    send_bot_log_sync(f"🎮 Player `{user_id}` completed mini-game run (+{res['points_awarded']} Sparks). Total: *{res['new_user_total']} Pts* | Community: *{res['community_total']:,} Sparks*")
+    log_msg = f"🎮 Player `{user_id}` completed mini-game run (+{res['points_awarded']} Sparks). Total: *{res['new_user_total']} Pts* | Community: *{res['community_total']:,} Sparks*"
     if res.get("tier_unlocked"):
-        send_bot_log_sync(f"🏆 *TIER ASCENSION*: Player `{user_id}` unlocked *{res['tier_name']}* (Tier {res['new_tier_level']})!")
+        log_msg += f"\n🏆 *TIER ASCENSION*: Player `{user_id}` unlocked *{res['tier_name']}* (Tier {res['new_tier_level']})!"
+    # Non-blocking fire-and-forget log
+    threading.Thread(
+        target=__import__('app.bot', fromlist=['send_bot_log_sync']).send_bot_log_sync,
+        args=(log_msg,),
+        daemon=True
+    ).start()
     return GameFinishResponse(**res)
 
 @router.post("/shubh_refill", response_model=ShubhRefillResponse)
@@ -115,10 +126,14 @@ def api_shubh_refill(
     authorization: Optional[str] = Header(None),
     x_telegram_id: Optional[str] = Header(None)
 ):
-    from app.bot import send_bot_log_sync
+    import threading
     from app.cache import invalidate_event_cache
     user_id = extract_telegram_id(authorization, x_telegram_id)
     res = claim_shubh_refill(user_id)
     invalidate_event_cache(user_id)
-    send_bot_log_sync(f"✨ Player `{user_id}` claimed Shubh Muhurat Blessing (+5 wicks & pts). Score: *{res['points_total']} Pts*")
+    threading.Thread(
+        target=__import__('app.bot', fromlist=['send_bot_log_sync']).send_bot_log_sync,
+        args=(f"✨ Player `{user_id}` claimed Shubh Muhurat Blessing (+5 wicks & pts). Score: *{res['points_total']} Pts*",),
+        daemon=True
+    ).start()
     return ShubhRefillResponse(**res)

@@ -1,7 +1,7 @@
 import datetime
 from fastapi import HTTPException
 from app.config import settings
-from app.database import get_db_connection, calculate_tier
+from app.database import get_db_connection, calculate_tier, get_stage_info
 
 def process_referral_claim(referrer_id: int, referred_id: int) -> dict:
     if referrer_id == referred_id:
@@ -49,6 +49,10 @@ def process_referral_claim(referrer_id: int, referred_id: int) -> dict:
                 (new_user_points, new_ref_earned, new_tier, referrer_id)
             )
             conn.execute("UPDATE community_state SET total_sparks = total_sparks + 1 WHERE id = 1")
+            comm_row = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
+            if comm_row:
+                new_stg, _ = get_stage_info(comm_row["total_sparks"])
+                conn.execute("UPDATE community_state SET current_stage = ? WHERE id = 1", (new_stg,))
             
         conn.execute(
             "INSERT INTO referrals (referrer_id, referred_id, is_companion, bonus_awarded) VALUES (?, ?, ?, ?)",
@@ -164,7 +168,18 @@ def reconcile_all_referrals() -> dict:
                             "UPDATE users SET points_total = ?, referral_points_earned = ?, tier_level = ? WHERE telegram_id = ?",
                             (new_total, target_earned, new_tier, ref_id)
                         )
+                        if diff != 0:
+                            conn.execute("UPDATE community_state SET total_sparks = total_sparks + ? WHERE id = 1", (diff,))
+                            comm_row = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
+                            if comm_row:
+                                new_stg, _ = get_stage_info(comm_row["total_sparks"])
+                                conn.execute("UPDATE community_state SET current_stage = ? WHERE id = 1", (new_stg,))
                         synced_users += 1
+                        try:
+                            from app.cache import invalidate_event_cache
+                            invalidate_event_cache(ref_id)
+                        except Exception:
+                            pass
     except Exception as e:
         print(f"[RECONCILE ERROR]: {e}")
     finally:

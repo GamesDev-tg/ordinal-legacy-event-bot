@@ -7,7 +7,7 @@ from app.models import (
     AdminResetEventRequest, AdminResetEventResponse, AdminBackupResponse
 )
 from app.config import settings
-from app.database import get_db_connection, calculate_tier, get_tier_name, generate_full_backup, reset_event_data
+from app.database import get_db_connection, calculate_tier, get_tier_name, generate_full_backup, reset_event_data, get_stage_info
 
 router = APIRouter(prefix="/api/admin", tags=["Admin Operations"])
 
@@ -33,7 +33,8 @@ def api_admin_add_points(req: AdminAddPointsRequest):
         comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
         cur_comm = comm["total_sparks"] if comm else 0
         comm_total = max(0, cur_comm + req.points_to_add)
-        conn.execute("UPDATE community_state SET total_sparks = ? WHERE id = 1", (comm_total,))
+        new_stage, _ = get_stage_info(comm_total)
+        conn.execute("UPDATE community_state SET total_sparks = ?, current_stage = ? WHERE id = 1", (comm_total, new_stage))
     conn.close()
     
     from app.cache import invalidate_event_cache

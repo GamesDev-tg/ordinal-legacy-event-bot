@@ -37,8 +37,10 @@ def api_community_state():
     ''').fetchall()
     
     top_gharanas = []
+    existing_gids = set()
     for r in gharana_rows:
         gid = r["gharana_id"]
+        existing_gids.add(gid)
         top_gharanas.append({
             "gharana_id": gid,
             "name": settings.GHARANAS.get(gid, f"Gharana {gid}"),
@@ -46,6 +48,16 @@ def api_community_state():
             "total_points": r["total_points"] or 0,
             "avg_points": round(float(r["avg_points"] or 0.0), 1)
         })
+    for gid, gname in settings.GHARANAS.items():
+        if gid not in existing_gids:
+            top_gharanas.append({
+                "gharana_id": gid,
+                "name": gname,
+                "members": 0,
+                "total_points": 0,
+                "avg_points": 0.0
+            })
+    top_gharanas.sort(key=lambda g: (g["avg_points"], g["total_points"]), reverse=True)
     conn.close()
     
     paused = is_event_paused()
@@ -60,9 +72,9 @@ def api_community_state():
         top_gharanas=top_gharanas,
         event_paused=paused
     )
-    # Cache for 5 seconds in temp cache to support hundreds of concurrent players
+    # Cache for 2 seconds to support high concurrency with near-real-time updates
     try:
-        set_cache("api_community_state", resp.model_dump() if hasattr(resp, "model_dump") else resp.dict(), ttl_seconds=5.0)
+        set_cache("api_community_state", resp.model_dump() if hasattr(resp, "model_dump") else resp.dict(), ttl_seconds=2.0)
     except Exception:
         pass
 

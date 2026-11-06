@@ -29,7 +29,8 @@ class Settings:
     elif _db_path:
         DATABASE_PATH: str = _db_path
     else:
-        DATABASE_PATH: str = "ordinal_event.db"
+        _base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        DATABASE_PATH: str = os.path.join(_base_dir, "ordinal_event.db")
     
     GLOBAL_MILESTONE_TARGET: int = int(os.getenv("GLOBAL_MILESTONE_TARGET", "200000"))
     MAX_REFERRAL_POINTS: int = int(os.getenv("MAX_REFERRAL_POINTS", "15"))

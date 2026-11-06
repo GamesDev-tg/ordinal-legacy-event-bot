@@ -61,7 +61,7 @@ class MithaiGame {
         this.items.push({
             x: Math.random() * (this.canvas.width - 60) + 30,
             y: -25,
-            speed: Math.random() * 2.2 + 3.2,
+            speed: Math.random() * 2.8 + 3.8,  // Faster fall speed (was 2.2+3.2)
             isHazard: isHazard,
             type: chosenType,
             rot: Math.random() * Math.PI,
@@ -175,8 +175,8 @@ class MithaiGame {
         ctx.fillStyle = '#0A0E17';
         ctx.fillRect(0, 0, w, h);
 
-        // Spawn items at 650ms rate (Blueprint spec: 1 item every 650ms)
-        if (timeLeft > 0.8 && now - this.lastSpawn > 650) {
+        // Spawn items at 450ms rate (increased from 650ms — faster & more exciting gameplay)
+        if (timeLeft > 0.8 && now - this.lastSpawn > 450) {
             this.spawnItem();
             this.lastSpawn = now;
         }

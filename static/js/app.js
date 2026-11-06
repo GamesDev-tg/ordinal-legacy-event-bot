@@ -5,6 +5,16 @@ let authHeader = "";
 let wickRegenInterval = null;
 let secondsUntilNextWick = 0;
 
+function getCurrentUserId() {
+    if (currentUser && currentUser.telegram_id) return currentUser.telegram_id;
+    const urlParams = new URLSearchParams(window.location.search);
+    const paramId = urlParams.get('tg_id');
+    if (paramId && /^\d+$/.test(paramId)) return parseInt(paramId, 10);
+    const tgId = window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
+    if (tgId) return parseInt(tgId, 10);
+    return null;
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
     const tg = window.Telegram?.WebApp;
     const isTelegramWebApp = !!(tg && tg.initData && tg.initData.length > 5);
@@ -62,8 +72,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         refreshUserData();
     });
 
-    // Periodic live stamina & community sparks sync every 5 seconds for fast progress
-    setInterval(refreshUserData, 5000);
+    // Periodic live stamina & community sparks sync every 2 seconds for real-time progress
+    setInterval(refreshUserData, 2000);
 });
 
 async function refreshUserData() {
@@ -179,13 +189,14 @@ async function checkAndClaimReferral() {
             }
         }
 
-        if (referrerId && currentUser && referrerId !== currentUser.telegram_id) {
+        const myUid = getCurrentUserId();
+        if (referrerId && myUid && referrerId !== myUid) {
             const claimResp = await fetch('/api/referral/claim', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': authHeader,
-                    'x-telegram-id': String(currentUser.telegram_id)
+                    'x-telegram-id': String(myUid)
                 },
                 body: JSON.stringify({ referrer_telegram_id: referrerId })
             });
@@ -402,13 +413,18 @@ function startWickTimer() {
 }
 
 async function claimShubhRefill() {
+    const uid = getCurrentUserId();
+    if (!uid) {
+        showWebLoginModal();
+        return;
+    }
     window.festivalAudio?.init();
     try {
         const resp = await fetch('/api/game/shubh_refill', {
             method: 'POST',
             headers: {
                 'Authorization': authHeader,
-                'x-telegram-id': String(currentUser.telegram_id)
+                'x-telegram-id': String(uid)
             }
         });
         const data = await resp.json();
@@ -508,8 +524,16 @@ function setupAudioToggle() {
 }
 
 async function launchMiniGame(gameType) {
+    let uid = getCurrentUserId();
+    if (!currentUser) {
+        await refreshUserData();
+        uid = getCurrentUserId();
+    }
+    if (!uid) {
+        showWebLoginModal();
+        return;
+    }
     if (!currentUser || currentUser.diya_wicks < 1) {
-        // Fast sync with server before blocking to catch newly regenerated wicks or refills
         await refreshUserData();
         if (!currentUser || currentUser.diya_wicks < 1) {
             alert("Out of Diya Wicks! Stamina refills 1 wick every 1 to 3 minutes randomly.");
@@ -528,7 +552,7 @@ async function launchMiniGame(gameType) {
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': authHeader,
-                'x-telegram-id': String(currentUser.telegram_id)
+                'x-telegram-id': String(uid)
             },
             body: JSON.stringify({ game_type: gameType })
         });
@@ -592,12 +616,13 @@ function handleGameActionButton() {
 async function onGameFinished(rawScore, durationMs) {
     if (!currentSession) return;
     try {
+        const uid = getCurrentUserId() || (currentUser ? currentUser.telegram_id : 123456789);
         const resp = await fetch('/api/game/finish', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': authHeader,
-                'x-telegram-id': String(currentUser.telegram_id)
+                'x-telegram-id': String(uid)
             },
             body: JSON.stringify({
                 session_id: currentSession.session_id,
@@ -674,13 +699,18 @@ function closeGameModal() {
 }
 
 async function sendWickGift() {
+    const uid = getCurrentUserId();
+    if (!uid) {
+        showWebLoginModal();
+        return;
+    }
     window.festivalAudio?.init();
     try {
         const resp = await fetch('/api/referral/gift_wick', {
             method: 'POST',
             headers: {
                 'Authorization': authHeader,
-                'x-telegram-id': String(currentUser.telegram_id)
+                'x-telegram-id': String(uid)
             }
         });
         const data = await resp.json();
@@ -702,7 +732,8 @@ async function sendWickGift() {
 }
 
 function copyShagunLink() {
-    const link = `https://t.me/OrdinalLegacyEventBot?start=shagun_${currentUser.telegram_id}`;
+    const uid = getCurrentUserId() || (currentUser ? currentUser.telegram_id : 123456789);
+    const link = `https://t.me/OrdinalLegacyEventBot?start=shagun_${uid}`;
     if (navigator.clipboard) {
         navigator.clipboard.writeText(link);
         alert(`🎁 Shagun Invite Link Copied!\n\n${link}`);
@@ -712,7 +743,8 @@ function copyShagunLink() {
 }
 
 function shareShagunOnTelegram() {
-    const link = `https://t.me/OrdinalLegacyEventBot?start=shagun_${currentUser.telegram_id}`;
+    const uid = getCurrentUserId() || (currentUser ? currentUser.telegram_id : 123456789);
+    const link = `https://t.me/OrdinalLegacyEventBot?start=shagun_${uid}`;
     const text = encodeURIComponent("🪔 Join me in the Ordinal Legacy Diwali Maha Deepotsav! Awaken the 200,000 Sparks of Akhand Jyoti with me as my bonded Diya Companion!");
     const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${text}`;
     if (window.Telegram?.WebApp?.openTelegramLink) {

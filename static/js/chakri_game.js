@@ -6,7 +6,7 @@ class ChakriGame {
         this.running = false;
         this.startTime = 0;
         this.angle = 0;
-        this.speed = 0.048;
+        this.speed = 0.065;  // Increased from 0.048 for faster, more exciting spin
         this.ignited = false;
         this.score = 1;
         this.particles = [];
