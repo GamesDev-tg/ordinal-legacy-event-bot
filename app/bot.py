@@ -915,7 +915,7 @@ async def handle_bot_message(message: Dict[str, Any]):
         ALLOWED_GROUP_COMMANDS = {
             "/top", "/topusers", "/status", "/gharanas", "/leaderboard", 
             "/tiers", "/stats", "/captcha", "/testcaptcha", "/eventstatus", "/pausestatus",
-            "/adminstats", "/userstats", "/playerstats", "/eventstats"
+            "/adminstats", "/userstats", "/playerstats", "/eventstats", "/boost"
         }
         ADMIN_COMMANDS = {
             "/admin", "/adminhelp", "/admins", "/addadmin", "/deladmin",
@@ -924,7 +924,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             "/setgharana", "/bypassverify", "/unverify", "/setcaptcha",
             "/unlockcaptcha", "/clearcaptcha", "/unlockallcaptcha",
             "/deleteuser", "/broadcast", "/setsparks", "/settarget",
-            "/setlogschat", "/setbackupchat", "/getchats", "/testlog",
+            "/setlogschat", "/setlogs", "/setlog", "/setbackupchat", "/setbackup", "/getchats", "/testlog", "/testlogs",
             "/backup", "/snapshot", "/restore",
             "/stopevent", "/pauseevent", "/resumeevent", "/startevent", "/unpauseevent",
             "/eventstatus", "/pausestatus", "/auditscores", "/tierusers", "/tierplayers",
@@ -1091,7 +1091,7 @@ async def handle_bot_message(message: Dict[str, Any]):
         "/verify", "verify", "/help", "/commands", "/menu", "/tiers",
         "/status", "/mydata", "/profile", "/data", "/top", "/topusers",
         "/gharanas", "/leaderboard", "/stats", "/shagun", "/bind",
-        "/captcha", "/testcaptcha", "/verifyhuman"
+        "/captcha", "/testcaptcha", "/verifyhuman", "/boost"
     )
 
     # Mandatory 3 Group Links Gate before entering the game (Applies to all users unless admin or running info commands)
@@ -1222,10 +1222,31 @@ async def handle_bot_message(message: Dict[str, Any]):
         if is_user_captcha_locked(user_id):
             await send_captcha_prompt(chat_id, user_id, "Automated action prevention: Please verify human presence before entering the arena.")
             return
+        from app.game_engine import get_gharana_boost_status
+        boost = get_gharana_boost_status()
+        rem_m = boost["seconds_remaining"] // 60
+        rem_s = boost["seconds_remaining"] % 60
+        u_gid = user.get("gharana_id", 1)
+        is_my_gharana = (u_gid == boost["active_gharana_id"])
+        
+        if is_my_gharana:
+            boost_highlight = (
+                f"⚡ *2X GHARANA SURGE ACTIVE FOR YOUR HOUSE!* 🔥\n"
+                f"• Boost House: {boost['active_gharana_emoji']} *{boost['active_gharana_name']}*\n"
+                f"• Time Remaining: `{rem_m:02d}:{rem_s:02d}` (10-minute rotation)\n"
+                f"• Multiplier: *2X SPARKS on every play!* (Up to +6 pts)\n\n"
+            )
+        else:
+            boost_highlight = (
+                f"⚡ *Active 2x Surge*: {boost['active_gharana_emoji']} *{boost['active_gharana_name']}* (`{rem_m:02d}:{rem_s:02d}` left)\n"
+                f"⏳ Next House: {boost['next_gharana_emoji']} {boost['next_gharana_name']}\n\n"
+            )
+
         play_text = (
             f"🎮 *Maha Deepotsav Festival Arena: Choose How to Play!*\n\n"
+            f"{boost_highlight}"
             f"Every run consumes *1 Diya Wick* (max 10, regenerates 1 every 1–3 mins randomly).\n"
-            f"Earn *1 to 3 hard sparks* per run to ignite the 200,000 Akhand Diya!\n\n"
+            f"Earn *1 to 3 hard sparks* per run (doubled to 2–6 pts during 2x boost) to ignite the 200,000 Akhand Diya!\n\n"
             f"Select an in-chat game or launch the full Mini-App:"
         )
         play_kb = {
@@ -1234,11 +1255,48 @@ async def handle_bot_message(message: Dict[str, Any]):
                 [{"text": "Play Chakri Whirl", "callback_data": f"play_chakri:{user_id}"},
                  {"text": "Play Rangoli Pattern", "callback_data": f"play_rangoli:{user_id}"}],
                 [{"text": "Play Mithai Feast", "callback_data": f"play_mithai:{user_id}"}],
+                [{"text": "View 2x Boost Schedule", "callback_data": f"cmd_boost:{user_id}"}],
                 [{"text": "Claim Shubh Refill", "callback_data": f"cmd_shubh:{user_id}"},
                  {"text": "My Data & Rewards", "callback_data": f"cmd_mydata:{user_id}"}]
             ]
         }
         await send_telegram_message(chat_id, play_text, play_kb)
+        return
+
+    elif text == "/boost":
+        from app.game_engine import get_gharana_boost_status
+        boost = get_gharana_boost_status()
+        rem_m = boost["seconds_remaining"] // 60
+        rem_s = boost["seconds_remaining"] % 60
+        u_gid = user.get("gharana_id", 1)
+        is_my_gharana = (u_gid == boost["active_gharana_id"])
+        
+        my_mult = "🔥 *2X MULTIPLIER ACTIVE!*" if is_my_gharana else "1x (Normal)"
+        
+        boost_msg = (
+            f"⚡ *MAHA GHARANA 2X SURGE ARENA* ⚡\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🌟 *Active Boost House*: {boost['active_gharana_emoji']} *{boost['active_gharana_name']}*\n"
+            f"⏱️ *Surge Countdown*: `{rem_m:02d}:{rem_s:02d}` (10-minute equal window)\n"
+            f"⏳ *Upcoming House*: {boost['next_gharana_emoji']} *{boost['next_gharana_name']}*\n\n"
+            f"👤 *Your House*: *{settings.GHARANAS.get(u_gid, 'Surya Gharana')}*\n"
+            f"🎯 *Your Status*: {my_mult}\n\n"
+            f"📜 *Equal Opportunity Mechanics*:\n"
+            f"• All 4 Gharanas rotate through a 10-minute 2x Surge 24/7.\n"
+            f"• Cycle: ☀️ Surya → 🔥 Agni → 🌙 Chandra → 💨 Vayu.\n"
+            f"• Every team receives exactly equal bonus opportunities!\n"
+            f"• When your house is active, win **2x Hard Sparks** (2, 4, or 6 points) per game run!\n\n"
+            f"👉 Ready to harvest double sparks? Choose an arena:"
+        )
+        kb = {
+            "inline_keyboard": [
+                [{"text": "Enter Mini-App Arena", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
+                [{"text": "Play Chakri Whirl", "callback_data": f"play_chakri:{user_id}"},
+                 {"text": "Play Rangoli", "callback_data": f"play_rangoli:{user_id}"}],
+                [{"text": "Play Mithai Feast", "callback_data": f"play_mithai:{user_id}"}]
+            ]
+        }
+        await send_telegram_message(chat_id, boost_msg, kb)
         return
 
     elif text == "/chakri":
@@ -1581,13 +1639,13 @@ async def handle_bot_message(message: Dict[str, Any]):
             await send_telegram_message(chat_id, f"❌ Administrator `{target_admin}` not found or cannot be removed.")
         return
 
-    elif text.startswith("/setlogschat"):
+    elif text.startswith(("/setlogschat", "/setlogs", "/setlog")):
         if not is_admin(user_id):
             await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
             return
         parts = text.split()
         if len(parts) != 2:
-            await send_telegram_message(chat_id, "Usage: `/setlogschat <chat_id>`\nExample: `/setlogschat -1001234567890`")
+            await send_telegram_message(chat_id, "Usage: `/setlogs <chat_id>`\nExample: `/setlogs -1001234567890`")
             return
         new_cid = parts[1].strip()
         set_system_setting("logs_chat_id", new_cid)
@@ -1595,13 +1653,13 @@ async def handle_bot_message(message: Dict[str, Any]):
         await send_bot_log(f"🔔 *Bot Logs Group Connected!* Real-time operational logs will be streamed here.")
         return
 
-    elif text.startswith("/setbackupchat"):
+    elif text.startswith(("/setbackupchat", "/setbackup")):
         if not is_admin(user_id):
             await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
             return
         parts = text.split()
         if len(parts) != 2:
-            await send_telegram_message(chat_id, "Usage: `/setbackupchat <chat_id>`\nExample: `/setbackupchat -1009876543210`")
+            await send_telegram_message(chat_id, "Usage: `/setbackup <chat_id>`\nExample: `/setbackup -1009876543210`")
             return
         new_cid = parts[1].strip()
         set_system_setting("backup_chat_id", new_cid)
@@ -1616,7 +1674,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             await send_telegram_message(chat_id, f"⚠️ Configured with warning: {e}")
         return
 
-    elif text == "/getchats":
+    elif text in ("/getchats", "/channels"):
         if not is_admin(user_id):
             await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
             return
@@ -1628,12 +1686,12 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"• *Bot Logs Group*: `{logs_c or 'Not Configured'}`\n"
             f"• *Bot Recovery Data Group*: `{backup_c or 'Not Configured'}`\n"
             f"• *Last 6-Hr Auto-Backup*: `{last_b}`\n\n"
-            f"_Use `/setlogschat <id>` and `/setbackupchat <id>` to update._"
+            f"_Use `/setlogs <id>` and `/setbackup <id>` to update._"
         )
         await send_telegram_message(chat_id, msg)
         return
 
-    elif text == "/testlog":
+    elif text in ("/testlog", "/testlogs"):
         if not is_admin(user_id):
             await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
             return
@@ -2754,6 +2812,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"/start - Launch festival arena and mini-games\n"
             f"/status - View community Akhand Diya sparks and progress\n"
             f"/house - View your Gharana standing & rank\n"
+            f"/boost - View 10-min 2x Gharana Surge schedule & active bonus\n"
             f"/top - View Top 10 Lampbearers on the leaderboard\n"
             f"/shagun - Get your companion referral link\n"
             f"/shubh - Claim daily Shubh refill (+5 wicks & pts)\n"
@@ -2890,6 +2949,9 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
         await handle_bot_message(fake_msg)
     elif action == "cmd_tiers":
         fake_msg = {"chat": {"id": chat_id}, "from": from_user, "text": "/tiers"}
+        await handle_bot_message(fake_msg)
+    elif action == "cmd_boost":
+        fake_msg = {"chat": {"id": chat_id}, "from": from_user, "text": "/boost"}
         await handle_bot_message(fake_msg)
     elif action == "cpa":
         # parts: ["cpa", <user_id>, <ans_idx>, <token>]

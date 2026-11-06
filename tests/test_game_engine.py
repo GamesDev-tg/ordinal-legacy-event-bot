@@ -48,8 +48,9 @@ class TestGameEngine(unittest.TestCase):
             duration_ms=13000
         )
         self.assertTrue(finish["success"])
-        self.assertEqual(finish["points_awarded"], 3)
-        self.assertEqual(finish["new_user_total"], 3)
+        expected_score = 3 * finish.get("multiplier", 1)
+        self.assertEqual(finish["points_awarded"], expected_score)
+        self.assertEqual(finish["new_user_total"], expected_score)
 
         res_start2 = start_game_session(self.user_id, game_type=1)
         with self.assertRaises(HTTPException) as ctx:
@@ -131,6 +132,48 @@ class TestGameEngine(unittest.TestCase):
             claim_shubh_refill(self.user_id)
         self.assertEqual(ctx.exception.status_code, 400)
         self.assertIn("already claimed", ctx.exception.detail)
+
+    def test_gharana_boost_rotation_and_multiplier(self):
+        from app.game_engine import get_gharana_boost_status
+        # Equal 10-minute rotation check:
+        # Time 0: Gharana 1 (Surya)
+        b0 = get_gharana_boost_status(0)
+        self.assertEqual(b0["active_gharana_id"], 1)
+        self.assertEqual(b0["seconds_remaining"], 600)
+        self.assertEqual(b0["next_gharana_id"], 2)
+
+        # Time 600: Gharana 2 (Agni)
+        b1 = get_gharana_boost_status(600)
+        self.assertEqual(b1["active_gharana_id"], 2)
+        self.assertEqual(b1["next_gharana_id"], 3)
+
+        # Time 1200: Gharana 3 (Chandra)
+        b2 = get_gharana_boost_status(1200)
+        self.assertEqual(b2["active_gharana_id"], 3)
+        self.assertEqual(b2["next_gharana_id"], 4)
+
+        # Time 1800: Gharana 4 (Vayu)
+        b3 = get_gharana_boost_status(1800)
+        self.assertEqual(b3["active_gharana_id"], 4)
+        self.assertEqual(b3["next_gharana_id"], 1)
+
+        # Time 2400: Repeats back to Gharana 1 (Surya)
+        b4 = get_gharana_boost_status(2400)
+        self.assertEqual(b4["active_gharana_id"], 1)
+
+        # Verify 2X multiplier when user belongs to boosted gharana:
+        active_gid = get_gharana_boost_status()["active_gharana_id"]
+        conn = get_db_connection()
+        conn.execute("UPDATE users SET gharana_id = ?, points_total = 0, diya_wicks = 10 WHERE telegram_id = ?", (active_gid, self.user_id))
+        conn.commit()
+        conn.close()
+
+        sess = start_game_session(self.user_id, game_type=1)
+        res_boosted = finish_game_session(self.user_id, sess["session_id"], sess["nonce"], raw_score=3, duration_ms=10000)
+        self.assertTrue(res_boosted["is_boosted"])
+        self.assertEqual(res_boosted["multiplier"], 2)
+        self.assertEqual(res_boosted["points_awarded"], 6)
+        self.assertEqual(res_boosted["new_user_total"], 6)
 
     def test_out_of_stamina_rejection(self):
         conn = get_db_connection()

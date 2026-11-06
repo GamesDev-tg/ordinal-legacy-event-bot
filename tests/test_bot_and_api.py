@@ -64,8 +64,9 @@ class TestBotAndAPI(unittest.TestCase):
         )
         finish_res = api_game_finish(finish_req, x_telegram_id=str(self.user_id))
         self.assertTrue(finish_res.success)
-        self.assertEqual(finish_res.points_awarded, 3)
-        self.assertEqual(finish_res.new_user_total, 3)
+        self.assertEqual(finish_res.base_score, 3)
+        self.assertIn(finish_res.points_awarded, (3, 6))
+        self.assertEqual(finish_res.new_user_total, finish_res.points_awarded)
 
         # 3. Shubh Refill
         refill_res = api_shubh_refill(x_telegram_id=str(self.user_id))
@@ -97,7 +98,8 @@ class TestBotAndAPI(unittest.TestCase):
         # Execute Chakri game (game_type 1)
         res = execute_in_chat_game(self.user_id, 1)
         self.assertTrue(res.get("success"))
-        self.assertIn(res["score"], [1, 2, 3])
+        self.assertIn(res["score"], [1, 2, 3, 4, 6])
+        self.assertIn(res["base_score"], [1, 2, 3])
         self.assertEqual(res["new_wicks"], 9)
         self.assertGreaterEqual(res["community_total"], res["score"])
 
