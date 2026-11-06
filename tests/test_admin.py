@@ -17,12 +17,28 @@ from app.routes.admin_routes import (
 )
 from app.models import AdminAddPointsRequest, AdminQueryRequest, AdminResetEventRequest
 
+def run_coro(coro):
+    try:
+        while True:
+            sub = coro.send(None)
+            if hasattr(sub, "send"):
+                try:
+                    run_coro(sub)
+                except Exception:
+                    pass
+    except StopIteration as e:
+        return e.value
+    except Exception as e:
+        raise e
+
 class TestAdmin(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.test_db = os.path.join(tempfile.gettempdir(), f"test_admin_{random.randint(10000, 99999)}.db")
         settings.DATABASE_PATH = cls.test_db
         settings.ADMIN_IDS = [999001]
+        cls.orig_token = settings.BOT_TOKEN
+        settings.BOT_TOKEN = "mock_bot_token_for_dev"
         from app.cache import delete_cache
         delete_cache("all_admin_ids")
         init_db()
@@ -31,6 +47,7 @@ class TestAdmin(unittest.TestCase):
     def tearDownClass(cls):
         from app.cache import delete_cache
         delete_cache("all_admin_ids")
+        settings.BOT_TOKEN = cls.orig_token
         if os.path.exists(cls.test_db):
             try:
                 os.remove(cls.test_db)
@@ -230,14 +247,7 @@ class TestAdmin(unittest.TestCase):
         self.assertFalse(is_event_paused())
 
     def test_admin_commands_audit_and_export(self):
-        import asyncio
         from app.bot import handle_bot_message
-        
-        def run_sync(coro):
-            try:
-                coro.send(None)
-            except StopIteration as e:
-                return e.value
         
         # Test /stopevent
         msg = {
@@ -245,27 +255,92 @@ class TestAdmin(unittest.TestCase):
             "from": {"id": self.admin_id, "username": "admin"},
             "text": "/stopevent"
         }
-        run_sync(handle_bot_message(msg))
+        run_coro(handle_bot_message(msg))
         
         from app.database import is_event_paused, set_event_paused
         self.assertTrue(is_event_paused())
         
         # Test /auditscores
         msg["text"] = "/auditscores"
-        run_sync(handle_bot_message(msg))
+        run_coro(handle_bot_message(msg))
         
         # Test /tierusers 0
         msg["text"] = "/tierusers 0"
-        run_sync(handle_bot_message(msg))
+        run_coro(handle_bot_message(msg))
         
         # Test /exportrewards
         msg["text"] = "/exportrewards"
-        run_sync(handle_bot_message(msg))
+        run_coro(handle_bot_message(msg))
         
         # Test /resumeevent
         msg["text"] = "/resumeevent"
-        run_sync(handle_bot_message(msg))
+        run_coro(handle_bot_message(msg))
         self.assertFalse(is_event_paused())
+
+    def test_admin_commands_in_groups(self):
+        from app.bot import handle_bot_message
+        from unittest.mock import patch
+        
+        group_id = -100987654321
+        sent_messages = []
+        
+        async def mock_send(chat_id, text, reply_markup=None, parse_mode=None):
+            sent_messages.append({"chat_id": chat_id, "text": text})
+            return True
+            
+        with patch("app.bot.send_telegram_message", side_effect=mock_send):
+            # 1. Admin running /auditscores in group chat
+            msg = {
+                "chat": {"id": group_id, "type": "supergroup"},
+                "from": {"id": self.admin_id, "username": "admin"},
+                "text": "/auditscores"
+            }
+            run_coro(handle_bot_message(msg))
+            self.assertTrue(any("FINAL SCORE AUDIT" in m["text"] for m in sent_messages if m["chat_id"] == group_id))
+            
+            # 2. Non-admin running /auditscores in group chat -> Access Denied
+            sent_messages.clear()
+            msg = {
+                "chat": {"id": group_id, "type": "supergroup"},
+                "from": {"id": self.non_admin_id, "username": "normal_player"},
+                "text": "/auditscores"
+            }
+            run_coro(handle_bot_message(msg))
+            self.assertTrue(any("Access Denied" in m["text"] for m in sent_messages if m["chat_id"] == group_id))
+            
+            # 3. Non-admin running /play in group chat -> Directed to DM
+            sent_messages.clear()
+            msg = {
+                "chat": {"id": group_id, "type": "supergroup"},
+                "from": {"id": self.non_admin_id, "username": "normal_player"},
+                "text": "/play"
+            }
+            run_coro(handle_bot_message(msg))
+            self.assertTrue(any("Please use `/play` in private chat" in m["text"] for m in sent_messages if m["chat_id"] == group_id))
+            
+            # 4. Public command /status in group chat works for everyone
+            sent_messages.clear()
+            msg = {
+                "chat": {"id": group_id, "type": "supergroup"},
+                "from": {"id": self.non_admin_id, "username": "normal_player"},
+                "text": "/status"
+            }
+            run_coro(handle_bot_message(msg))
+            self.assertTrue(any("Maha Deepotsav Status" in m["text"] for m in sent_messages if m["chat_id"] == group_id))
+
+            # 5. Admin running /stopevent and /resumeevent in group chat
+            sent_messages.clear()
+            msg = {
+                "chat": {"id": group_id, "type": "supergroup"},
+                "from": {"id": self.admin_id, "username": "admin"},
+                "text": "/stopevent"
+            }
+            run_coro(handle_bot_message(msg))
+            self.assertTrue(any("Frozen" in m["text"] for m in sent_messages if m["chat_id"] == group_id))
+            
+            msg["text"] = "/resumeevent"
+            run_coro(handle_bot_message(msg))
+            self.assertTrue(any("Resumed" in m["text"] for m in sent_messages if m["chat_id"] == group_id))
 
 if __name__ == "__main__":
     unittest.main()

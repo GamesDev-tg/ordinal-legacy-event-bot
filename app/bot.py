@@ -72,12 +72,16 @@ def format_to_telegram_html(text: Any) -> str:
     
     return s
 
+def is_mock_token() -> bool:
+    tok = (settings.BOT_TOKEN or "").lower()
+    return "mock" in tok or tok == "test"
+
 def is_admin(user_id: int) -> bool:
     return user_id in get_all_admin_ids()
 
 def is_user_verified_for_games(user_id: int) -> bool:
     """Checks if user has verified official group membership before playing mini-games."""
-    if is_admin(user_id) or settings.BOT_TOKEN == "mock_bot_token_for_dev":
+    if is_admin(user_id):
         return True
     conn = get_db_connection()
     row = conn.execute("SELECT joined_groups FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
@@ -102,7 +106,7 @@ def send_bot_log_sync(text: str):
         except Exception:
             pass
     logs_chat = get_effective_logs_chat_id()
-    if logs_chat and settings.BOT_TOKEN != "mock_bot_token_for_dev":
+    if logs_chat and not is_mock_token():
         try:
             url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage"
             payload = {
@@ -208,7 +212,7 @@ async def send_telegram_message(
     reply_markup: Optional[Dict[str, Any]] = None,
     parse_mode: Optional[str] = ParseMode.HTML.value
 ):
-    if settings.BOT_TOKEN == "mock_bot_token_for_dev":
+    if is_mock_token():
         try:
             print(f"[MOCK BOT] -> Chat {chat_id}: {text}")
         except Exception:
@@ -249,7 +253,7 @@ async def send_telegram_message(
         return False
 
 async def send_telegram_document(chat_id: int, file_bytes: bytes, filename: str, caption: str):
-    if settings.BOT_TOKEN == "mock_bot_token_for_dev":
+    if is_mock_token():
         print(f"[MOCK BOT] -> Document {filename} to {chat_id}")
         return True
     
@@ -275,7 +279,7 @@ _BUTTON_CLICK_COOLDOWN: Dict[int, float] = {}
 
 async def answer_telegram_callback_query(callback_query_id: str, text: Optional[str] = None, show_alert: bool = False) -> bool:
     """Answers a Telegram callback query to clear button loading spinners and optionally show alert."""
-    if settings.BOT_TOKEN == "mock_bot_token_for_dev" or not callback_query_id:
+    if is_mock_token() or not callback_query_id:
         return True
     url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/answerCallbackQuery"
     payload = {"callback_query_id": callback_query_id}
@@ -295,7 +299,7 @@ async def sync_telegram_bot_commands() -> bool:
     Registers all player commands with Telegram BotFather API using setMyCommands.
     Keeps admin commands private so normal players only see official festival features.
     """
-    if settings.BOT_TOKEN == "mock_bot_token_for_dev":
+    if is_mock_token():
         return True
     
     commands = [
@@ -328,7 +332,7 @@ async def check_telegram_membership(user_id: int, chat_identifier: str) -> bool:
     Check if user is a member/admin/creator of a Telegram channel or group.
     Returns True if confirmed member or admin. Returns False otherwise.
     """
-    if settings.BOT_TOKEN == "mock_bot_token_for_dev" or is_admin(user_id):
+    if is_mock_token() or is_admin(user_id):
         return True
     
     chat_handle = chat_identifier.strip()
@@ -453,7 +457,7 @@ def execute_in_chat_game(user_id: int, game_type: int) -> dict:
             u = conn.execute("SELECT diya_wicks, points_total, tier_level, gharana_id, joined_groups FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
             if not u:
                 return {"error": "User not found. Send /start first!"}
-            if not u["joined_groups"] and not is_admin(user_id) and settings.BOT_TOKEN != "mock_bot_token_for_dev":
+            if not u["joined_groups"] and not is_admin(user_id) and not is_mock_token():
                 return {"error": "You must join all 3 official community groups and verify first! Send /start."}
             if u["diya_wicks"] < 1:
                 return {"error": "Out of Diya Wicks! Claim your daily /shubh refill or wait 1–3 mins for stamina regeneration."}
@@ -773,12 +777,41 @@ async def handle_bot_message(message: Dict[str, Any]):
                 return
             text = f"{cmd_name}{rest_part}".strip()
 
-    # Guard: in groups, only public community readouts are allowed (/top, /status, /gharanas, /tiers, /stats).
-    # All personal, interactive, game, help, and admin commands are directed to DM to avoid spamming groups.
+    # Guard: in groups, only public community readouts are allowed for regular members.
+    # Authorized administrators are allowed to execute administrative & event management commands directly in groups.
+    # Regular users running personal, interactive, game, help, or admin commands are directed to DM to avoid group spam.
     if not is_private and text.startswith("/"):
         cmd_head = text.split()[0].lower()
-        ALLOWED_GROUP_COMMANDS = {"/top", "/topusers", "/status", "/gharanas", "/leaderboard", "/tiers", "/stats", "/captcha", "/testcaptcha"}
-        if cmd_head not in ALLOWED_GROUP_COMMANDS:
+        ALLOWED_GROUP_COMMANDS = {
+            "/top", "/topusers", "/status", "/gharanas", "/leaderboard", 
+            "/tiers", "/stats", "/captcha", "/testcaptcha", "/eventstatus", "/pausestatus"
+        }
+        ADMIN_COMMANDS = {
+            "/admin", "/adminhelp", "/admins", "/addadmin", "/deladmin",
+            "/userinfo", "/user", "/setpoints", "/addpoints", "/add",
+            "/setwicks", "/resetwicks", "/refillallwicks", "/resetallwicks",
+            "/setgharana", "/bypassverify", "/unverify", "/setcaptcha",
+            "/deleteuser", "/broadcast", "/setsparks", "/settarget",
+            "/setlogschat", "/setbackupchat", "/getchats", "/testlog",
+            "/backup", "/snapshot", "/restore",
+            "/stopevent", "/pauseevent", "/resumeevent", "/startevent", "/unpauseevent",
+            "/eventstatus", "/pausestatus", "/auditscores", "/tierusers", "/tierplayers",
+            "/findtier", "/exportrewards",
+            "/resetscores", "/resetpoints", "/resetshubh", "/resetallshubh",
+            "/resetevent", "/cleandummy", "/purgedummy", "/syncreferrals",
+            "/resetreferrals", "/query", "/syncbot"
+        }
+        is_user_admin = is_admin(user_id)
+        if cmd_head in ADMIN_COMMANDS:
+            if not is_user_admin:
+                await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+                await send_bot_log(f"🚨 *Security Alert*: Unauthorized user `{user_id}` attempted `{cmd_head}` in group.")
+                return
+            # Authorized administrator running admin command in group: allowed to proceed
+        elif cmd_head in ALLOWED_GROUP_COMMANDS:
+            # Public community readout allowed in group for all members
+            pass
+        else:
             bot_user = settings.BOT_USERNAME or "OrdinalLegacyEventBot"
             await send_telegram_message(
                 chat_id,
@@ -1258,8 +1291,12 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"🔒 _Notice: All game modification, SQL querying, and database commands are strictly locked to authorized administrators._"
         )
         if not is_private:
-            await send_telegram_message(user_id, admin_msg)
-            await send_telegram_message(chat_id, "🔒 Administrator records sent privately to your DM, Sudo.")
+            delivered = await send_telegram_message(user_id, admin_msg)
+            if delivered:
+                await send_telegram_message(chat_id, "🔒 Administrator records sent privately to your DM, Sudo.")
+            else:
+                bot_user = settings.BOT_USERNAME or "OrdinalLegacyEventBot"
+                await send_telegram_message(chat_id, f"🔒 Administrator records: Could not deliver to your private DM. Please open a chat with [@{bot_user}](https://t.me/{bot_user}) first.")
         else:
             await send_telegram_message(chat_id, admin_msg)
         return
@@ -1317,8 +1354,12 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"• `/syncbot` — Synchronize public commands in BotFather"
         )
         if not is_private:
-            await send_telegram_message(user_id, admin_help)
-            await send_telegram_message(chat_id, "🔒 *Admin Command Center*: Dispatched privately to your DM, Sudo.")
+            delivered = await send_telegram_message(user_id, admin_help)
+            if delivered:
+                await send_telegram_message(chat_id, "🔒 *Admin Command Center*: Dispatched privately to your DM, Sudo.")
+            else:
+                bot_user = settings.BOT_USERNAME or "OrdinalLegacyEventBot"
+                await send_telegram_message(chat_id, f"🔒 *Admin Command Center*: Could not deliver to your private DM. Please open a chat with [@{bot_user}](https://t.me/{bot_user}) first, or run `/admin` in DM.")
         else:
             await send_telegram_message(chat_id, admin_help)
         return

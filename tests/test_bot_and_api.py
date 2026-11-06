@@ -263,12 +263,16 @@ class TestBotAsync(unittest.TestCase):
                 "text": "/adminhelp"
             }
             with patch("app.bot.send_telegram_message", new_callable=AsyncMock) as mock_send:
+                mock_send.return_value = True
                 await handle_bot_message(admin_group_call)
-                mock_send.assert_called_once()
-                args, _ = mock_send.call_args
-                self.assertEqual(args[0], -100987654321)
-                self.assertIn("in private chat", args[1])
-                self.assertNotIn("ADMIN COMMAND CENTER", args[1])
+                self.assertEqual(mock_send.call_count, 2)
+                calls = mock_send.call_args_list
+                # 1st call: DM with full admin center
+                self.assertEqual(calls[0][0][0], admin_id)
+                self.assertIn("ADMIN COMMAND CENTER", calls[0][0][1])
+                # 2nd call: Group confirmation
+                self.assertEqual(calls[1][0][0], -100987654321)
+                self.assertIn("Dispatched privately", calls[1][0][1])
         run_coro_sync(_run())
 
     def test_admin_adminhelp_in_dm(self):
