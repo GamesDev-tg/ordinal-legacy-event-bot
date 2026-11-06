@@ -84,7 +84,7 @@ class ChakriGame {
         // Responsive festive burst celebration
         setTimeout(() => {
             this.stop();
-            this.onGameOver(this.score, Math.max(1200, Date.now() - this.startTime));
+            this.onGameOver(this.score, Math.max(3200, Date.now() - this.startTime));
         }, 1800);
     }
 

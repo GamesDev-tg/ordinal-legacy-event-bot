@@ -90,7 +90,7 @@ class TestGameEngine(unittest.TestCase):
                 res_start["session_id"],
                 res_start["nonce"],
                 raw_score=3,
-                duration_ms=2000
+                duration_ms=1000
             )
         self.assertEqual(ctx.exception.status_code, 400)
         self.assertIn("too fast", ctx.exception.detail)

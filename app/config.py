@@ -33,7 +33,7 @@ class Settings:
     
     GLOBAL_MILESTONE_TARGET: int = int(os.getenv("GLOBAL_MILESTONE_TARGET", "200000"))
     MAX_REFERRAL_POINTS: int = int(os.getenv("MAX_REFERRAL_POINTS", "15"))
-    MIN_GAME_DURATION_SECONDS: int = int(os.getenv("MIN_GAME_DURATION_SECONDS", "3"))
+    MIN_GAME_DURATION_SECONDS: int = int(os.getenv("MIN_GAME_DURATION_SECONDS", "2"))
     STAMINA_BANK_CAP: int = int(os.getenv("STAMINA_BANK_CAP", "10"))
     STAMINA_REGEN_MINUTES: int = int(os.getenv("STAMINA_REGEN_MINUTES", "1"))
 
