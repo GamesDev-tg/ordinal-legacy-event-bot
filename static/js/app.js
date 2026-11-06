@@ -10,7 +10,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (tg) {
         tg.ready();
         tg.expand();
-        try { tg.enableClosingConfirmation(); } catch (e) {}
+        // Keep normal menu navigation smooth without scary data loss confirmation
+        try { tg.disableClosingConfirmation(); } catch (e) {}
     }
 
     const urlParams = new URLSearchParams(window.location.search);
@@ -20,8 +21,60 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     setupTabs();
     setupAudioToggle();
+    setupStaminaRefreshButton();
     await authenticateUser(initData);
+
+    // Auto-refresh when user returns to mini-app or switches focus from bot chat
+    document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible") {
+            refreshUserData();
+        }
+    });
+    window.addEventListener("focus", () => {
+        refreshUserData();
+    });
+
+    // Periodic live stamina & community sparks sync every 20 seconds
+    setInterval(refreshUserData, 20000);
 });
+
+async function refreshUserData() {
+    if (!authHeader) return;
+    try {
+        const resp = await fetch('/api/auth/telegram', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ init_data: authHeader })
+        });
+        const data = await resp.json();
+        if (resp.ok && data.success) {
+            currentUser = data.user;
+            updateUI(data);
+            return data;
+        }
+    } catch (e) {
+        console.warn("Background user refresh warning:", e);
+    }
+
+    // Fallback if authHeader was invalid / dev user
+    const urlParams = new URLSearchParams(window.location.search);
+    const tgId = urlParams.get('tg_id') || window.Telegram?.WebApp?.initDataUnsafe?.user?.id || (currentUser ? currentUser.telegram_id : null);
+    if (tgId) {
+        try {
+            const fallbackResp = await fetch('/api/auth/telegram', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ init_data: `dev_user_${tgId}` })
+            });
+            const fallbackData = await fallbackResp.json();
+            if (fallbackData.success) {
+                currentUser = fallbackData.user;
+                updateUI(fallbackData);
+                return fallbackData;
+            }
+        } catch (e2) {}
+    }
+}
 
 async function authenticateUser(initData) {
     try {
@@ -339,9 +392,26 @@ function setupTabs() {
             document.querySelectorAll('.tab-view').forEach(v => v.style.display = 'none');
             document.getElementById(`tab-${target}`).style.display = 'block';
 
+            // Auto-refresh user stamina & community progress on tab switch
+            refreshUserData();
+
             if (target === 'community') loadCommunityLeaderboard();
         });
     });
+}
+
+function setupStaminaRefreshButton() {
+    const btn = document.getElementById('stamina-badge-btn');
+    if (btn) {
+        btn.addEventListener('click', async () => {
+            window.festivalAudio?.init();
+            window.festivalAudio?.playTap();
+            const wicksSpan = document.getElementById('user-wicks');
+            if (wicksSpan) wicksSpan.style.opacity = '0.5';
+            await refreshUserData();
+            if (wicksSpan) wicksSpan.style.opacity = '1';
+        });
+    }
 }
 
 function setupAudioToggle() {
@@ -364,9 +434,16 @@ function setupAudioToggle() {
 
 async function launchMiniGame(gameType) {
     if (!currentUser || currentUser.diya_wicks < 1) {
-        alert("Out of Diya Wicks! Stamina refills 1 wick every 1 to 3 minutes randomly.");
-        return;
+        // Fast sync with server before blocking to catch newly regenerated wicks or refills
+        await refreshUserData();
+        if (!currentUser || currentUser.diya_wicks < 1) {
+            alert("Out of Diya Wicks! Stamina refills 1 wick every 1 to 3 minutes randomly.");
+            return;
+        }
     }
+
+    // Protect active gameplay from accidental swipe-away
+    try { window.Telegram?.WebApp?.enableClosingConfirmation(); } catch (e) {}
 
     window.festivalAudio?.init();
 
@@ -494,6 +571,10 @@ function closeGameModal() {
     }
     currentSession = null;
     document.getElementById('game-overlay').classList.remove('active');
+    // Disable closing confirmation when leaving game modal back to menus
+    try { window.Telegram?.WebApp?.disableClosingConfirmation(); } catch (e) {}
+    // Sync latest wicks & community sparks right after completing or closing run
+    refreshUserData();
 }
 
 async function sendWickGift() {
