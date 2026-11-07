@@ -10,7 +10,7 @@ import asyncio
 import queue
 import threading
 from enum import Enum
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple, List
 from app.enums import ParseMode
 from app.config import settings
 
@@ -330,6 +330,65 @@ async def send_telegram_message(
         return resp.status_code == 200
     except Exception as e:
         print(f"Failed to send telegram message: {e}")
+        return False
+
+async def send_telegram_message_with_id(
+    chat_id: int, 
+    text: str, 
+    reply_markup: Optional[Dict[str, Any]] = None,
+    parse_mode: Optional[str] = ParseMode.HTML.value
+) -> Tuple[bool, Optional[int]]:
+    if is_mock_token():
+        try:
+            print(f"[MOCK BOT] -> Chat {chat_id}: {text}")
+        except Exception:
+            pass
+        return True, 999999
+    
+    url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage"
+    formatted_text = format_to_telegram_html(text) if parse_mode in (ParseMode.HTML.value, "HTML") else text
+    payload = {"chat_id": chat_id, "text": formatted_text}
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+        
+    try:
+        client = get_async_http_client()
+        resp = await client.post(url, json=payload)
+        if resp.status_code == 200:
+            msg_id = resp.json().get("result", {}).get("message_id")
+            return True, msg_id
+        return False, None
+    except Exception as e:
+        print(f"[SEND TELEGRAM WITH ID ERROR]: {e}")
+        return False, None
+
+async def edit_telegram_message(
+    chat_id: int,
+    message_id: int,
+    text: str,
+    reply_markup: Optional[Dict[str, Any]] = None,
+    parse_mode: Optional[str] = ParseMode.HTML.value
+) -> bool:
+    if is_mock_token():
+        return True
+    url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/editMessageText"
+    formatted_text = format_to_telegram_html(text) if parse_mode in (ParseMode.HTML.value, "HTML") else text
+    payload = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": formatted_text,
+        "parse_mode": parse_mode
+    }
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+    try:
+        client = get_async_http_client()
+        resp = await client.post(url, json=payload)
+        return resp.status_code == 200
+    except Exception as e:
+        print(f"[EDIT TELEGRAM MESSAGE ERROR]: {e}")
         return False
 
 async def send_telegram_document(chat_id: int, file_bytes: bytes, filename: str, caption: str):
@@ -917,6 +976,9 @@ async def handle_bot_message(message: Dict[str, Any]):
     if not chat_id or not user_id:
         return
 
+    if not is_private and is_ordinal_legacy_group(chat):
+        set_system_setting("ordinal_legacy_group_chat_id", str(chat_id))
+
     # Ignore service messages, chat member joins/leaves, or empty text without document
     if not text and not doc:
         return
@@ -957,7 +1019,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             "/top", "/tops", "/topusers", "/status", "/gharanas", "/leaderboard", 
             "/tiers", "/stats", "/captcha", "/testcaptcha", "/eventstatus", "/pausestatus",
             "/adminstats", "/userstats", "/playerstats", "/eventstats", "/boost",
-            "/gifts", "/gift"
+            "/gifts", "/gift", "/clash", "/gharanaclash"
         }
         ADMIN_COMMANDS = {
             "/admin", "/adminhelp", "/admins", "/addadmin", "/deladmin",
@@ -974,7 +1036,8 @@ async def handle_bot_message(message: Dict[str, Any]):
             "/adminstats", "/userstats", "/playerstats", "/eventstats",
             "/resetscores", "/resetpoints", "/resetshubh", "/resetallshubh",
             "/resetevent", "/cleandummy", "/purgedummy", "/syncreferrals",
-            "/resetreferrals", "/query", "/syncbot"
+            "/resetreferrals", "/query", "/syncbot",
+            "/dropdiya", "/flashdiya", "/droptrivia", "/riddle"
         }
         is_user_admin = is_admin(user_id)
         if cmd_head in ADMIN_COMMANDS:
@@ -1130,7 +1193,8 @@ async def handle_bot_message(message: Dict[str, Any]):
         "/verify", "verify", "/help", "/commands", "/menu", "/tiers",
         "/status", "/mydata", "/profile", "/data", "/top", "/tops", "/topusers",
         "/gharanas", "/leaderboard", "/stats", "/shagun", "/bind",
-        "/captcha", "/testcaptcha", "/verifyhuman", "/boost", "/gifts", "/gift"
+        "/captcha", "/testcaptcha", "/verifyhuman", "/boost", "/gifts", "/gift",
+        "/clash", "/gharanaclash"
     )
 
     # Mandatory 3 Group Links Gate before entering the game (Applies to all users unless admin or running info commands)
@@ -1511,6 +1575,70 @@ async def handle_bot_message(message: Dict[str, Any]):
         )
         await send_telegram_message(chat_id, success_msg)
         await send_bot_log(f"🎁 Player <code>{user_id}</code> gifted 1 Diya Wick to <code>{res['receiver_id']}</code> in @Ordinal_Legacy. ({res['gifts_used_today']}/5 used today)")
+        return
+
+    elif text in ("/clash", "/gharanaclash"):
+        from app.group_activities import get_gharana_clash_card
+        clash_text = get_gharana_clash_card()
+        await send_telegram_message(chat_id, clash_text)
+        return
+
+    elif text.startswith(("/dropdiya", "/flashdiya")):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+
+        from app.group_activities import create_flash_diya, record_event_message_id
+        target_chat = chat_id
+        if is_private:
+            stored_group = get_system_setting("ordinal_legacy_group_chat_id", "")
+            cfg_id = getattr(settings, "ORDINAL_LEGACY_CHAT_ID", "")
+            if cfg_id and str(cfg_id).lstrip("-").isdigit():
+                target_chat = int(cfg_id)
+            elif stored_group and stored_group.lstrip("-").isdigit():
+                target_chat = int(stored_group)
+            else:
+                await send_telegram_message(chat_id, "👉 Run `/dropdiya` directly inside the @Ordinal_Legacy group to release the flash flame!")
+                return
+
+        event_id, drop_text, kb = create_flash_diya(target_chat, max_claims=10)
+        ok, msg_id = await send_telegram_message_with_id(target_chat, drop_text, kb)
+        if ok and msg_id:
+            record_event_message_id(event_id, msg_id)
+            if is_private:
+                await send_telegram_message(chat_id, f"✅ *Sacred Flash Diya Released* in group `{target_chat}`! (Event ID: `{event_id}`)")
+            await send_bot_log(f"🪔 Admin `{user_id}` released a Sacred Flash Diya in `{target_chat}`.")
+        else:
+            await send_telegram_message(chat_id, "❌ Failed to dispatch Flash Diya to group.")
+        return
+
+    elif text.startswith(("/droptrivia", "/riddle")):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+
+        from app.group_activities import create_trivia_drop, record_event_message_id
+        target_chat = chat_id
+        if is_private:
+            stored_group = get_system_setting("ordinal_legacy_group_chat_id", "")
+            cfg_id = getattr(settings, "ORDINAL_LEGACY_CHAT_ID", "")
+            if cfg_id and str(cfg_id).lstrip("-").isdigit():
+                target_chat = int(cfg_id)
+            elif stored_group and stored_group.lstrip("-").isdigit():
+                target_chat = int(stored_group)
+            else:
+                await send_telegram_message(chat_id, "👉 Run `/droptrivia` directly inside the @Ordinal_Legacy group to release the trivia!")
+                return
+
+        event_id, drop_text, kb = create_trivia_drop(target_chat)
+        ok, msg_id = await send_telegram_message_with_id(target_chat, drop_text, kb)
+        if ok and msg_id:
+            record_event_message_id(event_id, msg_id)
+            if is_private:
+                await send_telegram_message(chat_id, f"✅ *Sacred Festive Trivia Dispatched* to group `{target_chat}`! (Event ID: `{event_id}`)")
+            await send_bot_log(f"🏮 Admin `{user_id}` dispatched Sacred Trivia to `{target_chat}`.")
+        else:
+            await send_telegram_message(chat_id, "❌ Failed to dispatch Trivia to group.")
         return
 
     elif text in ("/widget", "/akhand"):
@@ -2979,18 +3107,115 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
     action = parts[0]
     owner_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
 
-    if owner_id is not None and owner_id != user_id:
-        await answer_telegram_callback_query(
-            callback_id,
-            text="⛔ This query belongs to another player. Please use the command yourself in private chat!",
-            show_alert=True
-        )
-        return
+    PUBLIC_GROUP_ACTIONS = {"claim_diya", "flash_diya", "trivia_ans"}
+    if action not in PUBLIC_GROUP_ACTIONS:
+        if owner_id is not None and owner_id != user_id:
+            await answer_telegram_callback_query(
+                callback_id,
+                text="⛔ This query belongs to another player. Please use the command yourself in private chat!",
+                show_alert=True
+            )
+            return
 
     # 3. Stop Telegram loading spinner immediately
     await answer_telegram_callback_query(callback_id)
 
     # 4. Route action
+    if action == "claim_diya":
+        if len(parts) < 2 or not parts[1].isdigit():
+            return
+        event_id = int(parts[1])
+        from app.group_activities import claim_flash_diya
+        user_fn = from_user.get("first_name", f"Player_{user_id}")
+        res = claim_flash_diya(event_id, user_id, user_fn)
+        if not res["ok"]:
+            await answer_telegram_callback_query(callback_id, text=res["message"], show_alert=True)
+            return
+
+        await answer_telegram_callback_query(
+            callback_id,
+            text=f"✨ Sacred Flame Claimed! +1 Diya Wick (Now: {res['new_wicks']}/10) & +5 Sparks added!",
+            show_alert=True
+        )
+
+        # Update group message
+        msg_id = res.get("message_id")
+        grp_chat_id = res.get("chat_id")
+        if msg_id and grp_chat_id:
+            if res["is_completed"]:
+                winners_lines = []
+                medals = ["🥇", "🥈", "🥉"] + ["✨"] * 20
+                for w_idx, w in enumerate(res["winners"]):
+                    m = medals[w_idx] if w_idx < len(medals) else "✨"
+                    winners_lines.append(f"{m} <b>#{w_idx+1}. {html.escape(w['name'])}</b> (+1 Wick, +5 Pts)")
+
+                done_text = (
+                    "🪔✨ <b>MAHA AARTI: ALL 10 SACRED SPARKS CLAIMED!</b> ✨🪔\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "The celestial flame has illuminated our community!\n"
+                    "Total <b>+50 Sparks</b> awakened for the Akhand Jyoti Beacon!\n\n"
+                    "👑 <b>Blessed Lampbearers:</b>\n" +
+                    "\n".join(winners_lines) +
+                    "\n\n<i>Stay vigilant for the next sacred flash drop in @Ordinal_Legacy!</i>"
+                )
+                await edit_telegram_message(grp_chat_id, msg_id, done_text, reply_markup={"inline_keyboard": []})
+            else:
+                updated_text = (
+                    "🪔✨ <b>MAHA AARTI: SACRED FLASH DIYA AWAKENED!</b> ✨🪔\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "A celestial flame has descended into @Ordinal_Legacy!\n\n"
+                    f"The first <b>{res['max_claims']} Lampbearers</b> to light their diya will be blessed with:\n"
+                    "• <b>+1 Diya Wick 🪔</b> (Stamina refill)\n"
+                    "• <b>+5 Sparks 🔥</b> for the Akhand Jyoti Beacon!\n\n"
+                    f"👉 <i>Tap the button below to catch the flame! ({res['remaining']}/{res['max_claims']} sparks remaining)</i>"
+                )
+                updated_kb = {
+                    "inline_keyboard": [
+                        [{"text": f"🪔 Light the Sacred Diya ({res['remaining']} left)", "callback_data": f"claim_diya:{event_id}"}]
+                    ]
+                }
+                await edit_telegram_message(grp_chat_id, msg_id, updated_text, reply_markup=updated_kb)
+        return
+
+    elif action == "trivia_ans":
+        if len(parts) < 3 or not parts[1].isdigit() or not parts[2].isdigit():
+            return
+        event_id = int(parts[1])
+        chosen_idx = int(parts[2])
+        from app.group_activities import answer_trivia_drop
+        user_fn = from_user.get("first_name", f"Player_{user_id}")
+        res = answer_trivia_drop(event_id, user_id, user_fn, chosen_idx)
+        if not res["ok"]:
+            await answer_telegram_callback_query(callback_id, text=res["message"], show_alert=True)
+            return
+
+        await answer_telegram_callback_query(
+            callback_id,
+            text=res["message"],
+            show_alert=True
+        )
+
+        msg_id = res.get("message_id")
+        grp_chat_id = res.get("chat_id")
+        if msg_id and grp_chat_id and res["is_completed"]:
+            winners_lines = []
+            medals = ["🥇", "🥈", "🥉"]
+            for w in res["winners"]:
+                rank = w["rank"]
+                m = medals[rank - 1] if rank <= len(medals) else "✨"
+                winners_lines.append(f"{m} <b>#{rank}. {html.escape(w['name'])}</b> (+1 Wick, +2 Sparks)")
+
+            done_text = (
+                "🏮✨ <b>SACRED FESTIVE TRIVIA COMPLETED!</b> ✨🏮\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"❓ <b>Question:</b>\n{html.escape(res['question'])}\n\n"
+                f"✅ <b>Correct Answer:</b> <b>{html.escape(res['correct_answer'])}</b>\n\n"
+                "👑 <b>Fastest Wisdom Winners:</b>\n" +
+                "\n".join(winners_lines) +
+                "\n\n<i>Stay tuned for more trivia flash drops in @Ordinal_Legacy!</i>"
+            )
+            await edit_telegram_message(grp_chat_id, msg_id, done_text, reply_markup={"inline_keyboard": []})
+        return
     if action == "verify_groups":
         is_ok, unjoined = await verify_user_all_groups(user_id)
         if not is_ok:

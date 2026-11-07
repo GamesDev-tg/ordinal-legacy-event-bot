@@ -228,6 +228,17 @@ def init_postgres_db():
         CREATE INDEX IF NOT EXISTS idx_comm_gifts_sender ON user_community_gifts (sender_id, gift_date);
         CREATE INDEX IF NOT EXISTS idx_comm_gifts_pair ON user_community_gifts (sender_id, receiver_id, gift_date);
 
+        CREATE TABLE IF NOT EXISTS group_events (
+            id SERIAL PRIMARY KEY,
+            event_type TEXT NOT NULL,
+            chat_id BIGINT NOT NULL,
+            message_id BIGINT,
+            data_json TEXT NOT NULL,
+            is_active INTEGER DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_group_events_type ON group_events (event_type, is_active);
+
         ALTER TABLE users ADD COLUMN IF NOT EXISTS shubh_refill_date TEXT;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS joined_groups INTEGER DEFAULT 0;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS wick_cooldown_seconds INTEGER DEFAULT 120;
@@ -327,6 +338,17 @@ def init_sqlite_db():
         );
         CREATE INDEX IF NOT EXISTS idx_comm_gifts_sender ON user_community_gifts (sender_id, gift_date);
         CREATE INDEX IF NOT EXISTS idx_comm_gifts_pair ON user_community_gifts (sender_id, receiver_id, gift_date);
+
+        CREATE TABLE IF NOT EXISTS group_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            event_type TEXT NOT NULL,
+            chat_id INTEGER NOT NULL,
+            message_id INTEGER,
+            data_json TEXT NOT NULL,
+            is_active INTEGER DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_group_events_type ON group_events (event_type, is_active);
         ''')
         
         row = conn.execute("SELECT COUNT(*) as count FROM community_state").fetchone()
