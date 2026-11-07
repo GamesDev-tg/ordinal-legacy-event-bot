@@ -10,7 +10,7 @@ from app.routes.game_routes import router as game_router
 from app.routes.referral_routes import router as referral_router
 from app.routes.community_routes import router as community_router
 from app.routes.admin_routes import router as admin_router
-from app.bot import handle_bot_message, handle_bot_callback_query
+from app.bot import handle_bot_message, handle_bot_callback_query, handle_bot_chat_member
 
 app = FastAPI(
     title="Ordinal Legacy Event Bot API",
@@ -60,19 +60,19 @@ app.include_router(admin_router)
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
-    ensure_db_initialized()
     try:
         update = await request.json()
         if "message" in update:
-            try:
-                await handle_bot_message(update["message"])
-            except Exception as e:
-                print(f"[HANDLE_BOT_MESSAGE_ERROR]: {e}")
+            await handle_bot_message(update["message"])
         elif "callback_query" in update:
-            try:
-                await handle_bot_callback_query(update["callback_query"])
-            except Exception as e:
-                print(f"[HANDLE_CALLBACK_QUERY_ERROR]: {e}")
+            await handle_bot_callback_query(update["callback_query"])
+        elif "chat_member" in update:
+            await handle_bot_chat_member(update["chat_member"])
+        return {"ok": True}
+    except Exception as e:
+        print(f"Error handling webhook update: {e}")
+        return {"ok": False, "error": str(e)}
+
         elif "chat_member" in update:
             from app.bot import handle_bot_chat_member
             await handle_bot_chat_member(update["chat_member"])
