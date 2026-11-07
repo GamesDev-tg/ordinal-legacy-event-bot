@@ -36,9 +36,20 @@ async def add_performance_headers(request: Request, call_next):
         response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=120"
     return response
 
+_DB_INITIALIZED = False
+
+def ensure_db_initialized():
+    global _DB_INITIALIZED
+    if not _DB_INITIALIZED:
+        try:
+            init_db()
+            _DB_INITIALIZED = True
+        except Exception as e:
+            print(f"[ENSURE_DB_INITIALIZED_ERROR]: {e}")
+
 @app.on_event("startup")
 def on_startup():
-    init_db()
+    ensure_db_initialized()
     print("Database initialized successfully.")
 
 app.include_router(auth_router)
@@ -49,12 +60,19 @@ app.include_router(admin_router)
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
+    ensure_db_initialized()
     try:
         update = await request.json()
         if "message" in update:
-            await handle_bot_message(update["message"])
+            try:
+                await handle_bot_message(update["message"])
+            except Exception as e:
+                print(f"[HANDLE_BOT_MESSAGE_ERROR]: {e}")
         elif "callback_query" in update:
-            await handle_bot_callback_query(update["callback_query"])
+            try:
+                await handle_bot_callback_query(update["callback_query"])
+            except Exception as e:
+                print(f"[HANDLE_CALLBACK_QUERY_ERROR]: {e}")
         elif "chat_member" in update:
             from app.bot import handle_bot_chat_member
             await handle_bot_chat_member(update["chat_member"])
@@ -65,6 +83,11 @@ async def telegram_webhook(request: Request):
     except Exception as e:
         print(f"Error handling webhook update: {e}")
         return {"ok": False, "error": str(e)}
+
+@app.get("/api/init_db")
+def api_init_db():
+    init_db()
+    return {"ok": True, "message": "Database initialized and schema verified."}
 
 @app.get("/api/set_webhook")
 async def api_set_webhook():

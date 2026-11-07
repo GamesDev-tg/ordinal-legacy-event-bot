@@ -371,20 +371,6 @@ def init_sqlite_db():
 
 def init_db():
     if is_postgres():
-        conn = get_db_connection()
-        try:
-            cur = conn.cursor()
-            cur.execute("SELECT 1 FROM information_schema.tables WHERE table_name = 'users' LIMIT 1")
-            if cur.fetchone():
-                conn.close()
-                return
-        except Exception:
-            pass
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
         init_postgres_db()
     else:
         init_sqlite_db()

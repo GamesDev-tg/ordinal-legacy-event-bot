@@ -358,6 +358,40 @@ def finish_game_session(telegram_id: int, session_id: str, nonce: str, raw_score
 COMMUNITY_GIFT_DAILY_LIMIT = 5
 COMMUNITY_GIFT_COOLDOWN_SECONDS = 7200  # 2 hours
 
+def ensure_community_gifts_table():
+    from app.database import get_db_connection, is_postgres
+    conn = get_db_connection()
+    try:
+        with conn:
+            if is_postgres():
+                conn.execute('''
+                    CREATE TABLE IF NOT EXISTS user_community_gifts (
+                        id SERIAL PRIMARY KEY,
+                        sender_id BIGINT NOT NULL,
+                        receiver_id BIGINT NOT NULL,
+                        gift_date TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_comm_gifts_sender ON user_community_gifts (sender_id, gift_date);
+                    CREATE INDEX IF NOT EXISTS idx_comm_gifts_pair ON user_community_gifts (sender_id, receiver_id, gift_date);
+                ''')
+            else:
+                conn.execute('''
+                    CREATE TABLE IF NOT EXISTS user_community_gifts (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        sender_id INTEGER NOT NULL,
+                        receiver_id INTEGER NOT NULL,
+                        gift_date TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_comm_gifts_sender ON user_community_gifts (sender_id, gift_date);
+                    CREATE INDEX IF NOT EXISTS idx_comm_gifts_pair ON user_community_gifts (sender_id, receiver_id, gift_date);
+                ''')
+    except Exception as e:
+        print(f"[ENSURE_GIFTS_TABLE_ERROR]: {e}")
+    finally:
+        conn.close()
+
 def get_user_gift_status(sender_id: int) -> dict:
     """
     Returns current daily gift quota usage and cooldown status for sender_id.
@@ -369,10 +403,20 @@ def get_user_gift_status(sender_id: int) -> dict:
     
     conn = get_db_connection()
     try:
-        daily_count = conn.execute(
-            "SELECT COUNT(*) as c FROM user_community_gifts WHERE sender_id = ? AND gift_date = ?",
-            (sender_id, today_str)
-        ).fetchone()["c"]
+        try:
+            daily_count = conn.execute(
+                "SELECT COUNT(*) as c FROM user_community_gifts WHERE sender_id = ? AND gift_date = ?",
+                (sender_id, today_str)
+            ).fetchone()["c"]
+        except Exception as e:
+            if "user_community_gifts" in str(e):
+                ensure_community_gifts_table()
+                daily_count = conn.execute(
+                    "SELECT COUNT(*) as c FROM user_community_gifts WHERE sender_id = ? AND gift_date = ?",
+                    (sender_id, today_str)
+                ).fetchone()["c"]
+            else:
+                raise
         
         last_gift = conn.execute(
             "SELECT created_at FROM user_community_gifts WHERE sender_id = ? ORDER BY id DESC LIMIT 1",
@@ -460,10 +504,20 @@ def execute_community_gift(sender_id: int, target_identifier: str = "", reply_to
                 }
                 
             # Check sender daily quota
-            daily_count = conn.execute(
-                "SELECT COUNT(*) as c FROM user_community_gifts WHERE sender_id = ? AND gift_date = ?",
-                (sender_id, today_str)
-            ).fetchone()["c"]
+            try:
+                daily_count = conn.execute(
+                    "SELECT COUNT(*) as c FROM user_community_gifts WHERE sender_id = ? AND gift_date = ?",
+                    (sender_id, today_str)
+                ).fetchone()["c"]
+            except Exception as e:
+                if "user_community_gifts" in str(e):
+                    ensure_community_gifts_table()
+                    daily_count = conn.execute(
+                        "SELECT COUNT(*) as c FROM user_community_gifts WHERE sender_id = ? AND gift_date = ?",
+                        (sender_id, today_str)
+                    ).fetchone()["c"]
+                else:
+                    raise
             
             if daily_count >= COMMUNITY_GIFT_DAILY_LIMIT:
                 return {
