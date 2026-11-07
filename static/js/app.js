@@ -723,6 +723,7 @@ async function onGameFinished(rawScore, durationMs) {
             }
             
             updateTierLadder(resData.new_tier_level);
+            startWickTimer();
 
             if (resData.tier_unlocked) {
                 window.festivalAudio?.playSuccessChime();

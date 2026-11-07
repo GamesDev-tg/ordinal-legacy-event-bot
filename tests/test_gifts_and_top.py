@@ -50,6 +50,8 @@ class TestGiftsAndTop(unittest.TestCase):
         conn.close()
 
     def test_top_and_tops_no_usernames(self):
+        from app.cache import delete_cache
+        delete_cache("bot_cmd_top")
         conn = get_db_connection()
         conn.execute("UPDATE users SET points_total = 999 WHERE telegram_id = ?", (self.user_a,))
         conn.commit()

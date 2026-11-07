@@ -374,6 +374,7 @@ def ensure_community_gifts_table():
                     );
                     CREATE INDEX IF NOT EXISTS idx_comm_gifts_sender ON user_community_gifts (sender_id, gift_date);
                     CREATE INDEX IF NOT EXISTS idx_comm_gifts_pair ON user_community_gifts (sender_id, receiver_id, gift_date);
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_comm_gifts_pair_unique ON user_community_gifts (sender_id, receiver_id, gift_date);
                 ''')
             else:
                 conn.execute('''
@@ -386,6 +387,7 @@ def ensure_community_gifts_table():
                     );
                     CREATE INDEX IF NOT EXISTS idx_comm_gifts_sender ON user_community_gifts (sender_id, gift_date);
                     CREATE INDEX IF NOT EXISTS idx_comm_gifts_pair ON user_community_gifts (sender_id, receiver_id, gift_date);
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_comm_gifts_pair_unique ON user_community_gifts (sender_id, receiver_id, gift_date);
                 ''')
     except Exception as e:
         print(f"[ENSURE_GIFTS_TABLE_ERROR]: {e}")
@@ -458,9 +460,7 @@ def execute_community_gift(sender_id: int, target_identifier: str = "", reply_to
     from app.cache import invalidate_event_cache
     
     target_id = None
-    if reply_to_id and int(reply_to_id) > 0:
-        target_id = int(reply_to_id)
-    elif target_identifier:
+    if target_identifier:
         clean = str(target_identifier).strip().lstrip("@")
         if clean.isdigit():
             target_id = int(clean)
@@ -475,6 +475,8 @@ def execute_community_gift(sender_id: int, target_identifier: str = "", reply_to
                     "success": False,
                     "error": f"❌ Player <b>@{clean}</b> was not found in the festival registry. They must register with @OrdinalLegacyEventBot first!"
                 }
+    elif reply_to_id and int(reply_to_id) > 0:
+        target_id = int(reply_to_id)
     
     if not target_id:
         return {
@@ -570,7 +572,10 @@ def execute_community_gift(sender_id: int, target_identifier: str = "", reply_to
                 
             # Grant +1 Diya Wick to recipient
             new_wicks = min(settings.STAMINA_BANK_CAP, receiver["diya_wicks"] + 1)
-            conn.execute("UPDATE users SET diya_wicks = ? WHERE telegram_id = ?", (new_wicks, target_id))
+            if not receiver["last_wick_regen"]:
+                conn.execute("UPDATE users SET diya_wicks = ?, last_wick_regen = ? WHERE telegram_id = ?", (new_wicks, now_iso, target_id))
+            else:
+                conn.execute("UPDATE users SET diya_wicks = ? WHERE telegram_id = ?", (new_wicks, target_id))
             
             # Record gift transaction
             conn.execute(

@@ -932,7 +932,7 @@ async def handle_bot_message(message: Dict[str, Any]):
     if not is_private and not text.startswith("/"):
         return
 
-    # Normalize group commands with bot username suffix (e.g. /play@OrdinalLegacyEventBot -> /play)
+    # Normalize group commands with bot username suffix and lower-case command token
     if text.startswith("/"):
         parts = text.split(maxsplit=1)
         cmd_part = parts[0]
@@ -944,7 +944,9 @@ async def handle_bot_message(message: Dict[str, Any]):
             if bot_user and target_clean != bot_user and "ordinal" not in target_clean:
                 # Command targeted at another bot in the group; ignore silently
                 return
-            text = f"{cmd_name}{rest_part}".strip()
+            text = f"{cmd_name.lower()}{rest_part}".strip()
+        else:
+            text = f"{cmd_part.lower()}{rest_part}".strip()
 
     # Guard: in groups, only public community readouts are allowed for regular members.
     # Authorized administrators are allowed to execute administrative & event management commands directly in groups.
@@ -1453,9 +1455,17 @@ async def handle_bot_message(message: Dict[str, Any]):
 
         # Extract target from reply_to_message or command argument
         reply_msg = message.get("reply_to_message")
-        reply_to_id = reply_msg.get("from", {}).get("id") if reply_msg else None
+        reply_from = reply_msg.get("from", {}) if reply_msg else {}
+        reply_to_id = reply_from.get("id") if reply_msg else None
         parts = text.split(maxsplit=1)
         target_arg = parts[1].strip() if len(parts) > 1 else ""
+
+        if not target_arg and reply_from.get("is_bot"):
+            await send_telegram_message(
+                chat_id,
+                "❌ <b>Invalid Recipient</b>: You cannot send Diya Wick gifts to bots! Reply to a fellow player's message in @Ordinal_Legacy."
+            )
+            return
 
         from app.game_engine import get_user_gift_status, execute_community_gift
 
