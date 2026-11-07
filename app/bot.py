@@ -1,3 +1,4 @@
+```python
 import random
 import json
 import datetime
@@ -13,6 +14,8 @@ from enum import Enum
 from typing import Dict, Any, Optional, Tuple, List
 from app.enums import ParseMode
 from app.config import settings
+
+_IS_BROADCASTING = False
 
 _async_http_client: Optional[httpx.AsyncClient] = None
 
@@ -252,6 +255,247 @@ async def check_and_trigger_auto_backup() -> bool:
     if now_ts - _last_backup_check_time < 300:
         return False
     _last_backup_check_time = now_ts
+
+    backup_chat = get_effective_backup_chat_id()
+    if not backup_chat:
+        return False
+    
+    last_str = get_system_setting("last_backup_time")
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if last_str:
+        try:
+            last_dt = datetime.datetime.fromisoformat(last_str)
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.replace(tzinfo=datetime.timezone.utc)
+            if (now - last_dt).total_seconds() < 6 * 3600:
+                return False
+        except Exception:
+            pass
+            
+    return await dispatch_backup_snapshot(reason="Automated 6-Hour Recovery Cycle")
+
+_last_ref_reconcile_time = 0
+
+def check_and_trigger_referral_reconciliation():
+    global _last_ref_reconcile_time
+    now = time.time()
+    if now - _last_ref_reconcile_time > 300:
+        _last_ref_reconcile_time = now
+        from app.referral_engine import reconcile_all_referrals
+        try:
+            res = reconcile_all_referrals()
+            if res.get("synced_users", 0) > 0:
+                print(f"[REFERRAL JOB]: Auto-reconciled {res['synced_users']} user accounts.")
+        except Exception as e:
+            print(f"[REFERRAL JOB ERROR]: {e}")
+
+async def send_telegram_message(
+    chat_id: int, 
+    text: str, 
+    reply_markup: Optional[Dict[str, Any]] = None,
+    parse_mode: Optional[str] = ParseMode.HTML.value
+):
+    if is_mock_token():
+        try:
+            print(f"[MOCK BOT] -> Chat {chat_id}: {text}")
+        except Exception:
+            pass
+        return True
+    
+    url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage"
+    
+    if parse_mode in (ParseMode.HTML.value, "HTML"):
+        formatted_text = format_to_telegram_html(text)
+    else:
+        formatted_text = text
+
+    payload = {"chat_id": chat_id, "text": formatted_text}
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+        
+    try:
+        client = get_async_http_client()
+        resp = await client.post(url, json=payload)
+        if resp.status_code != 200:
+            print(f"[TELEGRAM ERROR {resp.status_code}]: {resp.text}")
+            # Fallback 1: remove all HTML tags completely and drop parse_mode
+            payload["text"] = remove_html_tags(text)
+            payload.pop("parse_mode", None)
+            retry_resp = await client.post(url, json=payload)
+            if retry_resp.status_code != 200:
+                # Fallback 2: remove reply_markup if web_app button URL invalid
+                payload.pop("reply_markup", None)
+                last_resp = await client.post(url, json=payload)
+                return last_resp.status_code == 200
+            return retry_resp.status_code == 200
+        return resp.status_code == 200
+    except Exception as e:
+        print(f"Failed to send telegram message: {e}")
+        return False
+
+async def send_telegram_message_with_id(
+    chat_id: int, 
+    text: str, 
+    reply_markup: Optional[Dict[str, Any]] = None,
+    parse_mode: Optional[str] = ParseMode.HTML.value
+) -> Tuple[bool, Optional[int]]:
+    if is_mock_token():
+        try:
+            print(f"[MOCK BOT] -> Chat {chat_id}: {text}")
+        except Exception:
+            pass
+        return True, 999999
+    
+    url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage"
+    formatted_text = format_to_telegram_html(text) if parse_mode in (ParseMode.HTML.value, "HTML") else text
+    payload = {"chat_id": chat_id, "text": formatted_text}
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+        
+    try:
+        client = get_async_http_client()
+        resp = await client.post(url, json=payload)
+        if resp.status_code == 200:
+            msg_id = resp.json().get("result", {}).get("message_id")
+            return True, msg_id
+        return False, None
+    except Exception as e:
+        print(f"[SEND TELEGRAM WITH ID ERROR]: {e}")
+        return False, None
+
+async def edit_telegram_message(
+    chat_id: int,
+    message_id: int,
+    text: str,
+    reply_markup: Optional[Dict[str, Any]] = None,
+    parse_mode: Optional[str] = ParseMode.HTML.value
+) -> bool:
+    if is_mock_token():
+        return True
+    url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/editMessageText"
+    formatted_text = format_to_telegram_html(text) if parse_mode in (ParseMode.HTML.value, "HTML") else text
+    payload = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": formatted_text,
+        "parse_mode": parse_mode
+    }
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+    try:
+        client = get_async_http_client()
+        resp = await client.post(url, json=payload)
+        return resp.status_code == 200
+    except Exception as e:
+        print(f"[EDIT TELEGRAM MESSAGE ERROR]: {e}")
+        return False
+
+async def send_telegram_document(chat_id: int, file_bytes: bytes, filename: str, caption: str):
+    if is_mock_token():
+        print(f"[MOCK BOT] -> Document {filename} to {chat_id}")
+        return True
+    
+    url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendDocument"
+    files = {"document": (filename, file_bytes, "application/json")}
+    formatted_caption = format_to_telegram_html(caption)
+    data = {"chat_id": str(chat_id), "caption": formatted_caption, "parse_mode": ParseMode.HTML.value}
+    try:
+        client = get_async_http_client()
+        resp = await client.post(url, data=data, files=files)
+        if resp.status_code != 200:
+            data["caption"] = remove_html_tags(caption)
+            data.pop("parse_mode", None)
+            retry_resp = await client.post(url, data=data, files=files)
+            return retry_resp.status_code == 200
+        return resp.status_code == 200
+    except Exception as e:
+        print(f"Failed to send telegram document: {e}")
+        return False
+
+# In-memory anti-spam rate limiter for button clicks
+_BUTTON_CLICK_COOLDOWN: Dict[int, float] = {}
+
+async def answer_telegram_callback_query(callback_query_id: str, text: Optional[str] = None, show_alert: bool = False) -> bool:
+    """Answers a Telegram callback query to clear button loading spinners and optionally show alert."""
+    if is_mock_token() or not callback_query_id:
+        return True
+    url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/answerCallbackQuery"
+    payload = {"callback_query_id": callback_query_id}
+    if text:
+        payload["text"] = text
+        payload["show_alert"] = show_alert
+    try:
+        client = get_async_http_client()
+        resp = await client.post(url, json=payload)
+        return resp.status_code == 200
+    except Exception as e:
+        print(f"Failed to answer telegram callback query: {e}")
+        return False
+
+async def sync_telegram_bot_commands() -> bool:
+    """
+    Registers all player commands with Telegram BotFather API using setMyCommands.
+    Keeps admin commands private so normal players only see official festival features.
+    """
+    if is_mock_token():
+        return True
+    
+    commands = [
+        {"command": "start", "description": "Launch festival arena and start event"},
+        {"command": "play", "description": "Choose and play mini-games (Chat/App)"},
+        {"command": "chakri", "description": "Spin Chakri Whirl in chat (1-3 pts)"},
+        {"command": "rangoli", "description": "Draw Rangoli pattern in chat (1-3 pts)"},
+        {"command": "mithai", "description": "Feast on Mithai in chat (1-3 pts)"},
+        {"command": "mydata", "description": "View your stats and tier rewards"},
+        {"command": "status", "description": "View community Akhand Diya sparks"},
+        {"command": "shubh", "description": "Claim daily Shubh refill (+5 wicks & pts)"},
+        {"command": "shagun", "description": "Get companion referral invite link"},
+        {"command": "house", "description": "View your Gharana standing and rank"},
+        {"command": "boost", "description": "View 10-min 2x Gharana Surge schedule"},
+        {"command": "top", "description": "View top 10 lampbearers on leaderboard"},
+        {"command": "gharanas", "description": "View all 4 Gharana house standings"},
+        {"command": "tiers", "description": "View milestone ladder and rewards"},
+        {"command": "help", "description": "Show festival guide and commands"}
+    ]
+    url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/setMyCommands"
+    try:
+        client = get_async_http_client()
+        resp = await client.post(url, json={"commands": commands})
+        return resp.status_code == 200 and resp.json().get("ok", False)
+    except Exception as e:
+        print(f"Failed to set bot commands: {e}")
+        return False
+
+async def check_telegram_membership(user_id: int, chat_identifier: str) -> bool:
+    """
+    Check if user is a member/admin/creator of a Telegram channel or group.
+    Returns True if confirmed member or admin. Returns False otherwise.
+    """
+    if is_mock_token() or is_admin(user_id):
+        return True
+    
+    chat_handle = chat_identifier.strip()
+    if "t.me/" in chat_handle:
+        chat_handle = "@" + chat_handle.split("t.me/")[-1].strip("/")
+    if not chat_handle.startswith("@") and not str(chat_handle).startswith("-100"):
+        chat_handle = "@" + chat_handle
+
+    url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/getChatMember"
+    params = {"chat_id": chat_handle, "user_id": user_id}
+    try:
+        client = get_async_http_client()
+        resp = await client.get(url, params=params)
+        data = resp.json()
+        if data.get("ok"):
+            status = data.get("result", {}).get("status")
+            if status in ("creator", "administrator", "member", "restricted"):
+                return True
+            
+            # If status is left or kicked, check if the bot is even an administrator     _last_backup_check_time = now_ts
 
     backup_chat = get_effective_backup_chat_id()
     if not backup_chat:
