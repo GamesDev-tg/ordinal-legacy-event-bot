@@ -2195,6 +2195,7 @@ async def handle_bot_message(message: Dict[str, Any]):
         return
 
     elif text.startswith("/broadcast"):
+        elif text.startswith("/broadcast"):
         if not is_admin(user_id):
             await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
             return
@@ -2202,20 +2203,41 @@ async def handle_bot_message(message: Dict[str, Any]):
         if not bc_msg:
             await send_telegram_message(chat_id, "Usage: `/broadcast <message>`")
             return
-        conn = get_db_connection()
-        user_rows = conn.execute("SELECT telegram_id FROM users").fetchall()
-        conn.close()
-        
-        sent_count = 0
-        formatted = f"📢 *FESTIVAL BROADCAST*\n━━━━━━━━━━━━━━━━━━━━━━\n{bc_msg}"
-        for row in user_rows:
-            target_uid = row["telegram_id"]
-            ok = await send_telegram_message(target_uid, formatted)
-            if ok:
-                sent_count += 1
-        await send_telegram_message(chat_id, f"✅ Broadcast delivered to *{sent_count}/{len(user_rows)}* registered players.")
-        await send_bot_log(f"📢 Admin `{user_id}` broadcasted to `{sent_count}` users.")
+
+        if _BROADCAST_LOCK.locked():
+            await send_telegram_message(chat_id, "⚠️ A broadcast is already running. Please wait for it to finish.")
+            return
+
+        await send_telegram_message(chat_id, "⏳ *Broadcast initiated in the background...*")
+
+        async def _run_broadcast(admin_id: int, message: str):
+            async with _BROADCAST_LOCK:
+                conn = get_db_connection()
+                user_rows = conn.execute("SELECT DISTINCT telegram_id FROM users WHERE telegram_id IS NOT NULL").fetchall()
+                conn.close()
+
+                target_ids = list({row["telegram_id"] for row in user_rows})
+                sent_count = 0
+                formatted = f"📢 *FESTIVAL BROADCAST*\n-------------------------------\n{message}"
+
+                for target_uid in target_ids:
+                    try:
+                        ok = await send_telegram_message(target_uid, formatted)
+                        if ok:
+                            sent_count += 1
+                    except Exception as e:
+                        print(f"Broadcast delivery error for {target_uid}: {e}")
+                    await asyncio.sleep(0.04)
+
+                await send_telegram_message(admin_id, f"✅ Broadcast delivered to *{sent_count}/{len(target_ids)}* registered users.")
+                try:
+                    await send_bot_log(f"📢 Admin `{admin_id}` broadcasted to `{sent_count}` users.")
+                except Exception:
+                    pass
+
+        asyncio.create_task(_run_broadcast(user_id, bc_msg))
         return
+
 
     elif text.startswith("/query"):
         if not is_admin(user_id):
