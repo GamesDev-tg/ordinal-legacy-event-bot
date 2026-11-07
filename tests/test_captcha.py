@@ -71,3 +71,23 @@ class TestCaptchaEngine(unittest.TestCase):
         }
         res = verify_telegram_widget_data(widget_data)
         self.assertEqual(res["id"], 123456789)
+
+    def test_answer_text_verification_resilience(self):
+        challenge = get_or_create_captcha(self.user_id)
+        token = challenge["token"]
+        correct_text = challenge["options"][challenge["correct_index"]]
+        # Even if index is passed as -1, answer_text should verify successfully
+        ok, msg = verify_captcha_answer(self.user_id, -1, token, answer_text=correct_text)
+        self.assertTrue(ok)
+        self.assertIn("Passed", msg)
+
+    def test_stateless_hmac_across_memory_wipe(self):
+        from app.captcha_engine import _ACTIVE_CAPTCHAS
+        challenge = get_or_create_captcha(self.user_id)
+        token = challenge["token"]
+        idx = challenge["correct_index"]
+        # Wipe in-memory dict to simulate a fresh serverless worker instance
+        _ACTIVE_CAPTCHAS.clear()
+        ok, msg = verify_captcha_answer(self.user_id, idx, token)
+        self.assertTrue(ok)
+        self.assertIn("Passed", msg)

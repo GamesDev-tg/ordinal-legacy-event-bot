@@ -511,11 +511,21 @@ def register_user_if_new(telegram_id: int, username: str, first_name: str) -> di
             ''').fetchall()
             assigned_gharana = counts[0]["id"] if counts else random.randint(1, 4)
             
-            conn.execute(
-                '''INSERT INTO users (telegram_id, username, first_name, gharana_id, points_total, diya_wicks, tier_level, joined_groups)
-                   VALUES (?, ?, ?, ?, 0, 10, 0, 0)''',
-                (telegram_id, username, first_name, assigned_gharana)
-            )
+            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            from app.game_engine import get_random_wick_cooldown
+            init_cd = get_random_wick_cooldown()
+            try:
+                conn.execute(
+                    '''INSERT INTO users (telegram_id, username, first_name, gharana_id, points_total, diya_wicks, tier_level, joined_groups, last_wick_regen, wick_cooldown_seconds)
+                       VALUES (?, ?, ?, ?, 0, 10, 0, 0, ?, ?)''',
+                    (telegram_id, username, first_name, assigned_gharana, now_iso, init_cd)
+                )
+            except Exception:
+                conn.execute(
+                    '''INSERT INTO users (telegram_id, username, first_name, gharana_id, points_total, diya_wicks, tier_level, joined_groups, last_wick_regen)
+                       VALUES (?, ?, ?, ?, 0, 10, 0, 0, ?)''',
+                    (telegram_id, username, first_name, assigned_gharana, now_iso)
+                )
             user = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
         else:
             # Dynamically update username or first_name if changed or missing
@@ -544,7 +554,7 @@ def execute_in_chat_game(user_id: int, game_type: int) -> dict:
     try:
         with conn:
             update_user_stamina(conn, user_id)
-            u = conn.execute("SELECT diya_wicks, points_total, tier_level, gharana_id, joined_groups FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
+            u = conn.execute("SELECT diya_wicks, points_total, tier_level, gharana_id, joined_groups, last_wick_regen FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
             if not u:
                 return {"error": "User not found. Send /start first!"}
             if not u["joined_groups"] and not is_admin(user_id) and not is_mock_token():
@@ -553,7 +563,7 @@ def execute_in_chat_game(user_id: int, game_type: int) -> dict:
                 return {"error": "Out of Diya Wicks! Claim your daily /shubh refill or wait 1–3 mins for stamina regeneration."}
 
             now_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
-            if u["diya_wicks"] >= settings.STAMINA_BANK_CAP:
+            if u["diya_wicks"] >= settings.STAMINA_BANK_CAP or not u["last_wick_regen"]:
                 from app.game_engine import get_random_wick_cooldown
                 next_cd = get_random_wick_cooldown()
                 try:
@@ -627,10 +637,28 @@ def execute_in_chat_game(user_id: int, game_type: int) -> dict:
     finally:
         conn.close()
 
+def is_ordinal_legacy_group(chat: dict) -> bool:
+    if not chat or chat.get("type") == "private":
+        return False
+    username = (chat.get("username") or "").lower().lstrip("@")
+    if username in ("ordinal_legacy", "ordinallegacy"):
+        return True
+    title = (chat.get("title") or "").lower()
+    if "ordinal_legacy" in title or "ordinal legacy" in title or "common discussion" in title or ("ordinal" in title and "legacy" in title):
+        return True
+    cid = str(chat.get("id", ""))
+    cfg_id = str(getattr(settings, "ORDINAL_LEGACY_CHAT_ID", "") or "")
+    if cfg_id and cid == cfg_id:
+        return True
+    glink_handle = (getattr(settings, "GROUP_LINK_3", "") or "").split("t.me/")[-1].strip("/").lower()
+    if glink_handle and (glink_handle == username or glink_handle in cid):
+        return True
+    return False
+
 async def send_captcha_prompt(chat_id: int, user_id: int, reason: str = ""):
     from app.captcha_engine import get_or_create_captcha
     challenge = get_or_create_captcha(user_id)
-    token = challenge["token"]
+    token = challenge.get("short_token") or challenge["token"]
     opts = challenge["options"]
     row1 = [
         {"text": opts[0], "callback_data": f"cpa:{user_id}:0:{token}"},
@@ -924,9 +952,10 @@ async def handle_bot_message(message: Dict[str, Any]):
     if not is_private and text.startswith("/"):
         cmd_head = text.split()[0].lower()
         ALLOWED_GROUP_COMMANDS = {
-            "/top", "/topusers", "/status", "/gharanas", "/leaderboard", 
+            "/top", "/tops", "/topusers", "/status", "/gharanas", "/leaderboard", 
             "/tiers", "/stats", "/captcha", "/testcaptcha", "/eventstatus", "/pausestatus",
-            "/adminstats", "/userstats", "/playerstats", "/eventstats", "/boost"
+            "/adminstats", "/userstats", "/playerstats", "/eventstats", "/boost",
+            "/gifts", "/gift"
         }
         ADMIN_COMMANDS = {
             "/admin", "/adminhelp", "/admins", "/addadmin", "/deladmin",
@@ -1097,13 +1126,14 @@ async def handle_bot_message(message: Dict[str, Any]):
     # Public commands that anyone can run even before joining groups:
     allowed_unverified = (
         "/verify", "verify", "/help", "/commands", "/menu", "/tiers",
-        "/status", "/mydata", "/profile", "/data", "/top", "/topusers",
+        "/status", "/mydata", "/profile", "/data", "/top", "/tops", "/topusers",
         "/gharanas", "/leaderboard", "/stats", "/shagun", "/bind",
-        "/captcha", "/testcaptcha", "/verifyhuman", "/boost"
+        "/captcha", "/testcaptcha", "/verifyhuman", "/boost", "/gifts", "/gift"
     )
 
     # Mandatory 3 Group Links Gate before entering the game (Applies to all users unless admin or running info commands)
-    if not user.get("joined_groups", 0) and not is_admin(user_id) and text not in allowed_unverified and not text.startswith(("/bypassverify", "/admin")):
+    cmd_head_check = text.split()[0].lower() if text else ""
+    if not user.get("joined_groups", 0) and not is_admin(user_id) and cmd_head_check not in allowed_unverified and not text.startswith(("/bypassverify", "/admin")):
         if is_private:
             safe_fname = escape_md(first_name)
             gate_text = (
@@ -1407,6 +1437,70 @@ async def handle_bot_message(message: Dict[str, Any]):
             await send_telegram_message(chat_id, f"✨ *{res['message']}*")
         except Exception as e:
             await send_telegram_message(chat_id, f"⚠️ {getattr(e, 'detail', str(e))}")
+        return
+
+    elif text.startswith(("/gifts", "/gift")):
+        # Must work in @Ordinal_Legacy group ONLY and nowhere else!
+        if is_private or not is_ordinal_legacy_group(chat):
+            await send_telegram_message(
+                chat_id,
+                "🎁 <b>Diwali Gift Exchange Exclusive Group</b>\n\n"
+                "The <code>/gifts</code> command can only be used inside our official community group: "
+                "<a href=\"https://t.me/Ordinal_Legacy\">@Ordinal_Legacy</a>.\n\n"
+                "👉 Join the group to send and receive free Diya Wick gifts with your fellow players!"
+            )
+            return
+
+        # Extract target from reply_to_message or command argument
+        reply_msg = message.get("reply_to_message")
+        reply_to_id = reply_msg.get("from", {}).get("id") if reply_msg else None
+        parts = text.split(maxsplit=1)
+        target_arg = parts[1].strip() if len(parts) > 1 else ""
+
+        from app.game_engine import get_user_gift_status, execute_community_gift
+
+        # If user did not specify any target and did not reply to any message, show their gift status
+        if not target_arg and not reply_to_id:
+            status = get_user_gift_status(user_id)
+            cd_sec = status["cooldown_remaining_seconds"]
+            if cd_sec > 0:
+                h = cd_sec // 3600
+                m = (cd_sec % 3600) // 60
+                s = cd_sec % 60
+                cd_text = f"⏳ Active ({h}h {m}m remaining)" if h > 0 else f"⏳ Active ({m}m {s}s remaining)"
+            else:
+                cd_text = "✅ Ready to gift!"
+
+            guide_msg = (
+                "🎁 <b>Festive Diya Gift Exchange in @Ordinal_Legacy</b>\n\n"
+                f"• <b>Gifts Used Today</b>: <code>{status['gifts_used_today']}/{status['daily_limit']}</code> ({status['gifts_remaining_today']} left)\n"
+                f"• <b>Cooldown Status</b>: {cd_text}\n"
+                f"• <b>Gift Reward</b>: <b>+1 Diya Wick 🪔</b> for the recipient\n\n"
+                "👉 <b>How to gift:</b>\n"
+                "• <b>Reply</b> to any member's message in this group with <code>/gifts</code>\n"
+                "• Or type <code>/gifts &lt;user_id&gt;</code> or <code>/gifts @username</code>\n\n"
+                "<i>Rules: 5 gifts daily limit • 2h cooldown between gifts • 1 gift per recipient daily.</i>"
+            )
+            await send_telegram_message(chat_id, guide_msg)
+            return
+
+        # Execute the gift
+        res = execute_community_gift(user_id, target_arg, reply_to_id)
+        if not res["success"]:
+            await send_telegram_message(chat_id, res["error"])
+            return
+
+        sender_fn = html.escape(first_name or f"Player {user_id}")
+        receiver_fn = html.escape(res["receiver_name"])
+        success_msg = (
+            f"🎁 <b>Diwali Diya Gift Delivered!</b>\n\n"
+            f"<b>{sender_fn}</b> gifted <b>1 Diya Wick 🪔</b> to <b>{receiver_fn}</b> (ID: <code>{res['receiver_id']}</code>)!\n\n"
+            f"• <b>Recipient Stamina</b>: <code>{res['receiver_wicks']}/10 Wicks</code>\n"
+            f"• <b>Your Allowance</b>: <code>{res['gifts_used_today']}/5 used</code> ({res['gifts_remaining_today']} left today)\n"
+            f"• <b>Next Gift Cooldown</b>: 2 hours"
+        )
+        await send_telegram_message(chat_id, success_msg)
+        await send_bot_log(f"🎁 Player <code>{user_id}</code> gifted 1 Diya Wick to <code>{res['receiver_id']}</code> in @Ordinal_Legacy. ({res['gifts_used_today']}/5 used today)")
         return
 
     elif text in ("/widget", "/akhand"):
@@ -1809,7 +1903,13 @@ async def handle_bot_message(message: Dict[str, Any]):
                 conn.close()
                 await send_telegram_message(chat_id, f"❌ Player `{target_id}` not found.")
                 return
-            conn.execute("UPDATE users SET diya_wicks = ? WHERE telegram_id = ?", (wicks_val, target_id))
+            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            from app.game_engine import get_random_wick_cooldown
+            next_cd = get_random_wick_cooldown()
+            try:
+                conn.execute("UPDATE users SET diya_wicks = ?, last_wick_regen = ?, wick_cooldown_seconds = ? WHERE telegram_id = ?", (wicks_val, now_iso, next_cd, target_id))
+            except Exception:
+                conn.execute("UPDATE users SET diya_wicks = ?, last_wick_regen = ? WHERE telegram_id = ?", (wicks_val, now_iso, target_id))
         conn.close()
         await send_telegram_message(chat_id, f"✅ Diya Wicks set to *{wicks_val}/10* for `{target_id}` ({u['first_name']}).")
         await send_bot_log(f"🪔 Admin `{user_id}` updated wicks for `{target_id}` to `{wicks_val}`.")
@@ -2127,7 +2227,7 @@ async def handle_bot_message(message: Dict[str, Any]):
         await send_telegram_message(chat_id, profile_msg)
         return
 
-    elif text in ("/top", "/topusers"):
+    elif text in ("/top", "/tops", "/topusers", "/leaderboard"):
         cached_t = get_cache("bot_cmd_top")
         if cached_t:
             await send_telegram_message(chat_id, cached_t)
@@ -2144,16 +2244,11 @@ async def handle_bot_message(message: Dict[str, Any]):
         msg = "🌟 <b>Maha Deepotsav Top 10 Lampbearers:</b>\n\n"
         medals = ["🥇", "🥈", "🥉"] + ["✨"] * 7
         for idx, r in enumerate(rows):
-            if r['username']:
-                u_tag = f"@{r['username'].lstrip('@')}"
-            elif r['first_name']:
-                clean_fn = re.sub(r'[\r\n\t]+', ' ', r['first_name']).strip()
-                u_tag = clean_fn or f"User_{r['telegram_id']}"
-            else:
-                u_tag = f"User_{r['telegram_id']}"
-            safe_name = html.escape(u_tag)
+            clean_fn = re.sub(r'[\r\n\t]+', ' ', r['first_name']).strip() if r['first_name'] else "Lampbearer"
+            safe_name = html.escape(clean_fn)
+            u_tag = f"{safe_name} (ID: <code>{r['telegram_id']}</code>)"
             g_name = settings.GHARANAS.get(r['gharana_id'], "")
-            msg += f"{medals[idx]} <b>#{idx+1}. {safe_name}</b> — <b>{r['points_total']} Pts</b>\n   <i>{get_tier_name(r['tier_level'])} • {g_name}</i>\n\n"
+            msg += f"{medals[idx]} <b>#{idx+1}. {u_tag}</b> — <b>{r['points_total']} Pts</b>\n   <i>{get_tier_name(r['tier_level'])} • {g_name}</i>\n\n"
         delete_cache("bot_cmd_top")
         set_cache("bot_cmd_top", msg, ttl_seconds=10.0)
         await send_telegram_message(chat_id, msg)
@@ -2175,7 +2270,13 @@ async def handle_bot_message(message: Dict[str, Any]):
                 conn.close()
                 await send_telegram_message(chat_id, f"❌ Player `{target_id}` not found.")
                 return
-            conn.execute("UPDATE users SET diya_wicks = ? WHERE telegram_id = ?", (settings.STAMINA_BANK_CAP, target_id))
+            now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            from app.game_engine import get_random_wick_cooldown
+            next_cd = get_random_wick_cooldown()
+            try:
+                conn.execute("UPDATE users SET diya_wicks = ?, last_wick_regen = ?, wick_cooldown_seconds = ? WHERE telegram_id = ?", (settings.STAMINA_BANK_CAP, now_iso, next_cd, target_id))
+            except Exception:
+                conn.execute("UPDATE users SET diya_wicks = ?, last_wick_regen = ? WHERE telegram_id = ?", (settings.STAMINA_BANK_CAP, now_iso, target_id))
         conn.close()
         await send_telegram_message(chat_id, f"✅ Restored full Diya Wicks (10/10) for `{target_id}` ({u['first_name']}).")
         await send_bot_log(f"🪔 Admin `{user_id}` restored full wicks (10/10) for `{target_id}`.")
@@ -2965,7 +3066,7 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
         # parts: ["cpa", <user_id>, <ans_idx>, <token>]
         if len(parts) >= 4:
             ans_idx = int(parts[2])
-            tok = parts[3]
+            tok = ":".join(parts[3:])
             from app.captcha_engine import verify_captcha_answer
             ok, msg = verify_captcha_answer(user_id, ans_idx, tok)
             if ok:

@@ -48,21 +48,35 @@ def get_random_wick_cooldown() -> int:
     """Returns a random stamina refill duration between 1 to 3 minutes (60 to 180 seconds)."""
     return random.randint(60, 180)
 
-def _parse_timestamp(val, default_dt: datetime.datetime) -> datetime.datetime:
+def _parse_timestamp(val, default_dt: Optional[datetime.datetime] = None) -> Optional[datetime.datetime]:
     if not val:
         return default_dt
     if isinstance(val, datetime.datetime):
         if val.tzinfo is None:
             return val.replace(tzinfo=datetime.timezone.utc)
         return val
+    if isinstance(val, (int, float)):
+        try:
+            return datetime.datetime.fromtimestamp(val, tz=datetime.timezone.utc)
+        except Exception:
+            return default_dt
     if isinstance(val, str):
+        val = val.strip()
+        if not val:
+            return default_dt
+        if val.endswith('Z'):
+            val = val[:-1] + '+00:00'
         try:
             dt = datetime.datetime.fromisoformat(val)
         except Exception:
             try:
-                dt = datetime.datetime.strptime(val.split('.')[0], "%Y-%m-%d %H:%M:%S")
+                dt = datetime.datetime.strptime(val.split('.')[0].split('+')[0], "%Y-%m-%d %H:%M:%S")
             except Exception:
-                return default_dt
+                try:
+                    f_val = float(val)
+                    return datetime.datetime.fromtimestamp(f_val, tz=datetime.timezone.utc)
+                except Exception:
+                    return default_dt
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=datetime.timezone.utc)
         return dt
@@ -83,13 +97,42 @@ def update_user_stamina(conn, telegram_id: int) -> int:
     if current_wicks >= settings.STAMINA_BANK_CAP:
         return current_wicks
     
-    last_regen = _parse_timestamp(user["last_wick_regen"], now)
     try:
-        cooldown = user["wick_cooldown_seconds"] or get_random_wick_cooldown()
-    except (IndexError, KeyError):
+        cooldown = int(user["wick_cooldown_seconds"] or 0)
+    except (IndexError, KeyError, TypeError, ValueError):
+        cooldown = 0
+    if cooldown < 60 or cooldown > 180:
         cooldown = get_random_wick_cooldown()
 
-    elapsed_seconds = (now - last_regen).total_seconds()
+    last_regen = _parse_timestamp(user["last_wick_regen"], None)
+
+    # SELF-HEALING: If last_wick_regen is missing, invalid, or corrupted
+    if last_regen is None:
+        temp_wicks = min(settings.STAMINA_BANK_CAP, current_wicks + 1)
+        next_cd = get_random_wick_cooldown()
+        now_str = now.isoformat()
+        try:
+            conn.execute(
+                "UPDATE users SET diya_wicks = ?, last_wick_regen = ?, wick_cooldown_seconds = ? WHERE telegram_id = ?",
+                (temp_wicks, now_str, next_cd, telegram_id)
+            )
+        except Exception:
+            conn.execute(
+                "UPDATE users SET diya_wicks = ?, last_wick_regen = ? WHERE telegram_id = ?",
+                (temp_wicks, now_str, telegram_id)
+            )
+        try:
+            conn.commit()
+        except Exception:
+            pass
+        return temp_wicks
+
+    # CLOCK SKEW / TIMEZONE PROTECTION:
+    # If last_regen is recorded in the future, clamp it
+    if last_regen > now:
+        last_regen = now - datetime.timedelta(seconds=cooldown)
+
+    elapsed_seconds = max(0.0, (now - last_regen).total_seconds())
     if elapsed_seconds < cooldown:
         return current_wicks
 
@@ -141,13 +184,18 @@ def get_seconds_until_next_wick(conn, telegram_id: int) -> int:
         return 0
     
     now = datetime.datetime.now(datetime.timezone.utc)
-    last_regen = _parse_timestamp(user["last_wick_regen"], now)
+    parsed_last = _parse_timestamp(user["last_wick_regen"], None)
     try:
-        cooldown = user["wick_cooldown_seconds"] or 120
-    except (IndexError, KeyError):
+        cooldown = int(user["wick_cooldown_seconds"] or 0)
+    except (IndexError, KeyError, TypeError, ValueError):
+        cooldown = 0
+    if cooldown < 60 or cooldown > 180:
         cooldown = 120
 
-    elapsed_seconds = (now - last_regen).total_seconds()
+    if parsed_last is None or parsed_last > now:
+        return cooldown
+
+    elapsed_seconds = max(0.0, (now - parsed_last).total_seconds())
     remaining = cooldown - elapsed_seconds
     return max(0, int(remaining))
 
@@ -202,7 +250,9 @@ def start_game_session(telegram_id: int, game_type: int) -> dict:
         
         now_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
         next_cd = get_random_wick_cooldown()
-        if wicks == settings.STAMINA_BANK_CAP:
+        u_row = conn.execute("SELECT last_wick_regen FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
+        raw_regen = u_row["last_wick_regen"] if u_row else None
+        if wicks >= settings.STAMINA_BANK_CAP or not raw_regen:
             try:
                 conn.execute(
                     "UPDATE users SET diya_wicks = diya_wicks - 1, last_wick_regen = ?, wick_cooldown_seconds = ? WHERE telegram_id = ?",
@@ -304,3 +354,190 @@ def finish_game_session(telegram_id: int, session_id: str, nonce: str, raw_score
         "new_stage": new_stage,
         "stage_description": stage_name
     }
+
+COMMUNITY_GIFT_DAILY_LIMIT = 5
+COMMUNITY_GIFT_COOLDOWN_SECONDS = 7200  # 2 hours
+
+def get_user_gift_status(sender_id: int) -> dict:
+    """
+    Returns current daily gift quota usage and cooldown status for sender_id.
+    """
+    import datetime
+    from app.database import get_db_connection
+    today_str = datetime.date.today().isoformat()
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    
+    conn = get_db_connection()
+    try:
+        daily_count = conn.execute(
+            "SELECT COUNT(*) as c FROM user_community_gifts WHERE sender_id = ? AND gift_date = ?",
+            (sender_id, today_str)
+        ).fetchone()["c"]
+        
+        last_gift = conn.execute(
+            "SELECT created_at FROM user_community_gifts WHERE sender_id = ? ORDER BY id DESC LIMIT 1",
+            (sender_id,)
+        ).fetchone()
+        
+        cooldown_remaining_seconds = 0
+        if last_gift:
+            last_dt = _parse_timestamp(last_gift["created_at"], now_utc)
+            if last_dt:
+                elapsed = (now_utc - last_dt).total_seconds()
+                if elapsed < COMMUNITY_GIFT_COOLDOWN_SECONDS:
+                    cooldown_remaining_seconds = max(0, int(COMMUNITY_GIFT_COOLDOWN_SECONDS - elapsed))
+                
+        return {
+            "daily_limit": COMMUNITY_GIFT_DAILY_LIMIT,
+            "gifts_used_today": daily_count,
+            "gifts_remaining_today": max(0, COMMUNITY_GIFT_DAILY_LIMIT - daily_count),
+            "cooldown_remaining_seconds": cooldown_remaining_seconds,
+            "can_gift": (daily_count < COMMUNITY_GIFT_DAILY_LIMIT and cooldown_remaining_seconds == 0)
+        }
+    finally:
+        conn.close()
+
+def execute_community_gift(sender_id: int, target_identifier: str = "", reply_to_id: Optional[int] = None) -> dict:
+    """
+    Executes gifting 1 Diya Wick from sender_id to recipient.
+    Enforces:
+    - 5 gifts limit per user per day
+    - 2 hours cooldown between gifts
+    - 1 gift per recipient per day
+    - No self-gifting
+    - Recipient must be registered
+    - Recipient wick cap check
+    """
+    import datetime
+    import html
+    from app.database import get_db_connection
+    from app.cache import invalidate_event_cache
+    
+    target_id = None
+    if reply_to_id and int(reply_to_id) > 0:
+        target_id = int(reply_to_id)
+    elif target_identifier:
+        clean = str(target_identifier).strip().lstrip("@")
+        if clean.isdigit():
+            target_id = int(clean)
+        else:
+            conn = get_db_connection()
+            row = conn.execute("SELECT telegram_id FROM users WHERE LOWER(username) = LOWER(?)", (clean,)).fetchone()
+            conn.close()
+            if row:
+                target_id = row["telegram_id"]
+            else:
+                return {
+                    "success": False,
+                    "error": f"❌ Player <b>@{clean}</b> was not found in the festival registry. They must register with @OrdinalLegacyEventBot first!"
+                }
+    
+    if not target_id:
+        return {
+            "success": False,
+            "error": "👉 <b>How to Gift:</b> Reply to any player's message with <code>/gifts</code> or type <code>/gifts &lt;user_id&gt;</code>."
+        }
+        
+    if sender_id == target_id:
+        return {
+            "success": False,
+            "error": "❌ You cannot send a Diya gift to yourself! Share your gifts with fellow Lampbearers in @Ordinal_Legacy."
+        }
+        
+    today_str = datetime.date.today().isoformat()
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    now_iso = now_utc.isoformat()
+    
+    conn = get_db_connection()
+    try:
+        with conn:
+            # Check receiver exists
+            receiver = conn.execute("SELECT first_name, username, diya_wicks, last_wick_regen FROM users WHERE telegram_id = ?", (target_id,)).fetchone()
+            if not receiver:
+                return {
+                    "success": False,
+                    "error": f"❌ Player <code>{target_id}</code> has not registered for the event yet! Ask them to send /start to @OrdinalLegacyEventBot first."
+                }
+                
+            # Check sender daily quota
+            daily_count = conn.execute(
+                "SELECT COUNT(*) as c FROM user_community_gifts WHERE sender_id = ? AND gift_date = ?",
+                (sender_id, today_str)
+            ).fetchone()["c"]
+            
+            if daily_count >= COMMUNITY_GIFT_DAILY_LIMIT:
+                return {
+                    "success": False,
+                    "error": f"⏳ <b>Daily Limit Reached</b>: You have used all <b>{COMMUNITY_GIFT_DAILY_LIMIT} gifts</b> today! Your allowance resets tomorrow at midnight UTC."
+                }
+                
+            # Check 2-hour cooldown
+            last_gift = conn.execute(
+                "SELECT created_at FROM user_community_gifts WHERE sender_id = ? ORDER BY id DESC LIMIT 1",
+                (sender_id,)
+            ).fetchone()
+            
+            if last_gift:
+                last_dt = _parse_timestamp(last_gift["created_at"], now_utc)
+                if last_dt:
+                    elapsed = (now_utc - last_dt).total_seconds()
+                    if elapsed < COMMUNITY_GIFT_COOLDOWN_SECONDS:
+                        rem = int(COMMUNITY_GIFT_COOLDOWN_SECONDS - elapsed)
+                        h = rem // 3600
+                        m = (rem % 3600) // 60
+                        s = rem % 60
+                        time_str = f"{h}h {m}m" if h > 0 else f"{m}m {s}s"
+                        return {
+                            "success": False,
+                            "error": f"⏳ <b>Gift Cooldown Active</b>: Please wait <b>{time_str}</b> before sending your next gift! (2-hour cooldown applies between each gift)."
+                        }
+                    
+            # Check once per day per recipient
+            already_gifted = conn.execute(
+                "SELECT id FROM user_community_gifts WHERE sender_id = ? AND receiver_id = ? AND gift_date = ?",
+                (sender_id, target_id, today_str)
+            ).fetchone()
+            
+            r_name = receiver["first_name"] or f"Player_{target_id}"
+            if already_gifted:
+                return {
+                    "success": False,
+                    "error": f"⚠️ You have already gifted <b>{html.escape(r_name)}</b> today! You can only gift each player once per day. Share your gift with someone else!"
+                }
+                
+            # Check recipient stamina capacity
+            update_user_stamina(conn, target_id)
+            receiver = conn.execute("SELECT first_name, username, diya_wicks, last_wick_regen FROM users WHERE telegram_id = ?", (target_id,)).fetchone()
+            if receiver["diya_wicks"] >= settings.STAMINA_BANK_CAP:
+                return {
+                    "success": False,
+                    "error": f"🪔 <b>{html.escape(r_name)}</b> already has maximum Diya Wicks (<b>10/10</b>)! Send your gift to someone who needs stamina."
+                }
+                
+            # Grant +1 Diya Wick to recipient
+            new_wicks = min(settings.STAMINA_BANK_CAP, receiver["diya_wicks"] + 1)
+            conn.execute("UPDATE users SET diya_wicks = ? WHERE telegram_id = ?", (new_wicks, target_id))
+            
+            # Record gift transaction
+            conn.execute(
+                "INSERT INTO user_community_gifts (sender_id, receiver_id, gift_date, created_at) VALUES (?, ?, ?, ?)",
+                (sender_id, target_id, today_str, now_iso)
+            )
+            
+            # Invalidate cache for receiver and sender
+            invalidate_event_cache(target_id)
+            invalidate_event_cache(sender_id)
+            
+            new_used = daily_count + 1
+            rem_today = max(0, COMMUNITY_GIFT_DAILY_LIMIT - new_used)
+            
+            return {
+                "success": True,
+                "receiver_id": target_id,
+                "receiver_name": r_name,
+                "receiver_wicks": new_wicks,
+                "gifts_used_today": new_used,
+                "gifts_remaining_today": rem_today
+            }
+    finally:
+        conn.close()

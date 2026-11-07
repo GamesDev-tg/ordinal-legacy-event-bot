@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.config import settings
 from app.database import get_db_connection, init_db, calculate_tier
 from app.bot import register_user_if_new
-from app.game_engine import start_game_session, finish_game_session, claim_shubh_refill
+from app.game_engine import start_game_session, finish_game_session, claim_shubh_refill, update_user_stamina
 
 class TestGameEngine(unittest.TestCase):
     @classmethod
@@ -185,6 +185,34 @@ class TestGameEngine(unittest.TestCase):
             start_game_session(self.user_id, game_type=1)
         self.assertEqual(ctx.exception.status_code, 400)
         self.assertIn("Out of Diya Wicks", ctx.exception.detail)
+
+    def test_stamina_self_healing_from_null_regen(self):
+        conn = get_db_connection()
+        # Set wicks to 0 and NULL last_wick_regen to simulate the user report
+        conn.execute("UPDATE users SET diya_wicks = 0, last_wick_regen = NULL WHERE telegram_id = ?", (self.user_id,))
+        conn.commit()
+
+        # Calling update_user_stamina should self-heal and award at least 1 wick
+        w = update_user_stamina(conn, self.user_id)
+        self.assertGreaterEqual(w, 1)
+
+        row = conn.execute("SELECT last_wick_regen, wick_cooldown_seconds FROM users WHERE telegram_id = ?", (self.user_id,)).fetchone()
+        self.assertIsNotNone(row["last_wick_regen"])
+        self.assertGreaterEqual(row["wick_cooldown_seconds"], 60)
+        conn.close()
+
+    def test_future_timestamp_clock_skew_resilience(self):
+        import datetime
+        conn = get_db_connection()
+        # Set last_wick_regen 5.5 hours in the future (e.g. naive IST vs UTC issue)
+        future_dt = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5, minutes=30)
+        conn.execute("UPDATE users SET diya_wicks = 5, last_wick_regen = ? WHERE telegram_id = ?", (future_dt.isoformat(), self.user_id))
+        conn.commit()
+
+        # Must not crash or lock indefinitely
+        w = update_user_stamina(conn, self.user_id)
+        self.assertGreaterEqual(w, 5)
+        conn.close()
 
 if __name__ == "__main__":
     unittest.main()

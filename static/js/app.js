@@ -897,7 +897,7 @@ function showCaptchaModal(captchaData, onSuccess) {
         btn.className = "play-action-btn";
         btn.style.cssText = "width:100%; padding:10px; font-size:0.92rem; background:#1E293B; border:1px solid #F59E0B; border-radius:8px; color:#F8FAFC; cursor:pointer; font-weight:600; transition:all 0.15s ease;";
         btn.innerText = opt;
-        btn.onclick = () => submitCaptchaVerification(idx, window._currentCaptchaToken);
+        btn.onclick = () => submitCaptchaVerification(idx, window._currentCaptchaToken, opt);
         optsBox.appendChild(btn);
     });
 
@@ -906,7 +906,7 @@ function showCaptchaModal(captchaData, onSuccess) {
     window._pendingCaptchaSuccess = onSuccess;
 }
 
-async function submitCaptchaVerification(answerIdx, token) {
+async function submitCaptchaVerification(answerIdx, token, answerText) {
     const statusMsg = document.getElementById('captcha-status-msg');
     const optsBox = document.getElementById('captcha-options-container');
     if (optsBox) {
@@ -918,7 +918,7 @@ async function submitCaptchaVerification(answerIdx, token) {
     }
 
     try {
-        const currentUid = currentUser ? currentUser.telegram_id : (window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 123456789);
+        const currentUid = getCurrentUserId() || (currentUser ? currentUser.telegram_id : (window.Telegram?.WebApp?.initDataUnsafe?.user?.id || 123456789));
         const resp = await fetch('/api/game/captcha_verify', {
             method: 'POST',
             headers: {
@@ -926,7 +926,7 @@ async function submitCaptchaVerification(answerIdx, token) {
                 'Authorization': authHeader,
                 'x-telegram-id': String(currentUid)
             },
-            body: JSON.stringify({ answer_index: answerIdx, token: token })
+            body: JSON.stringify({ answer_index: answerIdx, answer_text: answerText || "", token: token })
         });
         const data = await resp.json();
         if (resp.ok && data.success) {

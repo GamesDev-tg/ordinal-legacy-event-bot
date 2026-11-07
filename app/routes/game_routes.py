@@ -84,7 +84,8 @@ def api_captcha_verify(
     user_id = extract_telegram_id(authorization, x_telegram_id)
     answer_idx = int(req.get("answer_index", -1))
     token = req.get("token")
-    ok, msg = verify_captcha_answer(user_id, answer_idx, token)
+    answer_text = req.get("answer_text")
+    ok, msg = verify_captcha_answer(user_id, answer_idx, token, answer_text=answer_text)
     from app.bot import send_bot_log_sync
     send_bot_log_sync(f"🛡️ Player <code>{user_id}</code> Sacred Jyoti Captcha: {'✅ PASSED' if ok else '❌ FAILED'}.")
     res = {"success": ok, "message": msg}

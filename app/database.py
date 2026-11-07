@@ -218,6 +218,16 @@ def init_postgres_db():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
+        CREATE TABLE IF NOT EXISTS user_community_gifts (
+            id SERIAL PRIMARY KEY,
+            sender_id BIGINT NOT NULL,
+            receiver_id BIGINT NOT NULL,
+            gift_date TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_comm_gifts_sender ON user_community_gifts (sender_id, gift_date);
+        CREATE INDEX IF NOT EXISTS idx_comm_gifts_pair ON user_community_gifts (sender_id, receiver_id, gift_date);
+
         ALTER TABLE users ADD COLUMN IF NOT EXISTS shubh_refill_date TEXT;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS joined_groups INTEGER DEFAULT 0;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS wick_cooldown_seconds INTEGER DEFAULT 120;
@@ -307,6 +317,16 @@ def init_sqlite_db():
             value TEXT,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+
+        CREATE TABLE IF NOT EXISTS user_community_gifts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender_id INTEGER NOT NULL,
+            receiver_id INTEGER NOT NULL,
+            gift_date TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_comm_gifts_sender ON user_community_gifts (sender_id, gift_date);
+        CREATE INDEX IF NOT EXISTS idx_comm_gifts_pair ON user_community_gifts (sender_id, receiver_id, gift_date);
         ''')
         
         row = conn.execute("SELECT COUNT(*) as count FROM community_state").fetchone()
@@ -317,6 +337,20 @@ def init_sqlite_db():
             )
 
         # Ensure backward compatibility for existing SQLite databases
+        try:
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS user_community_gifts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sender_id INTEGER NOT NULL,
+                    receiver_id INTEGER NOT NULL,
+                    gift_date TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            ''')
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_comm_gifts_sender ON user_community_gifts (sender_id, gift_date);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_comm_gifts_pair ON user_community_gifts (sender_id, receiver_id, gift_date);")
+        except Exception:
+            pass
         try:
             conn.execute("ALTER TABLE users ADD COLUMN shubh_refill_date TEXT;")
         except Exception:
@@ -475,7 +509,11 @@ def reset_scores_keep_users() -> dict:
 def refill_all_users_wicks() -> dict:
     conn = get_db_connection()
     with conn:
-        conn.execute("UPDATE users SET diya_wicks = ?", (settings.STAMINA_BANK_CAP,))
+        now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        try:
+            conn.execute("UPDATE users SET diya_wicks = ?, last_wick_regen = ?, wick_cooldown_seconds = 120", (settings.STAMINA_BANK_CAP, now_iso))
+        except Exception:
+            conn.execute("UPDATE users SET diya_wicks = ?, last_wick_regen = ?", (settings.STAMINA_BANK_CAP, now_iso))
         user_count = conn.execute("SELECT COUNT(*) as c FROM users").fetchone()["c"]
     conn.close()
     return {"success": True, "users_refilled": user_count}
