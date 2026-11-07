@@ -1,4 +1,6 @@
+```python
 import os
+import asyncio
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -62,23 +64,18 @@ app.include_router(admin_router)
 async def telegram_webhook(request: Request):
     try:
         update = await request.json()
-        if "message" in update:
-            await handle_bot_message(update["message"])
-        elif "callback_query" in update:
-            await handle_bot_callback_query(update["callback_query"])
-        elif "chat_member" in update:
-            await handle_bot_chat_member(update["chat_member"])
-        return {"ok": True}
-    except Exception as e:
-        print(f"Error handling webhook update: {e}")
-        return {"ok": False, "error": str(e)}
+        if not isinstance(update, dict):
+            return {"ok": True}
 
+        if "message" in update:
+            asyncio.create_task(handle_bot_message(update["message"]))
+        elif "callback_query" in update:
+            asyncio.create_task(handle_bot_callback_query(update["callback_query"]))
         elif "chat_member" in update:
-            from app.bot import handle_bot_chat_member
-            await handle_bot_chat_member(update["chat_member"])
+            asyncio.create_task(handle_bot_chat_member(update["chat_member"]))
         elif "my_chat_member" in update:
-            from app.bot import handle_bot_chat_member
-            await handle_bot_chat_member(update["my_chat_member"])
+            asyncio.create_task(handle_bot_chat_member(update["my_chat_member"]))
+
         return {"ok": True}
     except Exception as e:
         print(f"Error handling webhook update: {e}")
@@ -101,7 +98,7 @@ async def api_cron_flash_diya():
         target_chat = int(cfg_id)
     elif stored_group and stored_group.lstrip("-").isdigit():
         target_chat = int(stored_group)
-    
+
     if not target_chat:
         return {"ok": False, "message": "No @Ordinal_Legacy group ID detected yet."}
 
@@ -124,7 +121,7 @@ async def api_cron_trivia():
         target_chat = int(cfg_id)
     elif stored_group and stored_group.lstrip("-").isdigit():
         target_chat = int(stored_group)
-    
+
     if not target_chat:
         return {"ok": False, "message": "No @Ordinal_Legacy group ID detected yet."}
 
@@ -228,3 +225,5 @@ def serve_index():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app.main:app", host=settings.HOST, port=settings.PORT, reload=True)
+
+```
