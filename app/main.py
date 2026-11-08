@@ -1,6 +1,4 @@
-```python
 import os
-import asyncio
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -68,13 +66,13 @@ async def telegram_webhook(request: Request):
             return {"ok": True}
 
         if "message" in update:
-            asyncio.create_task(handle_bot_message(update["message"]))
+            await handle_bot_message(update["message"])
         elif "callback_query" in update:
-            asyncio.create_task(handle_bot_callback_query(update["callback_query"]))
+            await handle_bot_callback_query(update["callback_query"])
         elif "chat_member" in update:
-            asyncio.create_task(handle_bot_chat_member(update["chat_member"]))
+            await handle_bot_chat_member(update["chat_member"])
         elif "my_chat_member" in update:
-            asyncio.create_task(handle_bot_chat_member(update["my_chat_member"]))
+            await handle_bot_chat_member(update["my_chat_member"])
 
         return {"ok": True}
     except Exception as e:
@@ -225,5 +223,3 @@ def serve_index():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app.main:app", host=settings.HOST, port=settings.PORT, reload=True)
-
-```
