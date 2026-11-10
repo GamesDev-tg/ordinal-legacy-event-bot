@@ -603,9 +603,10 @@ def claim_golden_box(event_id: int, user_id: int, first_name: str) -> dict:
         conn.close()
 
 def claim_deepotsav_offering(user_id: int, first_name: str) -> dict:
-    from app.database import get_system_setting
+    from app.database import get_system_setting, get_all_admin_ids
+    is_admin_user = (user_id in get_all_admin_ids())
     key = f"deepotsav_offered_{user_id}"
-    if get_system_setting(key, ""):
+    if not is_admin_user and get_system_setting(key, ""):
         return {
             "success": False,
             "message": "🪔 <b>Sacred Flame Already Offered</b>\n\nYou have already placed your Diya on the Maha Akhand Jyoti altar tonight! Thank you for illuminating our community."

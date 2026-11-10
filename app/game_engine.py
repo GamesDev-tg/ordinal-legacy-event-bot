@@ -29,9 +29,10 @@ def get_final_rush_multiplier(user_gharana_id: int) -> Tuple[int, bool, bool]:
     return multiplier, is_boosted, rush_active
 
 def claim_final_rush_wicks(user_id: int) -> dict:
-    from app.database import get_db_connection, get_system_setting, set_system_setting
+    from app.database import get_db_connection, get_system_setting, set_system_setting, get_all_admin_ids
+    is_admin_user = (user_id in get_all_admin_ids())
     key = f"rush_claimed_{user_id}"
-    if get_system_setting(key, ""):
+    if not is_admin_user and get_system_setting(key, ""):
         return {
             "success": False,
             "message": "⚠️ <b>Blessing Already Claimed</b>\n\nYou have already received your +5 Diya Wicks Final Rush blessing! Use them in games before midnight (12:00 AM IST)!"
@@ -286,7 +287,9 @@ def claim_shubh_refill(telegram_id: int) -> dict:
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
             
-        if user["shubh_refill_date"] == today_str:
+        from app.database import get_all_admin_ids
+        is_admin_user = (telegram_id in get_all_admin_ids())
+        if not is_admin_user and user["shubh_refill_date"] == today_str:
             raise HTTPException(status_code=400, detail="You have already claimed today's Shubh Muhurat refill! Come back tomorrow.")
             
         current_wicks = user["diya_wicks"]
@@ -598,45 +601,51 @@ def execute_community_gift(sender_id: int, target_identifier: str = "", reply_to
                 else:
                     raise
             
-            if daily_count >= COMMUNITY_GIFT_DAILY_LIMIT:
-                return {
-                    "success": False,
-                    "error": f"⏳ <b>Daily Limit Reached</b>: You have used all <b>{COMMUNITY_GIFT_DAILY_LIMIT} gifts</b> today! Your allowance resets tomorrow at midnight UTC."
-                }
-                
-            # Check 2-hour cooldown
-            last_gift = conn.execute(
-                "SELECT created_at FROM user_community_gifts WHERE sender_id = ? ORDER BY id DESC LIMIT 1",
-                (sender_id,)
-            ).fetchone()
-            
-            if last_gift:
-                last_dt = _parse_timestamp(last_gift["created_at"], now_utc)
-                if last_dt:
-                    elapsed = (now_utc - last_dt).total_seconds()
-                    if elapsed < COMMUNITY_GIFT_COOLDOWN_SECONDS:
-                        rem = int(COMMUNITY_GIFT_COOLDOWN_SECONDS - elapsed)
-                        h = rem // 3600
-                        m = (rem % 3600) // 60
-                        s = rem % 60
-                        time_str = f"{h}h {m}m" if h > 0 else f"{m}m {s}s"
-                        return {
-                            "success": False,
-                            "error": f"⏳ <b>Gift Cooldown Active</b>: Please wait <b>{time_str}</b> before sending your next gift! (2-hour cooldown applies between each gift)."
-                        }
+            from app.database import get_all_admin_ids
+            is_admin_sender = (sender_id in get_all_admin_ids())
+
+            if not is_admin_sender:
+                if daily_count >= COMMUNITY_GIFT_DAILY_LIMIT:
+                    return {
+                        "success": False,
+                        "error": f"⏳ <b>Daily Limit Reached</b>: You have used all <b>{COMMUNITY_GIFT_DAILY_LIMIT} gifts</b> today! Your allowance resets tomorrow at midnight UTC."
+                    }
                     
-            # Check once per day per recipient
-            already_gifted = conn.execute(
-                "SELECT id FROM user_community_gifts WHERE sender_id = ? AND receiver_id = ? AND gift_date = ?",
-                (sender_id, target_id, today_str)
-            ).fetchone()
-            
-            r_name = receiver["first_name"] or f"Player_{target_id}"
-            if already_gifted:
-                return {
-                    "success": False,
-                    "error": f"⚠️ You have already gifted <b>{html.escape(r_name)}</b> today! You can only gift each player once per day. Share your gift with someone else!"
-                }
+                # Check 2-hour cooldown
+                last_gift = conn.execute(
+                    "SELECT created_at FROM user_community_gifts WHERE sender_id = ? ORDER BY id DESC LIMIT 1",
+                    (sender_id,)
+                ).fetchone()
+                
+                if last_gift:
+                    last_dt = _parse_timestamp(last_gift["created_at"], now_utc)
+                    if last_dt:
+                        elapsed = (now_utc - last_dt).total_seconds()
+                        if elapsed < COMMUNITY_GIFT_COOLDOWN_SECONDS:
+                            rem = int(COMMUNITY_GIFT_COOLDOWN_SECONDS - elapsed)
+                            h = rem // 3600
+                            m = (rem % 3600) // 60
+                            s = rem % 60
+                            time_str = f"{h}h {m}m" if h > 0 else f"{m}m {s}s"
+                            return {
+                                "success": False,
+                                "error": f"⏳ <b>Gift Cooldown Active</b>: Please wait <b>{time_str}</b> before sending your next gift! (2-hour cooldown applies between each gift)."
+                            }
+                        
+                # Check once per day per recipient
+                already_gifted = conn.execute(
+                    "SELECT id FROM user_community_gifts WHERE sender_id = ? AND receiver_id = ? AND gift_date = ?",
+                    (sender_id, target_id, today_str)
+                ).fetchone()
+                
+                r_name = receiver["first_name"] or f"Player_{target_id}"
+                if already_gifted:
+                    return {
+                        "success": False,
+                        "error": f"⚠️ You have already gifted <b>{html.escape(r_name)}</b> today! You can only gift each player once per day. Share your gift with someone else!"
+                    }
+            else:
+                r_name = receiver["first_name"] or f"Player_{target_id}" 
                 
             # Check recipient stamina capacity
             update_user_stamina(conn, target_id)
