@@ -168,6 +168,11 @@ def update_user_stamina(conn, telegram_id: int) -> int:
     now = datetime.datetime.now(datetime.timezone.utc)
     
     if current_wicks >= settings.STAMINA_BANK_CAP:
+        conn.execute("UPDATE users SET last_wick_regen = ? WHERE telegram_id = ?", (now.isoformat(), telegram_id))
+        try:
+            conn.commit()
+        except Exception:
+            pass
         return current_wicks
     
     try:

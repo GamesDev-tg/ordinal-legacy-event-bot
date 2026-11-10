@@ -20,22 +20,23 @@ def check_admin(admin_id: int):
 def api_admin_add_points(req: AdminAddPointsRequest):
     check_admin(req.admin_telegram_id)
     conn = get_db_connection()
-    with conn:
-        user = conn.execute("SELECT points_total FROM users WHERE telegram_id = ?", (req.target_telegram_id,)).fetchone()
-        if not user:
-            conn.close()
-            raise HTTPException(status_code=404, detail="Target user not found")
+    try:
+        with conn:
+            user = conn.execute("SELECT points_total FROM users WHERE telegram_id = ?", (req.target_telegram_id,)).fetchone()
+            if not user:
+                raise HTTPException(status_code=404, detail="Target user not found")
+                
+            new_total = max(0, user["points_total"] + req.points_to_add)
+            new_tier = calculate_tier(new_total)
             
-        new_total = max(0, user["points_total"] + req.points_to_add)
-        new_tier = calculate_tier(new_total)
-        
-        conn.execute("UPDATE users SET points_total = ?, tier_level = ? WHERE telegram_id = ?", (new_total, new_tier, req.target_telegram_id))
-        comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
-        cur_comm = comm["total_sparks"] if comm else 0
-        comm_total = max(0, cur_comm + req.points_to_add)
-        new_stage, _ = get_stage_info(comm_total)
-        conn.execute("UPDATE community_state SET total_sparks = ?, current_stage = ? WHERE id = 1", (comm_total, new_stage))
-    conn.close()
+            conn.execute("UPDATE users SET points_total = ?, tier_level = ? WHERE telegram_id = ?", (new_total, new_tier, req.target_telegram_id))
+            comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
+            cur_comm = comm["total_sparks"] if comm else 0
+            comm_total = max(0, cur_comm + req.points_to_add)
+            new_stage, _ = get_stage_info(comm_total)
+            conn.execute("UPDATE community_state SET total_sparks = ?, current_stage = ? WHERE id = 1", (comm_total, new_stage))
+    finally:
+        conn.close()
     
     from app.cache import invalidate_event_cache
     invalidate_event_cache(req.target_telegram_id)
@@ -257,13 +258,14 @@ def api_users_by_tier(admin_id: int, tier_level: int):
 def api_admin_reset_wicks(admin_id: int, target_telegram_id: int):
     check_admin(admin_id)
     conn = get_db_connection()
-    with conn:
-        u = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (target_telegram_id,)).fetchone()
-        if not u:
-            conn.close()
-            raise HTTPException(status_code=404, detail="Target user not found.")
-        conn.execute("UPDATE users SET diya_wicks = ? WHERE telegram_id = ?", (settings.STAMINA_BANK_CAP, target_telegram_id))
-    conn.close()
+    try:
+        with conn:
+            u = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (target_telegram_id,)).fetchone()
+            if not u:
+                raise HTTPException(status_code=404, detail="Target user not found.")
+            conn.execute("UPDATE users SET diya_wicks = ? WHERE telegram_id = ?", (settings.STAMINA_BANK_CAP, target_telegram_id))
+    finally:
+        conn.close()
     from app.cache import invalidate_event_cache
     invalidate_event_cache(target_telegram_id)
     return {"success": True, "target_telegram_id": target_telegram_id, "wicks": settings.STAMINA_BANK_CAP, "message": "Restored full Diya Wicks."}

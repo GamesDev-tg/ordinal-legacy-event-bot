@@ -100,7 +100,7 @@ def process_referral_claim(referrer_id: int, referred_id: int) -> dict:
     }
 
 def send_companion_wick_gift(sender_id: int) -> dict:
-    today_str = datetime.date.today().isoformat()
+    today_str = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))).date().isoformat()
     conn = get_db_connection()
     try:
         with conn:

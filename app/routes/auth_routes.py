@@ -31,12 +31,12 @@ def _maybe_log_app_launch(telegram_id: int, username: str, method: str = "Mini-A
 
 def get_full_user_profile(telegram_id: int) -> UserProfile:
     conn = get_db_connection()
-    with conn:
-        update_user_stamina(conn, telegram_id)
-        user = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
-        if not user:
-            conn.close()
-            raise HTTPException(status_code=404, detail="User not found")
+    try:
+        with conn:
+            update_user_stamina(conn, telegram_id)
+            user = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
             
         comp_row = conn.execute(
             '''SELECT u.telegram_id, u.first_name, u.username, u.tier_level
@@ -63,10 +63,11 @@ def get_full_user_profile(telegram_id: int) -> UserProfile:
         ).fetchone()["count"]
         
         secs_until_next = get_seconds_until_next_wick(conn, telegram_id)
-        today_str = datetime.date.today().isoformat()
+        today_str = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))).date().isoformat()
         shubh_available = (user["shubh_refill_date"] != today_str)
         
-    conn.close()
+    finally:
+        conn.close()
     
     gharana_name = settings.GHARANAS.get(user["gharana_id"], "Unknown")
     tier_name = get_tier_name(user["tier_level"])
