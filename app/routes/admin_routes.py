@@ -98,13 +98,13 @@ def api_export_rewards(admin_id: int):
         if t == 5:
             if rank <= 50:
                 category = "Top 50 Sovereign Elite"
-                details = "Legendary Sovereign Mukut + Rare Ordinal Inscription + 4 Airdrop Shares"
+                details = "All Rewards"
             else:
                 category = "Akhand Sovereign"
-                details = "Legendary Sovereign Mukut + 4 Airdrop Shares"
+                details = "All Rewards"
         elif t == 4:
             category = "Deep Mahant"
-            details = "Platinum Halo + VIP Discord/Telegram Role + Pet"
+            details = "Pet"
         elif t == 3:
             category = "Spark Master"
             details = "Gold Radiating Aura + 1 Guaranteed Airdrop Share"

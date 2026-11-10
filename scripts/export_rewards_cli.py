@@ -75,7 +75,7 @@ def generate_reward_reports(output_csv_path="final_rewards_report.csv"):
             shares = "0"
             if t == 5:
                 category = "Top 50 Sovereign" if rank <= 50 else "Akhand Sovereign"
-                shares = "4 Shares + Sovereign Mukut"
+                shares = "All Rewards"
             elif t == 4:
                 category = "Deep Mahant"
                 shares = "Pet"
