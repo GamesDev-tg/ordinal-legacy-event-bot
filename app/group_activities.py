@@ -467,14 +467,20 @@ def create_golden_box_drop(chat_id: int, max_claims: int = 5) -> Tuple[int, str,
     conn = get_db_connection()
     try:
         with conn:
-            cur = conn.execute(
-                "INSERT INTO group_events (event_type, chat_id, data_json, is_active) VALUES ('golden_box', ?, ?, 1)",
-                (chat_id, json.dumps(data))
-            )
-            event_id = cur.lastrowid
-            if not event_id:
-                row = conn.execute("SELECT id FROM group_events WHERE event_type = 'golden_box' ORDER BY id DESC LIMIT 1").fetchone()
-                event_id = row["id"]
+            cur = conn.cursor()
+            if is_postgres():
+                cur.execute(
+                    "INSERT INTO group_events (event_type, chat_id, data_json, is_active) VALUES ('golden_box', ?, ?, 1) RETURNING id",
+                    (chat_id, json.dumps(data))
+                )
+                row = cur.fetchone()
+                event_id = row[0] if row else 1
+            else:
+                cur.execute(
+                    "INSERT INTO group_events (event_type, chat_id, data_json, is_active) VALUES ('golden_box', ?, ?, 1)",
+                    (chat_id, json.dumps(data))
+                )
+                event_id = cur.lastrowid
     finally:
         conn.close()
 
@@ -624,10 +630,13 @@ def claim_deepotsav_offering(user_id: int, first_name: str) -> dict:
             )
             conn.execute("UPDATE community_state SET total_sparks = total_sparks + 25 WHERE id = 1")
             
-            try:
-                conn.execute("INSERT INTO system_settings (key, value) VALUES (?, ?)", (key, "1"))
-            except Exception:
-                conn.execute("UPDATE system_settings SET value = ? WHERE key = ?", ("1", key))
+            if is_postgres():
+                conn.execute("INSERT INTO system_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (key, "1"))
+            else:
+                try:
+                    conn.execute("INSERT INTO system_settings (key, value) VALUES (?, ?)", (key, "1"))
+                except Exception:
+                    conn.execute("UPDATE system_settings SET value = ? WHERE key = ?", ("1", key))
             
             from app.cache import delete_cache
             delete_cache(f"setting_{key}")

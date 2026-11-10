@@ -5,7 +5,7 @@ import datetime
 from typing import Optional, Dict, Any, Tuple
 from fastapi import HTTPException
 from app.config import settings
-from app.database import get_db_connection, calculate_tier, get_tier_name, get_stage_info
+from app.database import get_db_connection, calculate_tier, get_tier_name, get_stage_info, is_postgres
 
 GHARANA_BOOST_DURATION_SECONDS = 600  # 10 minutes per Gharana
 GHARANA_TOTAL_CYCLE_SECONDS = GHARANA_BOOST_DURATION_SECONDS * 4  # 2400 seconds (40 minutes for all 4 houses)
@@ -55,10 +55,13 @@ def claim_final_rush_wicks(user_id: int) -> dict:
             
             new_wicks = curr + added
             conn.execute("UPDATE users SET diya_wicks = ? WHERE telegram_id = ?", (new_wicks, user_id))
-            try:
-                conn.execute("INSERT INTO system_settings (key, value) VALUES (?, ?)", (key, "1"))
-            except Exception:
-                conn.execute("UPDATE system_settings SET value = ? WHERE key = ?", ("1", key))
+            if is_postgres():
+                conn.execute("INSERT INTO system_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (key, "1"))
+            else:
+                try:
+                    conn.execute("INSERT INTO system_settings (key, value) VALUES (?, ?)", (key, "1"))
+                except Exception:
+                    conn.execute("UPDATE system_settings SET value = ? WHERE key = ?", ("1", key))
             from app.cache import delete_cache
             delete_cache(f"setting_{key}")
         return {
