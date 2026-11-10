@@ -104,7 +104,7 @@ def api_export_rewards(admin_id: int):
                 details = "Legendary Sovereign Mukut + 4 Airdrop Shares"
         elif t == 4:
             category = "Deep Mahant"
-            details = "Platinum Halo + 2 Airdrop Shares + VIP Discord/Telegram Role"
+            details = "Platinum Halo + 2 Airdrop Shares + VIP Discord/Telegram Role + Pet"
         elif t == 3:
             category = "Spark Master"
             details = "Gold Radiating Aura + 1 Guaranteed Airdrop Share"
