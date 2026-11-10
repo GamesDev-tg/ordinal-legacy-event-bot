@@ -297,7 +297,7 @@ def claim_shubh_refill(telegram_id: int) -> dict:
         added_wicks = new_wicks - current_wicks
         
         bonus_points = 5
-        new_points = min(5000, user["points_total"] + bonus_points)
+        new_points = user["points_total"] + bonus_points
         new_tier = calculate_tier(new_points)
         
         conn.execute(
@@ -403,7 +403,7 @@ def finish_game_session(telegram_id: int, session_id: str, nonce: str, raw_score
                 (raw_score, duration_ms, session_id)
             )
 
-        new_points = min(5000, old_points + awarded_points)
+        new_points = old_points + awarded_points
         new_tier = calculate_tier(new_points)
         tier_unlocked = new_tier > old_tier
         

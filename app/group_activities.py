@@ -566,7 +566,7 @@ def claim_golden_box(event_id: int, user_id: int, first_name: str) -> dict:
 
             curr_wicks = u["diya_wicks"] or 0
             new_wicks = min(settings.STAMINA_BANK_CAP, curr_wicks + wicks_awarded)
-            new_pts = min(5000, (u["points_total"] or 0) + pts_awarded)
+            new_pts = (u["points_total"] or 0) + pts_awarded
             new_tier = calculate_tier(new_pts)
 
             if not u["last_wick_regen"]:
@@ -622,7 +622,7 @@ def claim_deepotsav_offering(user_id: int, first_name: str) -> dict:
                 return {"success": False, "message": "❌ User record not found. Send /start to join first!"}
             
             new_wicks = min(settings.STAMINA_BANK_CAP, (u["diya_wicks"] or 0) + 1)
-            new_pts = min(5000, (u["points_total"] or 0) + 10)
+            new_pts = (u["points_total"] or 0) + 10
             new_tier = calculate_tier(new_pts)
             
             conn.execute(

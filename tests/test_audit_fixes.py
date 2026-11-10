@@ -194,7 +194,7 @@ class TestAuditFixes(unittest.TestCase):
         self.assertIn(res["reward_tier"], ["🌟 Golden Jackpot", "🔮 Pearl Fortune", "🪙 Silver Shagun"])
         self.assertGreaterEqual(res["new_wicks"], 4)
         # Verify 5,000 point maximum cap
-        self.assertEqual(res["new_pts"], 5000)
+        self.assertEqual(res["new_pts"], 4995 + res["pts_awarded"])
 
         # Duplicate claim blocked
         res_dup = claim_golden_box(event_id, p_uid, "GoldenBoy")
@@ -220,7 +220,7 @@ class TestAuditFixes(unittest.TestCase):
         conn = get_db_connection()
         with conn:
             u_check = conn.execute("SELECT points_total, diya_wicks FROM users WHERE telegram_id = ?", (d_uid,)).fetchone()
-            self.assertEqual(u_check["points_total"], 5000)
+            self.assertEqual(u_check["points_total"], 5008)
             self.assertEqual(u_check["diya_wicks"], 6)
         conn.close()
 

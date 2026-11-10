@@ -644,7 +644,7 @@ def execute_in_chat_game(user_id: int, game_type: int) -> dict:
             multiplier, is_boosted, is_rush = get_final_rush_multiplier(u["gharana_id"])
             awarded_score = base_score * multiplier
             
-            new_pts = min(5000, u["points_total"] + awarded_score)
+            new_pts = u["points_total"] + awarded_score
             new_tier = calculate_tier(new_pts)
             
             conn.execute(
