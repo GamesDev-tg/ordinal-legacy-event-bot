@@ -45,6 +45,8 @@ class RangoliGame {
         this.state = 'showing';
         this.canvas.addEventListener('click', this.handleClick);
         this.canvas.addEventListener('touchstart', this.handleClick, { passive: false });
+        this.canvas.addEventListener('pointerdown', this.handleClick);
+        this.canvas.addEventListener('mousedown', this.handleClick);
         this.playSequence();
         this.animate = this.animate.bind(this);
         requestAnimationFrame(this.animate);
@@ -55,6 +57,8 @@ class RangoliGame {
         if (this.timeoutTimer) clearTimeout(this.timeoutTimer);
         this.canvas.removeEventListener('click', this.handleClick);
         this.canvas.removeEventListener('touchstart', this.handleClick);
+        this.canvas.removeEventListener('pointerdown', this.handleClick);
+        this.canvas.removeEventListener('mousedown', this.handleClick);
     }
 
     async playSequence() {

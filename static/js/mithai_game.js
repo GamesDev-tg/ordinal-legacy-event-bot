@@ -32,6 +32,9 @@ class MithaiGame {
         this.canvas.addEventListener('touchmove', this.handleTouch, { passive: false });
         this.canvas.addEventListener('touchstart', this.handleTouch, { passive: false });
         this.canvas.addEventListener('mousemove', this.handleTouch);
+        this.canvas.addEventListener('mousedown', this.handleTouch);
+        this.canvas.addEventListener('pointerdown', this.handleTouch);
+        this.canvas.addEventListener('pointermove', this.handleTouch);
         this.animate = this.animate.bind(this);
         requestAnimationFrame(this.animate);
     }
@@ -41,6 +44,9 @@ class MithaiGame {
         this.canvas.removeEventListener('touchmove', this.handleTouch);
         this.canvas.removeEventListener('touchstart', this.handleTouch);
         this.canvas.removeEventListener('mousemove', this.handleTouch);
+        this.canvas.removeEventListener('mousedown', this.handleTouch);
+        this.canvas.removeEventListener('pointerdown', this.handleTouch);
+        this.canvas.removeEventListener('pointermove', this.handleTouch);
     }
 
     handleTouch(e) {

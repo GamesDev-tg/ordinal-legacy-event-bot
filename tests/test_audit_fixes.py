@@ -1,6 +1,9 @@
 import unittest
 import datetime
 import time
+import os
+import random
+import tempfile
 import sqlite3
 from unittest.mock import patch, MagicMock, AsyncMock
 from app.config import settings
@@ -11,7 +14,17 @@ import app.bot as bot_module
 class TestAuditFixes(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls.test_db = os.path.join(tempfile.gettempdir(), f"test_audit_{random.randint(10000, 99999)}.db")
+        settings.DATABASE_PATH = cls.test_db
         init_db()
+
+    @classmethod
+    def tearDownClass(cls):
+        if hasattr(cls, "test_db") and os.path.exists(cls.test_db):
+            try:
+                os.remove(cls.test_db)
+            except Exception:
+                pass
     def test_bug1_sqlite_pragmas(self):
         """Bug 1: Verify busy_timeout, synchronous=NORMAL, and WAL journal mode."""
         conn = get_db_connection()

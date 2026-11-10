@@ -692,12 +692,142 @@ def execute_community_gift(sender_id: int, target_identifier: str = "", reply_to
     finally:
         conn.close()
 
+def get_rush_start_epoch() -> float:
+    # 2026-11-10 15:30:00 UTC (21:00 IST - when Final Rush began)
+    return datetime.datetime(2026, 11, 10, 15, 30, 0, tzinfo=datetime.timezone.utc).timestamp()
+
+def rollback_and_fix_scores() -> dict:
+    """
+    Rolls back the erroneous +55,139 points that inflated player scores to 10k+.
+    Sets each inflated user's score to:
+    5,000 + (legitimate points earned during Final Rush since 2026-11-10 15:30:00 UTC).
+    Restores community_state total_sparks back to its legitimate value (~77k-78k).
+    """
+    import json
+    from app.cache import invalidate_event_cache
+
+    conn = get_db_connection()
+    try:
+        with conn:
+            inflated_users = conn.execute(
+                "SELECT telegram_id, username, first_name, gharana_id, points_total, tier_level FROM users WHERE points_total > 5000"
+            ).fetchall()
+
+            rush_start_epoch = get_rush_start_epoch()
+
+            # Map group events during rush
+            group_rush_pts = {}
+            try:
+                gevents = conn.execute("SELECT event_type, data_json, created_at FROM group_events").fetchall()
+                for gev in gevents:
+                    etype = gev["event_type"]
+                    try:
+                        data = json.loads(gev["data_json"])
+                        winners = data.get("winners", [])
+                        for w in winners:
+                            wid = w.get("id") or w.get("user_id") or w.get("uid")
+                            if not wid:
+                                continue
+                            try:
+                                wid = int(wid)
+                            except Exception:
+                                continue
+
+                            c_dt = _parse_timestamp(w.get("claimed_at") or gev["created_at"], None)
+                            if c_dt and c_dt.timestamp() >= rush_start_epoch:
+                                if etype == "flash_diya":
+                                    pts = 5
+                                elif etype == "trivia":
+                                    pts = 2
+                                elif etype == "golden_box":
+                                    pts = int(w.get("sparks", 5))
+                                else:
+                                    pts = int(w.get("sparks", 0))
+                                group_rush_pts[wid] = group_rush_pts.get(wid, 0) + pts
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            total_excess_points = 0
+            adjusted_users = []
+
+            for u in inflated_users:
+                uid = int(u["telegram_id"])
+                curr_pts = int(u["points_total"] or 0)
+                u_gharana = int(u["gharana_id"] or 1)
+
+                try:
+                    sessions = conn.execute(
+                        "SELECT score_awarded, bonus_multiplier, created_at FROM game_sessions WHERE telegram_id = ? AND is_valid = 1 ORDER BY created_at ASC",
+                        (uid,)
+                    ).fetchall()
+                except Exception:
+                    sessions = []
+
+                rush_game_pts = 0
+                for sess in sessions:
+                    sess_dt = _parse_timestamp(sess["created_at"], None)
+                    if sess_dt and sess_dt.timestamp() >= rush_start_epoch:
+                        base_sc = int(sess["score_awarded"] or 0)
+                        bm = sess["bonus_multiplier"] if "bonus_multiplier" in sess.keys() else None
+                        if bm is not None and int(bm) > 0:
+                            mult = int(bm)
+                        else:
+                            mult = 2
+                        rush_game_pts += (base_sc * mult)
+
+                rush_gev_pts = group_rush_pts.get(uid, 0)
+                legit_rush_pts = rush_game_pts + rush_gev_pts
+
+                correct_pts = 5000 + legit_rush_pts
+                excess = curr_pts - correct_pts
+
+                if excess > 0:
+                    correct_tier = calculate_tier(correct_pts)
+                    conn.execute(
+                        "UPDATE users SET points_total = ?, tier_level = ? WHERE telegram_id = ?",
+                        (correct_pts, correct_tier, uid)
+                    )
+                    total_excess_points += excess
+                    adjusted_users.append({
+                        "telegram_id": uid,
+                        "username": u["username"] or "",
+                        "first_name": u["first_name"] or f"Player_{uid}",
+                        "inflated_points": curr_pts,
+                        "corrected_points": correct_pts,
+                        "excess_removed": excess,
+                        "rush_points_earned": legit_rush_pts
+                    })
+                    invalidate_event_cache(uid)
+
+            if total_excess_points > 0:
+                conn.execute(
+                    "UPDATE community_state SET total_sparks = GREATEST(0, total_sparks - ?) WHERE id = 1" if is_postgres() else "UPDATE community_state SET total_sparks = MAX(0, total_sparks - ?) WHERE id = 1",
+                    (total_excess_points,)
+                )
+
+            comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
+            new_comm = comm["total_sparks"] if comm else 0
+            new_stage, _ = get_stage_info(new_comm)
+            conn.execute("UPDATE community_state SET current_stage = ? WHERE id = 1", (new_stage,))
+
+            return {
+                "success": True,
+                "adjusted_users_count": len(adjusted_users),
+                "total_excess_removed": total_excess_points,
+                "restored_community_sparks": new_comm,
+                "adjusted_users": adjusted_users
+            }
+    finally:
+        conn.close()
+
 def reconcile_and_recover_scores() -> dict:
     """
     Audits every player's game sessions, group events, referrals, shubh muhurat refills,
     and deepotsav offerings against their stored points_total.
-    Restores any points lost due to the temporary 5,000-point ceiling or race conditions,
-    with an immutable 100% zero-data-loss guarantee (scores can only increase or remain unchanged).
+    Historical scores are bounded by the 5,000-point tier cap.
+    Only points earned during Final Rush (since 2026-11-10 15:30:00 UTC) can extend beyond 5,000.
     """
     import json
     from app.cache import invalidate_event_cache
@@ -707,9 +837,11 @@ def reconcile_and_recover_scores() -> dict:
         with conn:
             users = conn.execute("SELECT telegram_id, username, first_name, gharana_id, points_total, tier_level, referral_points_earned, shubh_refill_date FROM users").fetchall()
 
-            # Map all group event points by user_id
-            group_sparks_by_user = {}
-            group_sparks_post_clamp = {}
+            rush_start_epoch = get_rush_start_epoch()
+
+            # Map all group event points by user_id (split pre-rush and rush)
+            group_sparks_pre_rush = {}
+            group_sparks_rush = {}
             try:
                 gevents = conn.execute("SELECT event_type, data_json, created_at FROM group_events").fetchall()
                 for gev in gevents:
@@ -735,17 +867,16 @@ def reconcile_and_recover_scores() -> dict:
                             else:
                                 pts = int(w.get("sparks", 0))
 
-                            group_sparks_by_user[wid] = group_sparks_by_user.get(wid, 0) + pts
-
                             c_dt = _parse_timestamp(w.get("claimed_at") or gev["created_at"], None)
-                            if c_dt and c_dt.timestamp() >= 1731252600:
-                                group_sparks_post_clamp[wid] = group_sparks_post_clamp.get(wid, 0) + pts
+                            if c_dt and c_dt.timestamp() >= rush_start_epoch:
+                                group_sparks_rush[wid] = group_sparks_rush.get(wid, 0) + pts
+                            else:
+                                group_sparks_pre_rush[wid] = group_sparks_pre_rush.get(wid, 0) + pts
                     except Exception:
                         pass
             except Exception:
                 pass
 
-            # Map Deepotsav altar flame offerings from system_settings
             deepotsav_users = set()
             try:
                 settings_rows = conn.execute("SELECT key FROM system_settings WHERE key LIKE 'deepotsav_offered_%'").fetchall()
@@ -767,7 +898,6 @@ def reconcile_and_recover_scores() -> dict:
                 current_pts = int(u["points_total"] or 0)
                 u_gharana = int(u["gharana_id"] or 1)
 
-                # Fetch game sessions
                 try:
                     sessions = conn.execute(
                         "SELECT score_awarded, bonus_multiplier, created_at FROM game_sessions WHERE telegram_id = ? AND is_valid = 1 ORDER BY created_at ASC, id ASC",
@@ -782,8 +912,8 @@ def reconcile_and_recover_scores() -> dict:
                     except Exception:
                         sessions = []
 
-                game_pts = 0
-                clamp_window_game_pts = 0
+                game_pts_pre_rush = 0
+                game_pts_rush = 0
 
                 for sess in sessions:
                     base_sc = int(sess["score_awarded"] or 0)
@@ -801,25 +931,29 @@ def reconcile_and_recover_scores() -> dict:
                         mult = 1
 
                     awarded = base_sc * mult
-                    game_pts += awarded
 
-                    # Track sessions played during or after clamp period
-                    if sess_dt and (sess_dt.timestamp() >= 1731252600 or mult >= 2):
-                        clamp_window_game_pts += awarded
+                    if sess_dt and sess_dt.timestamp() >= rush_start_epoch:
+                        game_pts_rush += awarded
+                    else:
+                        game_pts_pre_rush += awarded
 
                 ref_pts = min(settings.MAX_REFERRAL_POINTS, int(u["referral_points_earned"] or 0))
                 shubh_pts = 5 if u["shubh_refill_date"] else 0
-                gev_pts = group_sparks_by_user.get(uid, 0)
+                gev_pre = group_sparks_pre_rush.get(uid, 0)
+                gev_rush = group_sparks_rush.get(uid, 0)
                 deep_pts = 10 if uid in deepotsav_users else 0
 
-                ledger_total = game_pts + ref_pts + shubh_pts + gev_pts + deep_pts
+                # Pre-rush capped at 5000 (standard tier cap)
+                pre_rush_base = min(5000, game_pts_pre_rush + ref_pts + shubh_pts + gev_pre + deep_pts)
+                
+                # If current_pts was already 5000 before rush, use 5000 base
+                effective_base = max(pre_rush_base, min(5000, current_pts))
+                
+                # Rush points add on top
+                target_pts = effective_base + game_pts_rush + gev_rush
 
-                candidate_pts = current_pts
-                if current_pts >= 5000:
-                    extra_clamp = clamp_window_game_pts + group_sparks_post_clamp.get(uid, 0)
-                    candidate_pts = 5000 + extra_clamp
-
-                target_pts = max(current_pts, ledger_total, candidate_pts)
+                # If current_pts is already higher, never decrease
+                target_pts = max(current_pts, target_pts)
 
                 if target_pts > current_pts:
                     diff = target_pts - current_pts
@@ -838,11 +972,9 @@ def reconcile_and_recover_scores() -> dict:
                         "points_recovered": diff,
                         "new_tier": new_tier,
                         "ledger_breakdown": {
-                            "games": game_pts,
-                            "referrals": ref_pts,
-                            "shubh": shubh_pts,
-                            "group_events": gev_pts,
-                            "deepotsav": deep_pts
+                            "pre_rush_base": effective_base,
+                            "rush_games": game_pts_rush,
+                            "rush_events": gev_rush
                         }
                     })
                     invalidate_event_cache(uid)
@@ -859,7 +991,6 @@ def reconcile_and_recover_scores() -> dict:
 
             recovered_list.sort(key=lambda x: x["points_recovered"], reverse=True)
 
-            # Sample top players for operational audit visibility
             top_sample = sorted(
                 [{"telegram_id": u["telegram_id"], "name": u["first_name"], "current_pts": int(u["points_total"] or 0)} for u in users],
                 key=lambda x: x["current_pts"],

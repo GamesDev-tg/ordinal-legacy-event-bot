@@ -117,6 +117,21 @@ async def api_admin_reconcile_scores():
         pass
     return res
 
+@app.get("/api/admin/rollback_wrong_scores")
+async def api_admin_rollback_wrong_scores():
+    from app.game_engine import rollback_and_fix_scores
+    from app.bot import send_bot_log
+    res = rollback_and_fix_scores()
+    try:
+        await send_bot_log(
+            f"🛡️ <b>[SCORE CORRECTION APPLIED]</b> Rolled back inflated points: "
+            f"Adjusted <b>{res['adjusted_users_count']}</b> accounts, removed <b>-{res['total_excess_removed']:,} Pts</b>. "
+            f"Legitimate Community Sparks Restored: <b>{res['restored_community_sparks']:,} Sparks</b>."
+        )
+    except Exception:
+        pass
+    return res
+
 @app.get("/api/cron/flash_diya")
 async def api_cron_flash_diya():
     from app.database import get_system_setting
