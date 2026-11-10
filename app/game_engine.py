@@ -17,6 +17,66 @@ GHARANA_EMOJIS = {
     4: "💨"
 }
 
+def get_final_rush_multiplier(user_gharana_id: int) -> Tuple[int, bool, bool]:
+    from app.database import get_system_setting
+    rush_active = (get_system_setting("final_rush_active", "0") == "1")
+    boost = get_gharana_boost_status()
+    is_boosted = (user_gharana_id == boost["active_gharana_id"])
+    if rush_active:
+        multiplier = 3 if is_boosted else 2
+    else:
+        multiplier = 2 if is_boosted else 1
+    return multiplier, is_boosted, rush_active
+
+def claim_final_rush_wicks(user_id: int) -> dict:
+    from app.database import get_db_connection, get_system_setting, set_system_setting
+    key = f"rush_claimed_{user_id}"
+    if get_system_setting(key, ""):
+        return {
+            "success": False,
+            "message": "⚠️ <b>Blessing Already Claimed</b>\n\nYou have already received your +5 Diya Wicks Final Rush blessing! Use them in games before midnight (12:00 AM IST)!"
+        }
+    
+    conn = get_db_connection()
+    try:
+        with conn:
+            update_user_stamina(conn, user_id)
+            u = conn.execute("SELECT diya_wicks, first_name FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
+            if not u:
+                return {"success": False, "message": "❌ User record not found. Send /start to join first!"}
+            
+            curr = u["diya_wicks"]
+            added = min(5, settings.STAMINA_BANK_CAP - curr)
+            if added <= 0:
+                return {
+                    "success": False,
+                    "message": f"🪔 Your Diya Wicks are already full ({curr}/{settings.STAMINA_BANK_CAP})! Play some games first with /chakri, /rangoli, /mithai or in the Mini App, then claim your +5 refill."
+                }
+            
+            new_wicks = curr + added
+            conn.execute("UPDATE users SET diya_wicks = ? WHERE telegram_id = ?", (new_wicks, user_id))
+            try:
+                conn.execute("INSERT INTO system_settings (key, value) VALUES (?, ?)", (key, "1"))
+            except Exception:
+                conn.execute("UPDATE system_settings SET value = ? WHERE key = ?", ("1", key))
+            from app.cache import delete_cache
+            delete_cache(f"setting_{key}")
+        return {
+            "success": True,
+            "added": added,
+            "new_wicks": new_wicks,
+            "message": (
+                "🔥✨ <b>MAHA AARTI MIDNIGHT BLESSING CLAIMED!</b> ✨🔥\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"• <b>+{added} Diya Wicks</b> added to your lantern!\n"
+                f"• Current Stamina: <b>{new_wicks}/{settings.STAMINA_BANK_CAP} Wicks</b>\n"
+                "• <b>2X Sparks</b> on ALL games (3X when your Gharana surges!)\n\n"
+                "⚡ <i>The event closes at 12:00 AM IST. Make your final run to Tier 4 Shubhuluk Pet now!</i>"
+            )
+        }
+    finally:
+        conn.close()
+
 def get_gharana_boost_status(target_timestamp: Optional[float] = None) -> dict:
     """
     Computes the currently boosted Gharana with 2x points multiplier.
@@ -317,10 +377,9 @@ def finish_game_session(telegram_id: int, session_id: str, nonce: str, raw_score
         old_tier = user["tier_level"]
         u_gharana = user["gharana_id"]
 
-        # Calculate 2x Gharana Boost
+        # Calculate 2x Gharana Boost & Final Rush
         boost = get_gharana_boost_status()
-        is_boosted = (u_gharana == boost["active_gharana_id"])
-        multiplier = 2 if is_boosted else 1
+        multiplier, is_boosted, is_rush = get_final_rush_multiplier(u_gharana)
         awarded_points = raw_score * multiplier
 
         try:
@@ -355,6 +414,7 @@ def finish_game_session(telegram_id: int, session_id: str, nonce: str, raw_score
         "base_score": raw_score,
         "is_boosted": is_boosted,
         "multiplier": multiplier,
+        "is_rush": is_rush,
         "active_gharana_boost": boost,
         "new_user_total": new_points,
         "community_total": comm_total,

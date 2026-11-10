@@ -638,11 +638,10 @@ def execute_in_chat_game(user_id: int, game_type: int) -> dict:
             roll = random.random()
             base_score = 3 if roll < 0.45 else (2 if roll < 0.85 else 1)
             
-            # Check active Gharana 2x Boost
-            from app.game_engine import get_gharana_boost_status
+            # Check active Gharana 2x Boost & Final Rush
+            from app.game_engine import get_gharana_boost_status, get_final_rush_multiplier
             boost = get_gharana_boost_status()
-            is_boosted = (u["gharana_id"] == boost["active_gharana_id"])
-            multiplier = 2 if is_boosted else 1
+            multiplier, is_boosted, is_rush = get_final_rush_multiplier(u["gharana_id"])
             awarded_score = base_score * multiplier
             
             new_pts = u["points_total"] + awarded_score
@@ -684,6 +683,7 @@ def execute_in_chat_game(user_id: int, game_type: int) -> dict:
             "score": awarded_score,
             "base_score": base_score,
             "is_boosted": is_boosted,
+            "is_rush": is_rush,
             "multiplier": multiplier,
             "active_boost": boost,
             "new_pts": new_pts,
@@ -778,7 +778,14 @@ async def run_in_chat_chakri(chat_id: int, user_id: int):
         score = res["score"]
         sparks = "✨" * (score * 3)
         boost_info = res.get("active_boost", {})
-        if res.get("is_boosted"):
+        mult = res.get("multiplier", 1)
+        if mult >= 3:
+            boost_header = f"⚡🔥 *MAHA AARTI 3X COSMIC SURGE!* 🔥⚡\n_Divine house alignment! {boost_info.get('active_gharana_name')} receives 3X Sparks!_\n\n"
+            score_text = f"🏆 *Score Awarded*: `+{score} Hard Sparks` ⚡ *(Base: +{res['base_score']} × 3 Cosmic Boost!)*"
+        elif mult == 2 and res.get("is_rush"):
+            boost_header = f"🔥 *MAHA AARTI 2X MIDNIGHT RUSH!* 🔥\n_Final Hours Surge! All houses receive 2X Sparks!_\n\n"
+            score_text = f"🏆 *Score Awarded*: `+{score} Hard Sparks` ⚡ *(Base: +{res['base_score']} × 2 Final Rush!)*"
+        elif res.get("is_boosted"):
             boost_header = f"⚡ *MAHA GHARANA 2X SURGE APPLIED!* ⚡\n_Divine blessings! Your house {boost_info.get('active_gharana_name')} receives 2X Sparks!_\n\n"
             score_text = f"🏆 *Score Awarded*: `+{score} Hard Sparks` ⚡ *(Base: +{res['base_score']} × 2 Boost!)*"
         else:
@@ -855,7 +862,14 @@ async def run_in_chat_rangoli(chat_id: int, user_id: int):
             return
         score = res["score"]
         boost_info = res.get("active_boost", {})
-        if res.get("is_boosted"):
+        mult = res.get("multiplier", 1)
+        if mult >= 3:
+            boost_header = f"⚡🔥 *MAHA AARTI 3X COSMIC SURGE!* 🔥⚡\n_Divine house alignment! {boost_info.get('active_gharana_name')} receives 3X Sparks!_\n\n"
+            score_text = f"🏆 *Score Awarded*: `+{score} Hard Sparks` ⚡ *(Base: +{res['base_score']} × 3 Cosmic Boost!)*"
+        elif mult == 2 and res.get("is_rush"):
+            boost_header = f"🔥 *MAHA AARTI 2X MIDNIGHT RUSH!* 🔥\n_Final Hours Surge! All houses receive 2X Sparks!_\n\n"
+            score_text = f"🏆 *Score Awarded*: `+{score} Hard Sparks` ⚡ *(Base: +{res['base_score']} × 2 Final Rush!)*"
+        elif res.get("is_boosted"):
             boost_header = f"⚡ *MAHA GHARANA 2X SURGE APPLIED!* ⚡\n_Divine blessings! Your house {boost_info.get('active_gharana_name')} receives 2X Sparks!_\n\n"
             score_text = f"🏆 *Score Awarded*: `+{score} Hard Sparks` ⚡ *(Base: +{res['base_score']} × 2 Boost!)*"
         else:
@@ -931,7 +945,14 @@ async def run_in_chat_mithai(chat_id: int, user_id: int):
             return
         score = res["score"]
         boost_info = res.get("active_boost", {})
-        if res.get("is_boosted"):
+        mult = res.get("multiplier", 1)
+        if mult >= 3:
+            boost_header = f"⚡🔥 *MAHA AARTI 3X COSMIC SURGE!* 🔥⚡\n_Divine house alignment! {boost_info.get('active_gharana_name')} receives 3X Sparks!_\n\n"
+            score_text = f"🏆 *Score Awarded*: `+{score} Hard Sparks` ⚡ *(Base: +{res['base_score']} × 3 Cosmic Boost!)*"
+        elif mult == 2 and res.get("is_rush"):
+            boost_header = f"🔥 *MAHA AARTI 2X MIDNIGHT RUSH!* 🔥\n_Final Hours Surge! All houses receive 2X Sparks!_\n\n"
+            score_text = f"🏆 *Score Awarded*: `+{score} Hard Sparks` ⚡ *(Base: +{res['base_score']} × 2 Final Rush!)*"
+        elif res.get("is_boosted"):
             boost_header = f"⚡ *MAHA GHARANA 2X SURGE APPLIED!* ⚡\n_Divine blessings! Your house {boost_info.get('active_gharana_name')} receives 2X Sparks!_\n\n"
             score_text = f"🏆 *Score Awarded*: `+{score} Hard Sparks` ⚡ *(Base: +{res['base_score']} × 2 Boost!)*"
         else:
@@ -1509,6 +1530,34 @@ async def handle_bot_message(message: Dict[str, Any]):
             kb_buttons.append([{"text": "🎁 Send Free Wick to Companion", "callback_data": f"gift_companion_wick:{user_id}"}])
         kb_buttons.append([{"text": "📲 Share Invite on Telegram", "url": f"https://t.me/share/url?url={invite_link}&text=Join%20me%20in%20the%20Ordinal%20Legacy%20Diwali%20Maha%20Deepotsav!"}])
         await send_telegram_message(chat_id, shagun_msg, {"inline_keyboard": kb_buttons})
+        return
+
+    elif text.startswith(("/rush", "/aarti", "/finalrush")):
+        parts = text.split()
+        if len(parts) > 1 and is_admin(user_id):
+            arg = parts[1].lower()
+            if arg in ("on", "start", "enable"):
+                set_system_setting("final_rush_active", "1")
+                await send_telegram_message(
+                    chat_id,
+                    "🔥 <b>MAHA AARTI MIDNIGHT RUSH IS NOW ACTIVE!</b>\n\n"
+                    "• <b>2X Baseline Sparks</b> for ALL houses\n"
+                    "• <b>3X Cosmic Surge</b> for the active boosted Gharana\n"
+                    "• <b>+5 Diya Wicks Blessing</b> available via <code>/rush</code>\n\n"
+                    "Let the final countdown to midnight begin!"
+                )
+                return
+            elif arg in ("off", "stop", "disable"):
+                set_system_setting("final_rush_active", "0")
+                await send_telegram_message(chat_id, "⏹ Final Midnight Rush has been deactivated.")
+                return
+
+        from app.game_engine import claim_final_rush_wicks
+        res = claim_final_rush_wicks(user_id)
+        if res.get("success"):
+            from app.cache import invalidate_event_cache
+            invalidate_event_cache(user_id)
+        await send_telegram_message(chat_id, res["message"])
         return
 
     elif text == "/shubh":

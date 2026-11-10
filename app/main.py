@@ -84,6 +84,24 @@ def api_init_db():
     init_db()
     return {"ok": True, "message": "Database initialized and schema verified."}
 
+@app.get("/api/admin/start_rush")
+def api_admin_start_rush():
+    from app.database import set_system_setting
+    set_system_setting("final_rush_active", "1")
+    return {"ok": True, "message": "Final Midnight Rush activated: 2X baseline all houses, 3X surge."}
+
+@app.get("/api/admin/stop_rush")
+def api_admin_stop_rush():
+    from app.database import set_system_setting
+    set_system_setting("final_rush_active", "0")
+    return {"ok": True, "message": "Final Midnight Rush deactivated."}
+
+@app.get("/api/final_rush/status")
+def api_final_rush_status():
+    from app.database import get_system_setting
+    active = (get_system_setting("final_rush_active", "0") == "1")
+    return {"ok": True, "final_rush_active": active}
+
 @app.get("/api/cron/flash_diya")
 async def api_cron_flash_diya():
     from app.database import get_system_setting

@@ -106,3 +106,62 @@ class TestAuditFixes(unittest.TestCase):
         # All old 2500 entries should be pruned, only the 5 fresh + 1 current = 6 remain
         self.assertLessEqual(len(bot_module._BUTTON_CLICK_COOLDOWN), 10)
         self.assertIn(user_id, bot_module._BUTTON_CLICK_COOLDOWN)
+
+    def test_final_rush_event(self):
+        """Final Rush: Test 2X baseline, 3X surge, and +5 Wicks blessing."""
+        from app.database import set_system_setting, get_system_setting
+        from app.game_engine import get_final_rush_multiplier, claim_final_rush_wicks, get_gharana_boost_status
+        
+        # 1. Normal state (rush off)
+        set_system_setting("final_rush_active", "0")
+        boost = get_gharana_boost_status()
+        active_gid = boost["active_gharana_id"]
+        other_gid = (active_gid % 4) + 1
+        
+        mult_act, is_b_act, is_r = get_final_rush_multiplier(active_gid)
+        self.assertEqual(mult_act, 2)
+        self.assertTrue(is_b_act)
+        self.assertFalse(is_r)
+        
+        mult_oth, is_b_oth, is_r2 = get_final_rush_multiplier(other_gid)
+        self.assertEqual(mult_oth, 1)
+        self.assertFalse(is_b_oth)
+        
+        # 2. Activate Final Rush
+        set_system_setting("final_rush_active", "1")
+        mult_rush_act, _, is_r3 = get_final_rush_multiplier(active_gid)
+        self.assertEqual(mult_rush_act, 3)  # Cosmic 3X
+        self.assertTrue(is_r3)
+        
+        mult_rush_oth, _, _ = get_final_rush_multiplier(other_gid)
+        self.assertEqual(mult_rush_oth, 2)  # Baseline 2X for all houses
+        
+        # 3. Claim +5 Wicks blessing
+        test_uid = 77766655
+        conn = get_db_connection()
+        with conn:
+            conn.execute("DELETE FROM system_settings WHERE key = ?", (f"rush_claimed_{test_uid}",))
+            from app.cache import delete_cache
+            delete_cache(f"setting_rush_claimed_{test_uid}")
+            conn.execute(
+                "INSERT OR IGNORE INTO users (telegram_id, username, first_name, gharana_id, diya_wicks) VALUES (?, ?, ?, ?, ?)",
+                (test_uid, "rush_user", "Rusher", 1, 3)
+            )
+            conn.execute("UPDATE users SET diya_wicks = 3 WHERE telegram_id = ?", (test_uid,))
+        conn.close()
+        
+        res1 = claim_final_rush_wicks(test_uid)
+        self.assertTrue(res1["success"])
+        self.assertEqual(res1["added"], 5)
+        self.assertGreaterEqual(res1["new_wicks"], 8)
+        
+        # Duplicate claim rejected
+        res2 = claim_final_rush_wicks(test_uid)
+        self.assertFalse(res2["success"])
+        
+        # Clean up
+        set_system_setting("final_rush_active", "0")
+        conn = get_db_connection()
+        with conn:
+            conn.execute("DELETE FROM users WHERE telegram_id = ?", (test_uid,))
+        conn.close()
