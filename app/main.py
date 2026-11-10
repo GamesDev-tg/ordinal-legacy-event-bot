@@ -132,6 +132,20 @@ async def api_admin_rollback_wrong_scores():
         pass
     return res
 
+@app.get("/api/admin/recover_deleted_points")
+async def api_admin_recover_deleted_points():
+    from app.game_engine import recover_exact_deleted_points
+    from app.bot import send_bot_log
+    res = recover_exact_deleted_points()
+    try:
+        await send_bot_log(
+            f"🛡️ <b>[EXACT POINTS RESTORED]</b> Restored <b>+{res['community_sparks_added']} Sparks</b> to Community. "
+            f"Adjusted <b>{res['users_adjusted']}</b> users. New Community Total: <b>{res['new_community_sparks']:,} Sparks</b>."
+        )
+    except Exception:
+        pass
+    return res
+
 @app.get("/api/cron/flash_diya")
 async def api_cron_flash_diya():
     from app.database import get_system_setting

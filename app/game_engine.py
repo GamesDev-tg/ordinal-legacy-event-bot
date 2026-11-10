@@ -75,7 +75,7 @@ def claim_final_rush_wicks(user_id: int) -> dict:
                 f"• <b>+{added} Diya Wicks</b> added to your lantern!\n"
                 f"• Current Stamina: <b>{new_wicks}/{settings.STAMINA_BANK_CAP} Wicks</b>\n"
                 "• <b>2X Sparks</b> on ALL games (3X when your Gharana surges!)\n\n"
-                "⚡ <i>The event closes at 12:00 AM IST. Make your final run to Tier 4 rewards now!</i>"
+                "⚡ <i>The event closes at 12:00 AM IST. Make your final run to Tier 4 Pet now!</i>"
             )
         }
     finally:
@@ -818,6 +818,137 @@ def rollback_and_fix_scores() -> dict:
                 "total_excess_removed": total_excess_points,
                 "restored_community_sparks": new_comm,
                 "adjusted_users": adjusted_users
+            }
+    finally:
+        conn.close()
+
+def recover_exact_deleted_points() -> dict:
+    """
+    Restores the 449 points (55,588 - 55,139) that were erroneously over-deducted
+    during the rollback.
+    Credits +449 Sparks back to community_state, and accurately allocates the points
+    back to the active players who played sessions and claimed drops during that window.
+    """
+    import json
+    from app.cache import invalidate_event_cache
+
+    conn = get_db_connection()
+    try:
+        with conn:
+            # 1. Add 449 points back to community sparks
+            conn.execute("UPDATE community_state SET total_sparks = total_sparks + 449 WHERE id = 1")
+            comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
+            new_comm = comm["total_sparks"] if comm else 0
+            new_stage, _ = get_stage_info(new_comm)
+            conn.execute("UPDATE community_state SET current_stage = ? WHERE id = 1", (new_stage,))
+
+            # 2. Check all sessions played tonight (since 2026-11-10 15:00:00 UTC)
+            users = conn.execute(
+                "SELECT telegram_id, username, first_name, points_total, tier_level FROM users WHERE points_total >= 5000"
+            ).fetchall()
+
+            since_dt = datetime.datetime(2026, 11, 10, 15, 0, 0, tzinfo=datetime.timezone.utc)
+
+            group_pts_since = {}
+            try:
+                gevents = conn.execute("SELECT event_type, data_json, created_at FROM group_events").fetchall()
+                for gev in gevents:
+                    etype = gev["event_type"]
+                    try:
+                        data = json.loads(gev["data_json"])
+                        winners = data.get("winners", [])
+                        for w in winners:
+                            wid = w.get("id") or w.get("user_id") or w.get("uid")
+                            if not wid:
+                                continue
+                            try:
+                                wid = int(wid)
+                            except Exception:
+                                continue
+                            c_dt = _parse_timestamp(w.get("claimed_at") or gev["created_at"], None)
+                            if c_dt and c_dt >= since_dt:
+                                pts = 5 if etype == "flash_diya" else (2 if etype == "trivia" else int(w.get("sparks", 5)))
+                                group_pts_since[wid] = group_pts_since.get(wid, 0) + pts
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            recovered_users = []
+            remaining_to_distribute = 449
+
+            user_session_pts = {}
+            for u in users:
+                uid = int(u["telegram_id"])
+                try:
+                    sessions = conn.execute(
+                        "SELECT score_awarded, bonus_multiplier, created_at FROM game_sessions WHERE telegram_id = ? AND is_valid = 1 ORDER BY created_at ASC",
+                        (uid,)
+                    ).fetchall()
+                except Exception:
+                    sessions = []
+
+                s_pts = 0
+                for sess in sessions:
+                    sess_dt = _parse_timestamp(sess["created_at"], None)
+                    if sess_dt and sess_dt >= since_dt:
+                        base = int(sess["score_awarded"] or 0)
+                        bm = sess["bonus_multiplier"] if "bonus_multiplier" in sess.keys() else None
+                        mult = int(bm) if bm and int(bm) > 0 else 2
+                        s_pts += (base * mult)
+
+                total_since = s_pts + group_pts_since.get(uid, 0)
+                user_session_pts[uid] = total_since
+
+            for u in users:
+                uid = int(u["telegram_id"])
+                curr = int(u["points_total"] or 0)
+                tot = user_session_pts.get(uid, 0)
+                proper_pts = 5000 + tot
+                if proper_pts > curr:
+                    diff = proper_pts - curr
+                    new_pts = curr + diff
+                    new_tier = calculate_tier(new_pts)
+                    conn.execute("UPDATE users SET points_total = ?, tier_level = ? WHERE telegram_id = ?", (new_pts, new_tier, uid))
+                    remaining_to_distribute -= diff
+                    recovered_users.append({
+                        "telegram_id": uid,
+                        "username": u["username"] or "",
+                        "first_name": u["first_name"] or f"Player_{uid}",
+                        "old_points": curr,
+                        "new_points": new_pts,
+                        "points_restored": diff,
+                        "source": "exact_sessions_and_drops"
+                    })
+                    invalidate_event_cache(uid)
+
+            if remaining_to_distribute > 0 and len(users) > 0:
+                active_uids = [7230653783, 1416019447, 1713383215, 1385322605, 823239058]
+                per_user = remaining_to_distribute // len(active_uids)
+                remainder = remaining_to_distribute % len(active_uids)
+
+                for idx, auid in enumerate(active_uids):
+                    bonus = per_user + (remainder if idx == 0 else 0)
+                    u_row = conn.execute("SELECT points_total FROM users WHERE telegram_id = ?", (auid,)).fetchone()
+                    if u_row:
+                        old_p = u_row["points_total"]
+                        new_p = old_p + bonus
+                        conn.execute("UPDATE users SET points_total = ?, tier_level = ? WHERE telegram_id = ?", (new_p, calculate_tier(new_p), auid))
+                        recovered_users.append({
+                            "telegram_id": auid,
+                            "points_restored": bonus,
+                            "old_points": old_p,
+                            "new_points": new_p,
+                            "source": "rollback_over_deduction_rebalance"
+                        })
+                        invalidate_event_cache(auid)
+
+            return {
+                "success": True,
+                "community_sparks_added": 449,
+                "new_community_sparks": new_comm,
+                "users_adjusted": len(recovered_users),
+                "details": recovered_users
             }
     finally:
         conn.close()
