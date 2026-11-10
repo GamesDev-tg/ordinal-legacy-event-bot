@@ -144,7 +144,7 @@ def get_db_connection():
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON;")
         conn.execute("PRAGMA journal_mode = WAL;")
-        conn.execute("PRAGMA busy_timeout = 5000;")
+        conn.execute("PRAGMA busy_timeout = 10000;")
         conn.execute("PRAGMA synchronous = NORMAL;")
         conn.execute("PRAGMA cache_size = -8000;")
         return conn
@@ -251,6 +251,12 @@ def init_postgres_db():
         CREATE INDEX IF NOT EXISTS idx_referrals_referred ON referrals (referred_id);
         CREATE INDEX IF NOT EXISTS idx_game_sessions_tgid ON game_sessions (telegram_id);
         ''')
+
+        try:
+            conn.execute("ALTER TABLE game_sessions DROP CONSTRAINT IF EXISTS game_sessions_score_awarded_check;")
+            conn.execute("ALTER TABLE game_sessions ADD CONSTRAINT game_sessions_score_awarded_check CHECK (score_awarded BETWEEN 0 AND 3);")
+        except Exception:
+            pass
         
         row = conn.execute("SELECT COUNT(*) as count FROM community_state").fetchone()
         if row["count"] == 0:

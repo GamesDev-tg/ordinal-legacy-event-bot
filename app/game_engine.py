@@ -54,7 +54,7 @@ def _parse_timestamp(val, default_dt: Optional[datetime.datetime] = None) -> Opt
     if isinstance(val, datetime.datetime):
         if val.tzinfo is None:
             return val.replace(tzinfo=datetime.timezone.utc)
-        return val
+        return val.astimezone(datetime.timezone.utc)
     if isinstance(val, (int, float)):
         try:
             return datetime.datetime.fromtimestamp(val, tz=datetime.timezone.utc)
@@ -64,13 +64,16 @@ def _parse_timestamp(val, default_dt: Optional[datetime.datetime] = None) -> Opt
         val = val.strip()
         if not val:
             return default_dt
-        if val.endswith('Z'):
-            val = val[:-1] + '+00:00'
+        val_clean = val.replace("Z", "+00:00")
         try:
-            dt = datetime.datetime.fromisoformat(val)
+            dt = datetime.datetime.fromisoformat(val_clean)
         except Exception:
             try:
-                dt = datetime.datetime.strptime(val.split('.')[0].split('+')[0], "%Y-%m-%d %H:%M:%S")
+                clean_part = val_clean.split('.')[0].split('+')[0]
+                if 'T' in clean_part:
+                    dt = datetime.datetime.strptime(clean_part, "%Y-%m-%dT%H:%M:%S")
+                else:
+                    dt = datetime.datetime.strptime(clean_part, "%Y-%m-%d %H:%M:%S")
             except Exception:
                 try:
                     f_val = float(val)
@@ -79,6 +82,8 @@ def _parse_timestamp(val, default_dt: Optional[datetime.datetime] = None) -> Opt
                     return default_dt
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=datetime.timezone.utc)
+        else:
+            dt = dt.astimezone(datetime.timezone.utc)
         return dt
     return default_dt
 
@@ -105,6 +110,11 @@ def update_user_stamina(conn, telegram_id: int) -> int:
         cooldown = get_random_wick_cooldown()
 
     last_regen = _parse_timestamp(user["last_wick_regen"], None)
+    if last_regen is not None:
+        if last_regen.tzinfo is None:
+            last_regen = last_regen.replace(tzinfo=datetime.timezone.utc)
+        else:
+            last_regen = last_regen.astimezone(datetime.timezone.utc)
 
     # SELF-HEALING: If last_wick_regen is missing, invalid, or corrupted
     if last_regen is None:

@@ -3131,6 +3131,7 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
         return
 
     # 1. Anti-spam rate-limit guard (debounced at 200ms to keep clicks feeling instantaneous)
+    global _BUTTON_CLICK_COOLDOWN
     now = time.time()
     last_click = _BUTTON_CLICK_COOLDOWN.get(user_id, 0.0)
     if now - last_click < 0.20:
@@ -3141,6 +3142,9 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
         )
         return
     _BUTTON_CLICK_COOLDOWN[user_id] = now
+    if len(_BUTTON_CLICK_COOLDOWN) > 2000:
+        cutoff = now - 60.0
+        _BUTTON_CLICK_COOLDOWN = {uid: ts for uid, ts in _BUTTON_CLICK_COOLDOWN.items() if ts > cutoff}
 
     # 2. Owner ID Guard: verify if button belongs to this user
     parts = raw_data.split(":")
