@@ -1061,7 +1061,9 @@ async def handle_bot_message(message: Dict[str, Any]):
             "/resetevent", "/cleandummy", "/purgedummy", "/syncreferrals",
             "/recoverscores", "/restorescores", "/syncscores",
             "/resetreferrals", "/query", "/syncbot",
-            "/dropdiya", "/flashdiya", "/droptrivia", "/riddle"
+            "/dropdiya", "/flashdiya", "/droptrivia", "/riddle",
+            "/dropbox", "/luckybox", "/shubhbox",
+            "/fixscores", "/rollbackscores", "/recoverextra"
         }
         is_user_admin = is_admin(user_id)
         if cmd_head in ADMIN_COMMANDS:
@@ -1912,8 +1914,16 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"• `/addadmin <id>` — Add new administrator\n"
             f"• `/deladmin <id>` — Remove administrator\n"
             f"• `/admins` — View list of administrators\n\n"
+            f"🎉 <b>Live Drops & Festive Rush:</b>\n"
+            f"• `/dropdiya [claims]` — Drop a Sacred Flash Diya in group (+1 Wick & +5 Pts)\n"
+            f"• `/droptrivia` — Dispatch Festive Trivia in group (+1 Wick & +2 Pts for first 3 correct)\n"
+            f"• `/dropbox` — Drop a Sacred Golden Box with rolling rewards (Jackpot/Fortune/Silver)\n"
+            f"• `/rush` — Claim +5 Diya Wicks midnight stamina boost (Admin unrestricted)\n"
+            f"• `/deepotsav` — Offer Diya flame on Maha Akhand altar (+1 Wick, +10 Pts, +25 Sparks)\n\n"
             f"⏸️ <b>Event Controls & Score Auditing:</b>\n"
             f"• `/recoverscores` — Reconcile & recover all player points from gameplay sessions\n"
+            f"• `/fixscores` — Rollback over-inflated scores and calibrate legitimate Final Rush points\n"
+            f"• `/recoverextra` — Restore any over-deducted points back to community and active players\n"
             f"• `/adminstats` — Deep audit of all players, active users & total contributions (also `/userstats`)\n"
             f"• `/stopevent` — Freeze game plays for final score audit\n"
             f"• `/resumeevent` — Unfreeze game plays and resume festival\n"
@@ -2945,6 +2955,66 @@ async def handle_bot_message(message: Dict[str, Any]):
 
         await send_telegram_message(chat_id, msg)
         await send_bot_log(f"🛡️ <b>[SCORE AUDIT COMPLETE]</b> Admin <code>{user_id}</code> ran <code>/recoverscores</code>: Restored <b>{rec_count}</b> accounts with <b>+{pts_rec:,} Pts</b>! Community: <b>{new_comm:,} Sparks</b>.")
+        return
+
+    elif text.startswith(("/fixscores", "/rollbackscores")):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+
+        from app.game_engine import rollback_and_fix_scores
+        res = rollback_and_fix_scores()
+
+        adj_count = res["adjusted_users_count"]
+        excess_rem = res["total_excess_removed"]
+        restored_comm = res["restored_community_sparks"]
+
+        msg = (
+            "🛡️ <b>SCORE CORRECTION & ROLLBACK EXECUTED</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"• <b>Inflated Accounts Corrected</b>: <code>{adj_count}</code>\n"
+            f"• <b>Erroneous Points Removed</b>: <code>-{excess_rem:,} Pts</code>\n"
+            f"• <b>Restored Community Sparks</b>: <code>{restored_comm:,} Sparks</code>\n\n"
+        )
+
+        if adj_count > 0:
+            msg += "🏆 <b>Corrected Player Rosters:</b>\n\n"
+            for idx, r in enumerate(res["adjusted_users"][:10], 1):
+                u_tag = f"@{r['username']}" if r['username'] else html.escape(r['first_name'])
+                msg += (
+                    f"<b>{idx}. {u_tag}</b> (<code>{r['telegram_id']}</code>)\n"
+                    f"   <code>{r['inflated_points']:,}</code> ➔ <b>{r['corrected_points']:,} Pts</b> "
+                    f"(<b>-{r['excess_removed']:,} Pts</b>) | Rush Earned: +{r['rush_points_earned']} Pts\n\n"
+                )
+        else:
+            msg += "✨ <i>No inflated accounts found. All scores are already correct.</i>\n\n"
+
+        await send_telegram_message(chat_id, msg)
+        await send_bot_log(f"🛡️ <b>[SCORE CORRECTION]</b> Admin <code>{user_id}</code> ran <code>/fixscores</code>: Adjusted <b>{adj_count}</b> accounts, removed <b>-{excess_rem:,} Pts</b>. Restored Community: <b>{restored_comm:,} Sparks</b>.")
+        return
+
+    elif text.startswith(("/recoverextra", "/restorediff")):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+
+        from app.game_engine import recover_exact_deleted_points
+        res = recover_exact_deleted_points()
+
+        msg = (
+            "🛡️ <b>EXACT DIFFERENCE RECOVERY EXECUTED</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"• <b>Community Sparks Added</b>: <code>+{res['community_sparks_added']} Sparks</code>\n"
+            f"• <b>New Community Akhand Total</b>: <code>{res['new_community_sparks']:,} Sparks</code>\n"
+            f"• <b>Players Adjusted</b>: <code>{res['users_adjusted']}</code>\n\n"
+        )
+        if res.get("details"):
+            msg += "🏆 <b>Restored Active Players:</b>\n\n"
+            for idx, d in enumerate(res["details"][:10], 1):
+                name = d.get("first_name") or f"Player {d['telegram_id']}"
+                msg += f"<b>{idx}. {html.escape(name)}</b> (<code>{d['telegram_id']}</code>): <code>{d['old_points']:,}</code> ➔ <b>{d['new_points']:,} Pts</b> (<b>+{d['points_restored']} Pts</b>)\n"
+        await send_telegram_message(chat_id, msg)
+        await send_bot_log(f"🛡️ <b>[POINTS RESTORED]</b> Admin <code>{user_id}</code> ran <code>/recoverextra</code>: Added +449 Sparks. Community: {res['new_community_sparks']:,} Sparks.")
         return
 
     elif text in ("/stopevent", "/pauseevent"):
