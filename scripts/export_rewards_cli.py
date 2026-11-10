@@ -78,7 +78,7 @@ def generate_reward_reports(output_csv_path="final_rewards_report.csv"):
                 shares = "4 Shares + Sovereign Mukut"
             elif t == 4:
                 category = "Deep Mahant"
-                shares = "2 Airdrop Shares + Shubhuluk Pet"
+                shares = "2 Airdrop Shares"
             elif t == 3:
                 category = "Spark Master"
                 shares = "1 Airdrop Share"

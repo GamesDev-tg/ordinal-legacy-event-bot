@@ -75,7 +75,7 @@ def claim_final_rush_wicks(user_id: int) -> dict:
                 f"• <b>+{added} Diya Wicks</b> added to your lantern!\n"
                 f"• Current Stamina: <b>{new_wicks}/{settings.STAMINA_BANK_CAP} Wicks</b>\n"
                 "• <b>2X Sparks</b> on ALL games (3X when your Gharana surges!)\n\n"
-                "⚡ <i>The event closes at 12:00 AM IST. Make your final run to Tier 4 Shubhuluk Pet now!</i>"
+                "⚡ <i>The event closes at 12:00 AM IST. Make your final run to Tier 4 rewards now!</i>"
             )
         }
     finally:
