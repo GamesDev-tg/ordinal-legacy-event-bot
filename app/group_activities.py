@@ -455,3 +455,195 @@ def get_gharana_clash_card() -> str:
         "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         "🪔 <i>Play mini-games in the bot or mini app to score sparks for your Gharana!</i>"
     )
+
+
+def create_golden_box_drop(chat_id: int, max_claims: int = 5) -> Tuple[int, str, dict]:
+    ensure_group_events_table()
+    data = {
+        "max_claims": max_claims,
+        "claimed_uids": [],
+        "winners": []
+    }
+    conn = get_db_connection()
+    try:
+        with conn:
+            cur = conn.execute(
+                "INSERT INTO group_events (event_type, chat_id, data_json, is_active) VALUES ('golden_box', ?, ?, 1)",
+                (chat_id, json.dumps(data))
+            )
+            event_id = cur.lastrowid
+            if not event_id:
+                row = conn.execute("SELECT id FROM group_events WHERE event_type = 'golden_box' ORDER BY id DESC LIMIT 1").fetchone()
+                event_id = row["id"]
+    finally:
+        conn.close()
+
+    text = (
+        "🎁✨ <b>MAHA DEEPOTSAV: SACRED GOLDEN BOX DROPPED!</b> ✨🎁\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "A celestial golden chest has appeared in @Ordinal_Legacy!\n\n"
+        f"The first <b>{max_claims} Lampbearers</b> to open it will unlock randomized divine blessings:\n"
+        "• 🌟 <b>Golden Jackpot (20%)</b>: +5 Diya Wicks & +25 Sparks!\n"
+        "• 🔮 <b>Pearl Fortune (40%)</b>: +3 Diya Wicks & +15 Sparks!\n"
+        "• 🪙 <b>Silver Shagun (40%)</b>: +2 Diya Wicks & +10 Sparks!\n\n"
+        f"👉 <i>Tap below to unlock your lucky chest! ({max_claims}/{max_claims} gifts remaining)</i>"
+    )
+    keyboard = {
+        "inline_keyboard": [
+            [{"text": f"🎁 Open Sacred Box ({max_claims} left)", "callback_data": f"open_box:{event_id}"}]
+        ]
+    }
+    return event_id, text, keyboard
+
+def claim_golden_box(event_id: int, user_id: int, first_name: str) -> dict:
+    ensure_group_events_table()
+    conn = get_db_connection()
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    now_iso = now_utc.isoformat()
+    try:
+        with conn:
+            row = conn.execute("SELECT id, chat_id, message_id, data_json, is_active FROM group_events WHERE id = ?", (event_id,)).fetchone()
+            if not row:
+                return {"ok": False, "reason": "not_found", "message": "Sacred Golden Box event not found."}
+
+            if not row["is_active"]:
+                return {"ok": False, "reason": "exhausted", "message": "All lucky gifts in this Golden Box have already been claimed!"}
+
+            data = json.loads(row["data_json"])
+            claimed_uids = data.get("claimed_uids", [])
+            if user_id in claimed_uids:
+                return {"ok": False, "reason": "already_claimed", "message": "You have already opened this Golden Box!"}
+
+            max_claims = data.get("max_claims", 5)
+            if len(claimed_uids) >= max_claims:
+                conn.execute("UPDATE group_events SET is_active = 0 WHERE id = ?", (event_id,))
+                return {"ok": False, "reason": "exhausted", "message": "All lucky gifts in this Golden Box have already been claimed!"}
+
+            roll = random.random()
+            if roll < 0.20:
+                reward_tier = "🌟 Golden Jackpot"
+                wicks_awarded = 5
+                pts_awarded = 25
+            elif roll < 0.60:
+                reward_tier = "🔮 Pearl Fortune"
+                wicks_awarded = 3
+                pts_awarded = 15
+            else:
+                reward_tier = "🪙 Silver Shagun"
+                wicks_awarded = 2
+                pts_awarded = 10
+
+            u = conn.execute("SELECT points_total, diya_wicks, tier_level, last_wick_regen FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
+            if not u:
+                from app.bot import register_user_if_new
+                register_user_if_new(user_id, f"user_{user_id}", first_name)
+                u = conn.execute("SELECT points_total, diya_wicks, tier_level, last_wick_regen FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
+
+            claimed_uids.append(user_id)
+            safe_fn = re.sub(r'[\r\n\t]+', ' ', first_name).strip() if first_name else f"Player_{user_id}"
+            data["claimed_uids"] = claimed_uids
+            data.setdefault("winners", []).append({
+                "id": user_id,
+                "name": safe_fn,
+                "reward": reward_tier,
+                "wicks": wicks_awarded,
+                "sparks": pts_awarded,
+                "claimed_at": now_iso
+            })
+
+            is_completed = (len(claimed_uids) >= max_claims)
+            is_active_val = 0 if is_completed else 1
+            conn.execute(
+                "UPDATE group_events SET data_json = ?, is_active = ? WHERE id = ?",
+                (json.dumps(data), is_active_val, event_id)
+            )
+
+            curr_wicks = u["diya_wicks"] or 0
+            new_wicks = min(settings.STAMINA_BANK_CAP, curr_wicks + wicks_awarded)
+            new_pts = min(5000, (u["points_total"] or 0) + pts_awarded)
+            new_tier = calculate_tier(new_pts)
+
+            if not u["last_wick_regen"]:
+                conn.execute(
+                    "UPDATE users SET diya_wicks = ?, points_total = ?, tier_level = ?, last_wick_regen = ? WHERE telegram_id = ?",
+                    (new_wicks, new_pts, new_tier, now_iso, user_id)
+                )
+            else:
+                conn.execute(
+                    "UPDATE users SET diya_wicks = ?, points_total = ?, tier_level = ? WHERE telegram_id = ?",
+                    (new_wicks, new_pts, new_tier, user_id)
+                )
+
+            conn.execute("UPDATE community_state SET total_sparks = total_sparks + ? WHERE id = 1", (pts_awarded,))
+            invalidate_event_cache(user_id)
+
+            remaining = max(0, max_claims - len(claimed_uids))
+            return {
+                "ok": True,
+                "event_id": event_id,
+                "chat_id": row["chat_id"],
+                "message_id": row["message_id"],
+                "remaining": remaining,
+                "max_claims": max_claims,
+                "is_completed": is_completed,
+                "reward_tier": reward_tier,
+                "wicks_awarded": wicks_awarded,
+                "pts_awarded": pts_awarded,
+                "winners": data["winners"],
+                "new_wicks": new_wicks,
+                "new_pts": new_pts
+            }
+    finally:
+        conn.close()
+
+def claim_deepotsav_offering(user_id: int, first_name: str) -> dict:
+    from app.database import get_system_setting
+    key = f"deepotsav_offered_{user_id}"
+    if get_system_setting(key, ""):
+        return {
+            "success": False,
+            "message": "🪔 <b>Sacred Flame Already Offered</b>\n\nYou have already placed your Diya on the Maha Akhand Jyoti altar tonight! Thank you for illuminating our community."
+        }
+    
+    conn = get_db_connection()
+    try:
+        with conn:
+            from app.game_engine import update_user_stamina
+            update_user_stamina(conn, user_id)
+            u = conn.execute("SELECT diya_wicks, points_total, tier_level FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
+            if not u:
+                return {"success": False, "message": "❌ User record not found. Send /start to join first!"}
+            
+            new_wicks = min(settings.STAMINA_BANK_CAP, (u["diya_wicks"] or 0) + 1)
+            new_pts = min(5000, (u["points_total"] or 0) + 10)
+            new_tier = calculate_tier(new_pts)
+            
+            conn.execute(
+                "UPDATE users SET diya_wicks = ?, points_total = ?, tier_level = ? WHERE telegram_id = ?",
+                (new_wicks, new_pts, new_tier, user_id)
+            )
+            conn.execute("UPDATE community_state SET total_sparks = total_sparks + 25 WHERE id = 1")
+            
+            try:
+                conn.execute("INSERT INTO system_settings (key, value) VALUES (?, ?)", (key, "1"))
+            except Exception:
+                conn.execute("UPDATE system_settings SET value = ? WHERE key = ?", ("1", key))
+            
+            from app.cache import delete_cache
+            delete_cache(f"setting_{key}")
+            invalidate_event_cache(user_id)
+            
+        return {
+            "success": True,
+            "message": (
+                "🪔✨ <b>MAHA DEEPOTSAV FLAME OFFERING ACCEPTED!</b> ✨🪔\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Your sacred Diya has been placed upon the Maha Akhand Jyoti altar!\n\n"
+                "• <b>+1 Diya Wick 🪔</b> (Lantern stamina)\n"
+                f"• <b>+10 Personal Points ⚡</b> (Current: {new_pts}/5,000 Pts)\n"
+                "• <b>+25 Sparks 🔥</b> offered to the community Akhand Beacon!\n\n"
+                "<i>May the divine light guide you to Tier 5 Sovereign glory before midnight!</i>"
+            )
+        }
+    finally:
+        conn.close()

@@ -105,7 +105,11 @@ def get_gharana_boost_status(target_timestamp: Optional[float] = None) -> dict:
     }
 
 def get_random_wick_cooldown() -> int:
-    """Returns a random stamina refill duration between 1 to 3 minutes (60 to 180 seconds)."""
+    """Returns a random stamina refill duration between 1 to 3 minutes (60 to 180 seconds).
+    During Final Rush, cut in half to 30 to 60 seconds for fast turbo stamina regeneration!"""
+    from app.database import get_system_setting
+    if get_system_setting("final_rush_active", "0") == "1":
+        return random.randint(30, 60)
     return random.randint(60, 180)
 
 def _parse_timestamp(val, default_dt: Optional[datetime.datetime] = None) -> Optional[datetime.datetime]:
@@ -287,7 +291,7 @@ def claim_shubh_refill(telegram_id: int) -> dict:
         added_wicks = new_wicks - current_wicks
         
         bonus_points = 5
-        new_points = user["points_total"] + bonus_points
+        new_points = min(5000, user["points_total"] + bonus_points)
         new_tier = calculate_tier(new_points)
         
         conn.execute(
@@ -393,7 +397,7 @@ def finish_game_session(telegram_id: int, session_id: str, nonce: str, raw_score
                 (raw_score, duration_ms, session_id)
             )
 
-        new_points = old_points + awarded_points
+        new_points = min(5000, old_points + awarded_points)
         new_tier = calculate_tier(new_points)
         tier_unlocked = new_tier > old_tier
         

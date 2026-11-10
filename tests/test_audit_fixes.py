@@ -165,3 +165,73 @@ class TestAuditFixes(unittest.TestCase):
         with conn:
             conn.execute("DELETE FROM users WHERE telegram_id = ?", (test_uid,))
         conn.close()
+
+    def test_golden_box_and_deepotsav_offering(self):
+        """Verify Golden Box drop, rolling rewards, Deepotsav offering, and 5k max cap."""
+        from app.group_activities import create_golden_box_drop, claim_golden_box, claim_deepotsav_offering
+        from app.database import set_system_setting, get_db_connection
+        
+        # 1. Golden Box Drop
+        event_id, text, kb = create_golden_box_drop(-100999, max_claims=5)
+        self.assertIsNotNone(event_id)
+        self.assertIn("SACRED GOLDEN BOX", text)
+        self.assertIn("open_box", kb["inline_keyboard"][0][0]["callback_data"])
+
+        # Create test player with 4,995 points
+        p_uid = 66554433
+        conn = get_db_connection()
+        with conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO users (telegram_id, username, first_name, gharana_id, points_total, diya_wicks) VALUES (?, ?, ?, ?, ?, ?)",
+                (p_uid, "golden_tester", "GoldenBoy", 1, 4995, 2)
+            )
+            conn.execute("UPDATE users SET points_total = 4995, diya_wicks = 2 WHERE telegram_id = ?", (p_uid,))
+        conn.close()
+
+        # Claim Golden Box
+        res = claim_golden_box(event_id, p_uid, "GoldenBoy")
+        self.assertTrue(res["ok"])
+        self.assertIn(res["reward_tier"], ["🌟 Golden Jackpot", "🔮 Pearl Fortune", "🪙 Silver Shagun"])
+        self.assertGreaterEqual(res["new_wicks"], 4)
+        # Verify 5,000 point maximum cap
+        self.assertEqual(res["new_pts"], 5000)
+
+        # Duplicate claim blocked
+        res_dup = claim_golden_box(event_id, p_uid, "GoldenBoy")
+        self.assertFalse(res_dup["ok"])
+        self.assertEqual(res_dup["reason"], "already_claimed")
+
+        # 2. Deepotsav Offering
+        d_uid = 55443322
+        conn = get_db_connection()
+        with conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO users (telegram_id, username, first_name, gharana_id, points_total, diya_wicks) VALUES (?, ?, ?, ?, ?, ?)",
+                (d_uid, "deep_tester", "Deepak", 2, 4998, 5)
+            )
+            conn.execute("UPDATE users SET points_total = 4998, diya_wicks = 5 WHERE telegram_id = ?", (d_uid,))
+        conn.close()
+
+        res_off = claim_deepotsav_offering(d_uid, "Deepak")
+        self.assertTrue(res_off["success"])
+        self.assertIn("OFFERING ACCEPTED", res_off["message"])
+
+        # Check player points capped at 5000
+        conn = get_db_connection()
+        with conn:
+            u_check = conn.execute("SELECT points_total, diya_wicks FROM users WHERE telegram_id = ?", (d_uid,)).fetchone()
+            self.assertEqual(u_check["points_total"], 5000)
+            self.assertEqual(u_check["diya_wicks"], 6)
+        conn.close()
+
+        # Duplicate offering blocked
+        res_off2 = claim_deepotsav_offering(d_uid, "Deepak")
+        self.assertFalse(res_off2["success"])
+
+        # 3. Turbo Cooldown during Final Rush
+        set_system_setting("final_rush_active", "1")
+        from app.game_engine import get_random_wick_cooldown
+        for _ in range(20):
+            turbo_cd = get_random_wick_cooldown()
+            self.assertTrue(30 <= turbo_cd <= 60)
+        set_system_setting("final_rush_active", "0")

@@ -148,6 +148,29 @@ async def api_cron_trivia():
         return {"ok": True, "event_id": event_id, "chat_id": target_chat, "message_id": msg_id}
     return {"ok": False, "message": "Failed to send trivia"}
 
+@app.get("/api/cron/lucky_box")
+async def api_cron_lucky_box():
+    from app.database import get_system_setting
+    from app.group_activities import create_golden_box_drop, record_event_message_id
+    from app.bot import send_telegram_message_with_id
+    stored_group = get_system_setting("ordinal_legacy_group_chat_id", "")
+    cfg_id = getattr(settings, "ORDINAL_LEGACY_CHAT_ID", "")
+    target_chat = None
+    if cfg_id and str(cfg_id).lstrip("-").isdigit():
+        target_chat = int(cfg_id)
+    elif stored_group and stored_group.lstrip("-").isdigit():
+        target_chat = int(stored_group)
+
+    if not target_chat:
+        return {"ok": False, "message": "No @Ordinal_Legacy group ID detected yet."}
+
+    event_id, text, kb = create_golden_box_drop(target_chat, max_claims=5)
+    ok, msg_id = await send_telegram_message_with_id(target_chat, text, kb)
+    if ok and msg_id:
+        record_event_message_id(event_id, msg_id)
+        return {"ok": True, "event_id": event_id, "chat_id": target_chat, "message_id": msg_id}
+    return {"ok": False, "message": "Failed to send lucky box"}
+
 @app.get("/api/set_webhook")
 async def api_set_webhook():
     import httpx

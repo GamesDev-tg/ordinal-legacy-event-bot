@@ -644,7 +644,7 @@ def execute_in_chat_game(user_id: int, game_type: int) -> dict:
             multiplier, is_boosted, is_rush = get_final_rush_multiplier(u["gharana_id"])
             awarded_score = base_score * multiplier
             
-            new_pts = u["points_total"] + awarded_score
+            new_pts = min(5000, u["points_total"] + awarded_score)
             new_tier = calculate_tier(new_pts)
             
             conn.execute(
@@ -1530,6 +1530,42 @@ async def handle_bot_message(message: Dict[str, Any]):
             kb_buttons.append([{"text": "🎁 Send Free Wick to Companion", "callback_data": f"gift_companion_wick:{user_id}"}])
         kb_buttons.append([{"text": "📲 Share Invite on Telegram", "url": f"https://t.me/share/url?url={invite_link}&text=Join%20me%20in%20the%20Ordinal%20Legacy%20Diwali%20Maha%20Deepotsav!"}])
         await send_telegram_message(chat_id, shagun_msg, {"inline_keyboard": kb_buttons})
+        return
+
+    elif text.startswith(("/dropbox", "/luckybox", "/shubhbox")):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+
+        from app.group_activities import create_golden_box_drop, record_event_message_id
+        target_chat = chat_id
+        if is_private:
+            stored_group = get_system_setting("ordinal_legacy_group_chat_id", "")
+            cfg_id = getattr(settings, "ORDINAL_LEGACY_CHAT_ID", "")
+            if cfg_id and str(cfg_id).lstrip("-").isdigit():
+                target_chat = int(cfg_id)
+            elif stored_group and stored_group.lstrip("-").isdigit():
+                target_chat = int(stored_group)
+            else:
+                await send_telegram_message(chat_id, "👉 Run `/dropbox` directly inside the @Ordinal_Legacy group to drop the Sacred Golden Box!")
+                return
+
+        event_id, drop_text, kb = create_golden_box_drop(target_chat, max_claims=5)
+        ok, msg_id = await send_telegram_message_with_id(target_chat, drop_text, kb)
+        if ok and msg_id:
+            record_event_message_id(event_id, msg_id)
+            if is_private:
+                await send_telegram_message(chat_id, f"✅ *Sacred Golden Box Dispatched* to group `{target_chat}`! (Event ID: `{event_id}`)")
+            await send_bot_log(f"🎁 Admin `{user_id}` dropped a Sacred Golden Box in `{target_chat}`.")
+        else:
+            await send_telegram_message(chat_id, "❌ Failed to dispatch Golden Box to group.")
+        return
+
+    elif text.startswith(("/deepotsav", "/aartioffer", "/offering")):
+        from app.group_activities import claim_deepotsav_offering
+        first_name = from_user.get("first_name", "Lampbearer")
+        res = claim_deepotsav_offering(user_id, first_name)
+        await send_telegram_message(chat_id, res["message"])
         return
 
     elif text.startswith(("/rush", "/aarti", "/finalrush")):
@@ -3200,7 +3236,7 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
     action = parts[0]
     owner_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
 
-    PUBLIC_GROUP_ACTIONS = {"claim_diya", "flash_diya", "trivia_ans"}
+    PUBLIC_GROUP_ACTIONS = {"claim_diya", "flash_diya", "trivia_ans", "open_box"}
     if action not in PUBLIC_GROUP_ACTIONS:
         if owner_id is not None and owner_id != user_id:
             await answer_telegram_callback_query(
@@ -3214,7 +3250,58 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
     await answer_telegram_callback_query(callback_id)
 
     # 4. Route action
-    if action == "claim_diya":
+    if action == "open_box":
+        if len(parts) < 2 or not parts[1].isdigit():
+            await answer_telegram_callback_query(callback_id, "❌ Invalid box drop.", show_alert=True)
+            return
+        event_id = int(parts[1])
+        from app.group_activities import claim_golden_box
+        user_fn = from_user.get("first_name", f"Player_{user_id}")
+        res = claim_golden_box(event_id, user_id, user_fn)
+        if not res["ok"]:
+            await answer_telegram_callback_query(callback_id, text=res["message"], show_alert=True)
+            return
+
+        alert_msg = f"🎁 {res['reward_tier']} Unlocked!\n+{res['wicks_awarded']} Wicks (Now: {res['new_wicks']}/10) & +{res['pts_awarded']} Pts added!"
+        await answer_telegram_callback_query(callback_id, text=alert_msg, show_alert=True)
+
+        grp_chat_id = res.get("chat_id")
+        msg_id = res.get("message_id")
+        if grp_chat_id and msg_id:
+            if res["is_completed"]:
+                winners_lines = [
+                    f"• {html.escape(w['name'])} (ID: <code>{w['id']}</code>) &mdash; {w['reward']} (+{w['wicks']} Wicks, +{w['sparks']} Pts)"
+                    for w in res["winners"]
+                ]
+                done_text = (
+                    "🎁✨ <b>MAHA DEEPOTSAV: ALL 5 SACRED BOXES OPENED!</b> ✨🎁\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "The celestial golden chests have bestowed their divine treasures!\n\n"
+                    "👑 <b>Blessed Recipients:</b>\n" +
+                    "\n".join(winners_lines) +
+                    "\n\n<i>Use your wicks in Mini App or in-chat games before 12:00 AM IST!</i>"
+                )
+                await edit_telegram_message(grp_chat_id, msg_id, done_text, reply_markup={"inline_keyboard": []})
+            else:
+                updated_text = (
+                    "🎁✨ <b>MAHA DEEPOTSAV: SACRED GOLDEN BOX DROPPED!</b> ✨🎁\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "A celestial golden chest has appeared in @Ordinal_Legacy!\n\n"
+                    f"The first <b>{res['max_claims']} Lampbearers</b> to open it will unlock randomized divine blessings:\n"
+                    "• 🌟 <b>Golden Jackpot (20%)</b>: +5 Diya Wicks & +25 Sparks!\n"
+                    "• 🔮 <b>Pearl Fortune (40%)</b>: +3 Diya Wicks & +15 Sparks!\n"
+                    "• 🪙 <b>Silver Shagun (40%)</b>: +2 Diya Wicks & +10 Sparks!\n\n"
+                    f"👉 <i>Tap below to unlock your lucky chest! ({res['remaining']}/{res['max_claims']} gifts remaining)</i>"
+                )
+                updated_kb = {
+                    "inline_keyboard": [
+                        [{"text": f"🎁 Open Sacred Box ({res['remaining']} left)", "callback_data": f"open_box:{event_id}"}]
+                    ]
+                }
+                await edit_telegram_message(grp_chat_id, msg_id, updated_text, reply_markup=updated_kb)
+        return
+
+    elif action == "claim_diya":
         if len(parts) < 2 or not parts[1].isdigit():
             return
         event_id = int(parts[1])
