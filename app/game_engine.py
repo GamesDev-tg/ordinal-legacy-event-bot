@@ -281,35 +281,37 @@ def claim_shubh_refill(telegram_id: int) -> dict:
     today_str = datetime.date.today().isoformat()
     now_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
     conn = get_db_connection()
-    with conn:
-        update_user_stamina(conn, telegram_id)
-        user = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
+    try:
+        with conn:
+            update_user_stamina(conn, telegram_id)
+            user = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
+            if not user:
+                raise HTTPException(status_code=404, detail="User not found")
+                
+            from app.database import get_all_admin_ids
+            is_admin_user = (telegram_id in get_all_admin_ids())
+            if not is_admin_user and user["shubh_refill_date"] == today_str:
+                raise HTTPException(status_code=400, detail="You have already claimed today's Shubh Muhurat refill! Come back tomorrow.")
+                
+            current_wicks = user["diya_wicks"]
+            new_wicks = min(settings.STAMINA_BANK_CAP, current_wicks + 5)
+            added_wicks = new_wicks - current_wicks
             
-        from app.database import get_all_admin_ids
-        is_admin_user = (telegram_id in get_all_admin_ids())
-        if not is_admin_user and user["shubh_refill_date"] == today_str:
-            raise HTTPException(status_code=400, detail="You have already claimed today's Shubh Muhurat refill! Come back tomorrow.")
+            bonus_points = 5
+            new_points = user["points_total"] + bonus_points
+            new_tier = calculate_tier(new_points)
             
-        current_wicks = user["diya_wicks"]
-        new_wicks = min(settings.STAMINA_BANK_CAP, current_wicks + 5)
-        added_wicks = new_wicks - current_wicks
-        
-        bonus_points = 5
-        new_points = user["points_total"] + bonus_points
-        new_tier = calculate_tier(new_points)
-        
-        conn.execute(
-            "UPDATE users SET diya_wicks = ?, points_total = ?, tier_level = ?, shubh_refill_date = ?, last_wick_regen = ? WHERE telegram_id = ?",
-            (new_wicks, new_points, new_tier, today_str, now_str, telegram_id)
-        )
-        conn.execute("UPDATE community_state SET total_sparks = total_sparks + ? WHERE id = 1", (bonus_points,))
-        comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
-        comm_total = comm["total_sparks"] if comm else 0
-        new_stage, _ = get_stage_info(comm_total)
-        conn.execute("UPDATE community_state SET current_stage = ? WHERE id = 1", (new_stage,))
-    conn.close()
+            conn.execute(
+                "UPDATE users SET diya_wicks = ?, points_total = ?, tier_level = ?, shubh_refill_date = ?, last_wick_regen = ? WHERE telegram_id = ?",
+                (new_wicks, new_points, new_tier, today_str, now_str, telegram_id)
+            )
+            conn.execute("UPDATE community_state SET total_sparks = total_sparks + ? WHERE id = 1", (bonus_points,))
+            comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
+            comm_total = comm["total_sparks"] if comm else 0
+            new_stage, _ = get_stage_info(comm_total)
+            conn.execute("UPDATE community_state SET current_stage = ? WHERE id = 1", (new_stage,))
+    finally:
+        conn.close()
     
     return {
         "success": True,
@@ -323,36 +325,38 @@ def claim_shubh_refill(telegram_id: int) -> dict:
 
 def start_game_session(telegram_id: int, game_type: int) -> dict:
     conn = get_db_connection()
-    with conn:
-        wicks = update_user_stamina(conn, telegram_id)
-        if wicks < 1:
-            raise HTTPException(status_code=400, detail="Out of Diya Wicks! Wait for stamina regeneration.")
-        
-        now_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        next_cd = get_random_wick_cooldown()
-        u_row = conn.execute("SELECT last_wick_regen FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
-        raw_regen = u_row["last_wick_regen"] if u_row else None
-        if wicks >= settings.STAMINA_BANK_CAP or not raw_regen:
-            try:
-                conn.execute(
-                    "UPDATE users SET diya_wicks = diya_wicks - 1, last_wick_regen = ?, wick_cooldown_seconds = ? WHERE telegram_id = ?",
-                    (now_str, next_cd, telegram_id)
-                )
-            except Exception:
-                conn.execute("UPDATE users SET diya_wicks = diya_wicks - 1, last_wick_regen = ? WHERE telegram_id = ?", (now_str, telegram_id))
-        else:
-            conn.execute("UPDATE users SET diya_wicks = diya_wicks - 1 WHERE telegram_id = ?", (telegram_id,))
-        
-        session_id = str(uuid.uuid4())
-        seed = secrets.token_hex(6)
-        nonce = secrets.token_hex(16)
-        
-        conn.execute(
-            '''INSERT INTO game_sessions (id, telegram_id, game_type, seed, nonce, score_awarded, duration_ms, is_valid)
-               VALUES (?, ?, ?, ?, ?, 0, 0, 0)''',
-            (session_id, telegram_id, game_type, seed, nonce)
-        )
-    conn.close()
+    try:
+        with conn:
+            wicks = update_user_stamina(conn, telegram_id)
+            if wicks < 1:
+                raise HTTPException(status_code=400, detail="Out of Diya Wicks! Wait for stamina regeneration.")
+            
+            now_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            next_cd = get_random_wick_cooldown()
+            u_row = conn.execute("SELECT last_wick_regen FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
+            raw_regen = u_row["last_wick_regen"] if u_row else None
+            if wicks >= settings.STAMINA_BANK_CAP or not raw_regen:
+                try:
+                    conn.execute(
+                        "UPDATE users SET diya_wicks = diya_wicks - 1, last_wick_regen = ?, wick_cooldown_seconds = ? WHERE telegram_id = ?",
+                        (now_str, next_cd, telegram_id)
+                    )
+                except Exception:
+                    conn.execute("UPDATE users SET diya_wicks = diya_wicks - 1, last_wick_regen = ? WHERE telegram_id = ?", (now_str, telegram_id))
+            else:
+                conn.execute("UPDATE users SET diya_wicks = diya_wicks - 1 WHERE telegram_id = ?", (telegram_id,))
+            
+            session_id = str(uuid.uuid4())
+            seed = secrets.token_hex(6)
+            nonce = secrets.token_hex(16)
+            
+            conn.execute(
+                '''INSERT INTO game_sessions (id, telegram_id, game_type, seed, nonce, score_awarded, duration_ms, is_valid)
+                   VALUES (?, ?, ?, ?, ?, 0, 0, 0)''',
+                (session_id, telegram_id, game_type, seed, nonce)
+            )
+    finally:
+        conn.close()
     
     return {
         "session_id": session_id,
@@ -370,53 +374,54 @@ def finish_game_session(telegram_id: int, session_id: str, nonce: str, raw_score
         raise HTTPException(status_code=400, detail=f"Game run too fast ({duration_ms}ms < {min_ms}ms). Input rejected.")
     
     conn = get_db_connection()
-    with conn:
-        session = conn.execute(
-            "SELECT * FROM game_sessions WHERE id = ? AND telegram_id = ? AND nonce = ?",
-            (session_id, telegram_id, nonce)
-        ).fetchone()
-        
-        if not session:
-            raise HTTPException(status_code=404, detail="Game session or nonce not found or mismatched.")
-        
-        if session["is_valid"] != 0:
-            raise HTTPException(status_code=400, detail="Replay attack detected! Session already finished.")
-        
-        user = conn.execute("SELECT points_total, tier_level, gharana_id FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
-        old_points = user["points_total"]
-        old_tier = user["tier_level"]
-        u_gharana = user["gharana_id"]
+    try:
+        with conn:
+            session = conn.execute(
+                "SELECT * FROM game_sessions WHERE id = ? AND telegram_id = ? AND nonce = ?",
+                (session_id, telegram_id, nonce)
+            ).fetchone()
+            
+            if not session:
+                raise HTTPException(status_code=404, detail="Game session or nonce not found or mismatched.")
+            
+            if session["is_valid"] != 0:
+                raise HTTPException(status_code=400, detail="Replay attack detected! Session already finished.")
+            
+            user = conn.execute("SELECT points_total, tier_level, gharana_id FROM users WHERE telegram_id = ?", (telegram_id,)).fetchone()
+            old_points = user["points_total"]
+            old_tier = user["tier_level"]
+            u_gharana = user["gharana_id"]
 
-        # Calculate 2x Gharana Boost & Final Rush
-        boost = get_gharana_boost_status()
-        multiplier, is_boosted, is_rush = get_final_rush_multiplier(u_gharana)
-        awarded_points = raw_score * multiplier
+            # Calculate 2x Gharana Boost & Final Rush
+            boost = get_gharana_boost_status()
+            multiplier, is_boosted, is_rush = get_final_rush_multiplier(u_gharana)
+            awarded_points = raw_score * multiplier
 
-        try:
-            conn.execute(
-                "UPDATE game_sessions SET score_awarded = ?, bonus_multiplier = ?, duration_ms = ?, is_valid = 1 WHERE id = ?",
-                (raw_score, multiplier, duration_ms, session_id)
-            )
-        except Exception:
-            conn.execute(
-                "UPDATE game_sessions SET score_awarded = ?, duration_ms = ?, is_valid = 1 WHERE id = ?",
-                (raw_score, duration_ms, session_id)
-            )
+            try:
+                conn.execute(
+                    "UPDATE game_sessions SET score_awarded = ?, bonus_multiplier = ?, duration_ms = ?, is_valid = 1 WHERE id = ?",
+                    (raw_score, multiplier, duration_ms, session_id)
+                )
+            except Exception:
+                conn.execute(
+                    "UPDATE game_sessions SET score_awarded = ?, duration_ms = ?, is_valid = 1 WHERE id = ?",
+                    (raw_score, duration_ms, session_id)
+                )
 
-        new_points = old_points + awarded_points
-        new_tier = calculate_tier(new_points)
-        tier_unlocked = new_tier > old_tier
-        
-        conn.execute("UPDATE users SET points_total = ?, tier_level = ? WHERE telegram_id = ?", (new_points, new_tier, telegram_id))
-        conn.execute("UPDATE community_state SET total_sparks = total_sparks + ? WHERE id = 1", (awarded_points,))
-        
-        comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
-        comm_total = comm["total_sparks"]
-        
-        new_stage, stage_name = get_stage_info(comm_total)
-        conn.execute("UPDATE community_state SET current_stage = ? WHERE id = 1", (new_stage,))
-        
-    conn.close()
+            new_points = old_points + awarded_points
+            new_tier = calculate_tier(new_points)
+            tier_unlocked = new_tier > old_tier
+            
+            conn.execute("UPDATE users SET points_total = ?, tier_level = ? WHERE telegram_id = ?", (new_points, new_tier, telegram_id))
+            conn.execute("UPDATE community_state SET total_sparks = total_sparks + ? WHERE id = 1", (awarded_points,))
+            
+            comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
+            comm_total = comm["total_sparks"]
+            
+            new_stage, stage_name = get_stage_info(comm_total)
+            conn.execute("UPDATE community_state SET current_stage = ? WHERE id = 1", (new_stage,))
+    finally:
+        conn.close()
     
     return {
         "success": True,
@@ -854,12 +859,20 @@ def reconcile_and_recover_scores() -> dict:
 
             recovered_list.sort(key=lambda x: x["points_recovered"], reverse=True)
 
+            # Sample top players for operational audit visibility
+            top_sample = sorted(
+                [{"telegram_id": u["telegram_id"], "name": u["first_name"], "current_pts": int(u["points_total"] or 0)} for u in users],
+                key=lambda x: x["current_pts"],
+                reverse=True
+            )[:10]
+
             return {
                 "success": True,
                 "total_users_audited": len(users),
                 "users_recovered_count": len(recovered_list),
                 "total_points_recovered": total_recovered_sparks,
                 "new_community_sparks": new_comm,
+                "top_players_sample": top_sample,
                 "recovered_users": recovered_list
             }
     finally:
