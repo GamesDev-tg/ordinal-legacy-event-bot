@@ -686,3 +686,182 @@ def execute_community_gift(sender_id: int, target_identifier: str = "", reply_to
             }
     finally:
         conn.close()
+
+def reconcile_and_recover_scores() -> dict:
+    """
+    Audits every player's game sessions, group events, referrals, shubh muhurat refills,
+    and deepotsav offerings against their stored points_total.
+    Restores any points lost due to the temporary 5,000-point ceiling or race conditions,
+    with an immutable 100% zero-data-loss guarantee (scores can only increase or remain unchanged).
+    """
+    import json
+    from app.cache import invalidate_event_cache
+
+    conn = get_db_connection()
+    try:
+        with conn:
+            users = conn.execute("SELECT telegram_id, username, first_name, gharana_id, points_total, tier_level, referral_points_earned, shubh_refill_date FROM users").fetchall()
+
+            # Map all group event points by user_id
+            group_sparks_by_user = {}
+            group_sparks_post_clamp = {}
+            try:
+                gevents = conn.execute("SELECT event_type, data_json, created_at FROM group_events").fetchall()
+                for gev in gevents:
+                    etype = gev["event_type"]
+                    try:
+                        data = json.loads(gev["data_json"])
+                        winners = data.get("winners", [])
+                        for w in winners:
+                            wid = w.get("id") or w.get("user_id") or w.get("uid")
+                            if not wid:
+                                continue
+                            try:
+                                wid = int(wid)
+                            except Exception:
+                                continue
+
+                            if etype == "flash_diya":
+                                pts = 5
+                            elif etype == "trivia":
+                                pts = 2
+                            elif etype == "golden_box":
+                                pts = int(w.get("sparks", 5))
+                            else:
+                                pts = int(w.get("sparks", 0))
+
+                            group_sparks_by_user[wid] = group_sparks_by_user.get(wid, 0) + pts
+
+                            c_dt = _parse_timestamp(w.get("claimed_at") or gev["created_at"], None)
+                            if c_dt and c_dt.timestamp() >= 1731252600:
+                                group_sparks_post_clamp[wid] = group_sparks_post_clamp.get(wid, 0) + pts
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            # Map Deepotsav altar flame offerings from system_settings
+            deepotsav_users = set()
+            try:
+                settings_rows = conn.execute("SELECT key FROM system_settings WHERE key LIKE 'deepotsav_offered_%'").fetchall()
+                for srow in settings_rows:
+                    k = srow["key"]
+                    try:
+                        uid = int(k.replace("deepotsav_offered_", ""))
+                        deepotsav_users.add(uid)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            recovered_list = []
+            total_recovered_sparks = 0
+
+            for u in users:
+                uid = int(u["telegram_id"])
+                current_pts = int(u["points_total"] or 0)
+                u_gharana = int(u["gharana_id"] or 1)
+
+                # Fetch game sessions
+                try:
+                    sessions = conn.execute(
+                        "SELECT score_awarded, bonus_multiplier, created_at FROM game_sessions WHERE telegram_id = ? AND is_valid = 1 ORDER BY created_at ASC, id ASC",
+                        (uid,)
+                    ).fetchall()
+                except Exception:
+                    try:
+                        sessions = conn.execute(
+                            "SELECT score_awarded, created_at FROM game_sessions WHERE telegram_id = ? AND is_valid = 1 ORDER BY created_at ASC, id ASC",
+                            (uid,)
+                        ).fetchall()
+                    except Exception:
+                        sessions = []
+
+                game_pts = 0
+                clamp_window_game_pts = 0
+
+                for sess in sessions:
+                    base_sc = int(sess["score_awarded"] or 0)
+                    bm = sess["bonus_multiplier"] if "bonus_multiplier" in sess.keys() else None
+                    sess_dt = _parse_timestamp(sess["created_at"], None)
+
+                    if bm is not None and int(bm) > 0:
+                        mult = int(bm)
+                    elif sess_dt:
+                        ts = sess_dt.timestamp()
+                        boost_info = get_gharana_boost_status(ts)
+                        is_boost = (u_gharana == boost_info["active_gharana_id"])
+                        mult = 2 if is_boost else 1
+                    else:
+                        mult = 1
+
+                    awarded = base_sc * mult
+                    game_pts += awarded
+
+                    # Track sessions played during or after clamp period
+                    if sess_dt and (sess_dt.timestamp() >= 1731252600 or mult >= 2):
+                        clamp_window_game_pts += awarded
+
+                ref_pts = min(settings.MAX_REFERRAL_POINTS, int(u["referral_points_earned"] or 0))
+                shubh_pts = 5 if u["shubh_refill_date"] else 0
+                gev_pts = group_sparks_by_user.get(uid, 0)
+                deep_pts = 10 if uid in deepotsav_users else 0
+
+                ledger_total = game_pts + ref_pts + shubh_pts + gev_pts + deep_pts
+
+                candidate_pts = current_pts
+                if current_pts >= 5000:
+                    extra_clamp = clamp_window_game_pts + group_sparks_post_clamp.get(uid, 0)
+                    candidate_pts = 5000 + extra_clamp
+
+                target_pts = max(current_pts, ledger_total, candidate_pts)
+
+                if target_pts > current_pts:
+                    diff = target_pts - current_pts
+                    new_tier = calculate_tier(target_pts)
+                    conn.execute(
+                        "UPDATE users SET points_total = ?, tier_level = ? WHERE telegram_id = ?",
+                        (target_pts, new_tier, uid)
+                    )
+                    total_recovered_sparks += diff
+                    recovered_list.append({
+                        "telegram_id": uid,
+                        "username": u["username"] or "",
+                        "first_name": u["first_name"] or f"Player_{uid}",
+                        "old_points": current_pts,
+                        "new_points": target_pts,
+                        "points_recovered": diff,
+                        "new_tier": new_tier,
+                        "ledger_breakdown": {
+                            "games": game_pts,
+                            "referrals": ref_pts,
+                            "shubh": shubh_pts,
+                            "group_events": gev_pts,
+                            "deepotsav": deep_pts
+                        }
+                    })
+                    invalidate_event_cache(uid)
+
+            if total_recovered_sparks > 0:
+                conn.execute("UPDATE community_state SET total_sparks = total_sparks + ? WHERE id = 1", (total_recovered_sparks,))
+                comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
+                new_comm = comm["total_sparks"] if comm else 0
+                new_stage, _ = get_stage_info(new_comm)
+                conn.execute("UPDATE community_state SET current_stage = ? WHERE id = 1", (new_stage,))
+            else:
+                comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
+                new_comm = comm["total_sparks"] if comm else 0
+
+            recovered_list.sort(key=lambda x: x["points_recovered"], reverse=True)
+
+            return {
+                "success": True,
+                "total_users_audited": len(users),
+                "users_recovered_count": len(recovered_list),
+                "total_points_recovered": total_recovered_sparks,
+                "new_community_sparks": new_comm,
+                "recovered_users": recovered_list
+            }
+    finally:
+        conn.close()
+

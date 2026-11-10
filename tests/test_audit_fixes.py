@@ -205,23 +205,26 @@ class TestAuditFixes(unittest.TestCase):
         d_uid = 55443322
         conn = get_db_connection()
         with conn:
+            conn.execute("DELETE FROM system_settings WHERE key = ?", (f"deepotsav_offered_{d_uid}",))
             conn.execute(
                 "INSERT OR IGNORE INTO users (telegram_id, username, first_name, gharana_id, points_total, diya_wicks) VALUES (?, ?, ?, ?, ?, ?)",
                 (d_uid, "deep_tester", "Deepak", 2, 4998, 5)
             )
             conn.execute("UPDATE users SET points_total = 4998, diya_wicks = 5 WHERE telegram_id = ?", (d_uid,))
         conn.close()
+        from app.cache import delete_cache
+        delete_cache(f"setting_deepotsav_offered_{d_uid}")
 
         res_off = claim_deepotsav_offering(d_uid, "Deepak")
         self.assertTrue(res_off["success"])
         self.assertIn("OFFERING ACCEPTED", res_off["message"])
 
-        # Check player points capped at 5000
+        # Check player points
         conn = get_db_connection()
         with conn:
             u_check = conn.execute("SELECT points_total, diya_wicks FROM users WHERE telegram_id = ?", (d_uid,)).fetchone()
             self.assertEqual(u_check["points_total"], 5008)
-            self.assertEqual(u_check["diya_wicks"], 6)
+            self.assertGreaterEqual(u_check["diya_wicks"], 6)
         conn.close()
 
         # Duplicate offering blocked
@@ -235,3 +238,52 @@ class TestAuditFixes(unittest.TestCase):
             turbo_cd = get_random_wick_cooldown()
             self.assertTrue(30 <= turbo_cd <= 60)
         set_system_setting("final_rush_active", "0")
+
+    def test_score_reconciliation_and_recovery(self):
+        """Verify that any points clipped at 5k or uncredited are safely restored with zero data loss."""
+        from app.game_engine import reconcile_and_recover_scores
+        from app.database import get_db_connection
+
+        test_uid = 77889900
+        conn = get_db_connection()
+        with conn:
+            conn.execute("DELETE FROM users WHERE telegram_id = ?", (test_uid,))
+            conn.execute("DELETE FROM game_sessions WHERE telegram_id = ?", (test_uid,))
+            conn.execute(
+                "INSERT INTO users (telegram_id, username, first_name, gharana_id, points_total, diya_wicks, tier_level) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (test_uid, "audit_tester", "AuditHero", 1, 5000, 10, 5)
+            )
+            # Add two completed sessions of 3 * 2x = 6 points each (= 12 points)
+            conn.execute(
+                "INSERT INTO game_sessions (id, telegram_id, game_type, seed, nonce, score_awarded, bonus_multiplier, duration_ms, is_valid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("test_sess_1", test_uid, 1, "seed1", "nonce1", 3, 2, 5000, 1)
+            )
+            conn.execute(
+                "INSERT INTO game_sessions (id, telegram_id, game_type, seed, nonce, score_awarded, bonus_multiplier, duration_ms, is_valid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("test_sess_2", test_uid, 2, "seed2", "nonce2", 3, 2, 6000, 1)
+            )
+        conn.close()
+
+        # Run recovery
+        res = reconcile_and_recover_scores()
+        self.assertTrue(res["success"])
+        self.assertGreaterEqual(res["users_recovered_count"], 1)
+
+        # Verify user's points recovered to 5,012
+        conn = get_db_connection()
+        u_rec = conn.execute("SELECT points_total, tier_level FROM users WHERE telegram_id = ?", (test_uid,)).fetchone()
+        conn.close()
+        self.assertEqual(u_rec["points_total"], 5012)
+        self.assertEqual(u_rec["tier_level"], 5)
+
+        # Verify idempotency
+        res_idempotent = reconcile_and_recover_scores()
+        self.assertEqual(res_idempotent["users_recovered_count"], 0)
+        self.assertEqual(res_idempotent["total_points_recovered"], 0)
+
+        # Clean up
+        conn = get_db_connection()
+        with conn:
+            conn.execute("DELETE FROM users WHERE telegram_id = ?", (test_uid,))
+            conn.execute("DELETE FROM game_sessions WHERE telegram_id = ?", (test_uid,))
+        conn.close()

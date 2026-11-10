@@ -102,6 +102,21 @@ def api_final_rush_status():
     active = (get_system_setting("final_rush_active", "0") == "1")
     return {"ok": True, "final_rush_active": active}
 
+@app.get("/api/admin/reconcile_scores")
+async def api_admin_reconcile_scores():
+    from app.game_engine import reconcile_and_recover_scores
+    from app.bot import send_bot_log
+    res = reconcile_and_recover_scores()
+    try:
+        await send_bot_log(
+            f"🛡️ <b>[API SCORE AUDIT]</b> Triggered <code>/api/admin/reconcile_scores</code>: "
+            f"Audited <b>{res['total_users_audited']}</b>, Restored <b>{res['users_recovered_count']}</b> accounts "
+            f"with <b>+{res['total_points_recovered']:,} Pts</b>. New Community: <b>{res['new_community_sparks']:,} Sparks</b>."
+        )
+    except Exception:
+        pass
+    return res
+
 @app.get("/api/cron/flash_diya")
 async def api_cron_flash_diya():
     from app.database import get_system_setting

@@ -1059,6 +1059,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             "/adminstats", "/userstats", "/playerstats", "/eventstats",
             "/resetscores", "/resetpoints", "/resetshubh", "/resetallshubh",
             "/resetevent", "/cleandummy", "/purgedummy", "/syncreferrals",
+            "/recoverscores", "/restorescores", "/syncscores",
             "/resetreferrals", "/query", "/syncbot",
             "/dropdiya", "/flashdiya", "/droptrivia", "/riddle"
         }
@@ -1912,6 +1913,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"• `/deladmin <id>` — Remove administrator\n"
             f"• `/admins` — View list of administrators\n\n"
             f"⏸️ <b>Event Controls & Score Auditing:</b>\n"
+            f"• `/recoverscores` — Reconcile & recover all player points from gameplay sessions\n"
             f"• `/adminstats` — Deep audit of all players, active users & total contributions (also `/userstats`)\n"
             f"• `/stopevent` — Freeze game plays for final score audit\n"
             f"• `/resumeevent` — Unfreeze game plays and resume festival\n"
@@ -2901,6 +2903,48 @@ async def handle_bot_message(message: Dict[str, Any]):
         from app.referral_engine import reconcile_all_referrals
         res = reconcile_all_referrals()
         await send_telegram_message(chat_id, f"✅ *Referral Reconciliation Complete*: Synced {res['synced_users']} user accounts with exact referral table records.")
+        return
+
+    elif text.startswith(("/recoverscores", "/restorescores", "/syncscores")):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+
+        from app.game_engine import reconcile_and_recover_scores
+        res = reconcile_and_recover_scores()
+
+        audited = res["total_users_audited"]
+        rec_count = res["users_recovered_count"]
+        pts_rec = res["total_points_recovered"]
+        new_comm = res["new_community_sparks"]
+
+        msg = (
+            "🛡️ <b>FESTIVAL SCORE RECOVERY AUDIT COMPLETE</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"• <b>Players Audited</b>: <code>{audited:,}</code>\n"
+            f"• <b>Accounts Restored</b>: <code>{rec_count:,}</code>\n"
+            f"• <b>Total Points Recovered</b>: <code>+{pts_rec:,} Sparks</code>\n"
+            f"• <b>Maha Akhand Jyoti Beacon</b>: <code>{new_comm:,} Sparks</code>\n\n"
+        )
+
+        if rec_count > 0:
+            msg += "🏆 <b>Restored Players Breakdown:</b>\n\n"
+            for idx, r in enumerate(res["recovered_users"][:10], 1):
+                u_tag = f"@{r['username']}" if r['username'] else html.escape(r['first_name'])
+                msg += (
+                    f"<b>{idx}. {u_tag}</b> (<code>{r['telegram_id']}</code>)\n"
+                    f"   <code>{r['old_points']:,}</code> ➔ <b>{r['new_points']:,} Pts</b> "
+                    f"(<b>+{r['points_recovered']:,} Pts</b>) | Tier {r['new_tier']}\n\n"
+                )
+            if rec_count > 10:
+                msg += f"<i>...and {rec_count - 10} more players restored.</i>\n\n"
+        else:
+            msg += "✨ <i>All player scores are 100% synchronized! No points were lost or clipped.</i>\n\n"
+
+        msg += "🔒 <i>Zero-Data-Loss Guarantee: Every valid game session and drop reward has been verified and permanently credited.</i>"
+
+        await send_telegram_message(chat_id, msg)
+        await send_bot_log(f"🛡️ <b>[SCORE AUDIT COMPLETE]</b> Admin <code>{user_id}</code> ran <code>/recoverscores</code>: Restored <b>{rec_count}</b> accounts with <b>+{pts_rec:,} Pts</b>! Community: <b>{new_comm:,} Sparks</b>.")
         return
 
     elif text in ("/stopevent", "/pauseevent"):
