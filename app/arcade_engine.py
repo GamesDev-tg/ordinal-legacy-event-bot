@@ -390,10 +390,26 @@ def accept_pvp_dice_challenge(duel_id: str, opponent_id: int, opponent_name: str
 # -------------------------------------------------------------
 _ACTIVE_C4_GAMES: Dict[str, Dict[str, Any]] = {}
 
-def start_c4_game(p1_id: int, p1_name: str, p2_id: Optional[int] = None, p2_name: str = "🤖 SatoshiAI") -> Dict[str, Any]:
-    """Starts a Connect 4 game session (7 cols x 6 rows)."""
+def start_c4_game(p1_id: int, p1_name: str, p2_id: Optional[int] = None, p2_name: Optional[str] = None, is_vs_ai: Optional[bool] = None) -> Dict[str, Any]:
+    """Starts a Connect 4 game session (7 cols x 6 rows). Supports PvP (replies/mentions/lobbies) or PvAI."""
     game_id = str(uuid.uuid4())[:10]
-    is_vs_ai = (p2_id is None)
+    
+    # Determine mode: if p2_id is explicitly a positive human ID, it's PvP
+    if p2_id is not None and p2_id > 0:
+        is_vs_ai = False
+        p2_name = p2_name or f"Player_{p2_id}"
+        status = "playing"
+    elif is_vs_ai is False:
+        # Open group lobby awaiting Player 2
+        p2_id = None
+        p2_name = "[Waiting for Opponent...]"
+        status = "lobby"
+    else:
+        # Default solo vs AI
+        is_vs_ai = True
+        p2_id = -99
+        p2_name = p2_name or "🤖 SatoshiAI"
+        status = "playing"
     
     # 6 rows, 7 cols (0 empty, 1 P1, 2 P2)
     board = [[0 for _ in range(7)] for _ in range(6)]
@@ -402,17 +418,46 @@ def start_c4_game(p1_id: int, p1_name: str, p2_id: Optional[int] = None, p2_name
         "id": game_id,
         "p1_id": p1_id,
         "p1_name": p1_name,
-        "p2_id": p2_id if not is_vs_ai else -99,
+        "p2_id": p2_id,
         "p2_name": p2_name,
         "is_vs_ai": is_vs_ai,
         "board": board,
         "turn": 1, # 1 for P1, 2 for P2
         "winner": 0, # 0 ongoing, 1 P1, 2 P2, 3 tie
-        "status": "playing",
+        "status": status,
         "created_at": datetime.datetime.now().isoformat()
     }
     _ACTIVE_C4_GAMES[game_id] = game
     return game
+
+def join_c4_game(game_id: str, user_id: int, user_name: str) -> Tuple[bool, str]:
+    """Allows another group member to accept an open Connect 4 challenge as Player 2."""
+    game = _ACTIVE_C4_GAMES.get(game_id)
+    if not game:
+        return False, "This Connect 4 challenge has expired or not found."
+    if game["p1_id"] == user_id:
+        return False, "You created this challenge! Waiting for an opponent to accept."
+    if game["status"] != "lobby" and game["p2_id"] is not None and game["p2_id"] > 0:
+        return False, "This match already has 2 players!"
+
+    game["p2_id"] = user_id
+    game["p2_name"] = user_name
+    game["is_vs_ai"] = False
+    game["status"] = "playing"
+    return True, f"Joined match against {game['p1_name']}!"
+
+def switch_c4_to_ai(game_id: str, user_id: int) -> Tuple[bool, str]:
+    """Switches an open lobby game to Solo vs AI."""
+    game = _ACTIVE_C4_GAMES.get(game_id)
+    if not game:
+        return False, "Match not found."
+    if game["p1_id"] != user_id:
+        return False, "Only the challenger can switch to AI."
+    game["p2_id"] = -99
+    game["p2_name"] = "🤖 SatoshiAI"
+    game["is_vs_ai"] = True
+    game["status"] = "playing"
+    return True, "Switched to solo vs AI!"
 
 def _check_c4_win(board: list, piece: int) -> bool:
     """Checks horizontal, vertical, and diagonals for 4 consecutive pieces."""
@@ -474,12 +519,19 @@ def play_c4_turn(game_id: str, user_id: int, col: int) -> Dict[str, Any]:
     if _check_c4_win(board, curr_turn):
         game["winner"] = curr_turn
         game["status"] = "finished"
-        _award_arcade_win(game["p1_id"] if curr_turn == 1 else game["p2_id"], 3)
+        winner_id = game["p1_id"] if curr_turn == 1 else game["p2_id"]
+        loser_id = game["p2_id"] if curr_turn == 1 else game["p1_id"]
+        _award_arcade_win(winner_id, 3)
+        if not game["is_vs_ai"] and loser_id and loser_id > 0:
+            _award_arcade_win(loser_id, 1)
         return {"success": True, "game_over": True, "winner": curr_turn}
         
     if not _get_c4_valid_cols(board):
         game["winner"] = 3 # Tie
         game["status"] = "finished"
+        _award_arcade_win(game["p1_id"], 2)
+        if not game["is_vs_ai"] and game["p2_id"] and game["p2_id"] > 0:
+            _award_arcade_win(game["p2_id"], 2)
         return {"success": True, "game_over": True, "winner": 3}
         
     # Switch turn or AI reply
@@ -526,11 +578,30 @@ def play_c4_turn(game_id: str, user_id: int, col: int) -> Dict[str, Any]:
     return {"success": True, "game_over": False}
 
 def render_c4_view(game_id: str) -> Tuple[str, List[List[Dict[str, str]]]]:
-    """Renders visual Connect 4 grid with drop buttons."""
+    """Renders visual Connect 4 grid with drop buttons and full PvP/PvAI indicators."""
     game = _ACTIVE_C4_GAMES.get(game_id)
     if not game:
         return "❌ <b>Connect 4 Session Expired.</b>", []
         
+    p1 = html.escape(game["p1_name"])
+    p2 = html.escape(game["p2_name"])
+
+    # If in open lobby awaiting Player 2:
+    if game["status"] == "lobby":
+        text = (
+            f"🔴 <b>CONNECT 4 OPEN CHALLENGE</b> 🟡\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"👤 <b>Challenger</b>: 🔴 <b>{p1}</b>\n"
+            f"⚔️ <b>Opponent</b>: <i>Waiting for a challenger to accept...</i>\n\n"
+            f"🏆 <b>Stakes</b>: +3 Sparks for Winner, +1 Spark for Runner-up!\n"
+            f"<i>Tap below to accept this duel or practice solo vs AI:</i>"
+        )
+        keyboard = [
+            [{"text": "⚔️ Accept Challenge & Play (🟡)", "callback_data": f"c4_join:{game_id}"}],
+            [{"text": "🤖 Play vs AI (Solo)", "callback_data": f"c4_ai:{game_id}"}]
+        ]
+        return text, keyboard
+
     symbols = {0: "⚪", 1: "🔴", 2: "🟡"}
     board_str = ""
     for r in range(6):
@@ -538,29 +609,31 @@ def render_c4_view(game_id: str) -> Tuple[str, List[List[Dict[str, str]]]]:
         board_str += f"{row_line}\n"
     board_str += "1️⃣2️⃣3️⃣4️⃣5️⃣6️⃣7️⃣"
     
-    p1 = html.escape(game["p1_name"])
-    p2 = html.escape(game["p2_name"])
+    mode_tag = " [PvP Duel]" if not game["is_vs_ai"] else " [vs AI]"
     
     if game["status"] == "finished":
         if game["winner"] == 1:
             headline = f"🎉 <b>{p1} (🔴) CONNECTED 4 AND WON!</b> 🎉 (+3 Sparks)"
         elif game["winner"] == 2:
-            headline = f"🎉 <b>{p2} (🟡) CONNECTED 4 AND WON!</b> 🎉"
+            headline = f"🎉 <b>{p2} (🟡) CONNECTED 4 AND WON!</b> 🎉 (+3 Sparks)"
         else:
-            headline = "🤝 <b>STALEMATE! THE BOARD IS FULL!</b>"
+            headline = "🤝 <b>STALEMATE! THE BOARD IS FULL!</b> (+2 Sparks each)"
         text = (
-            f"🔴 <b>CONNECT 4 ARENA</b> 🟡\n"
+            f"🔴 <b>CONNECT 4 ARENA COMPLETE{mode_tag}</b> 🟡\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n\n"
             f"{board_str}\n\n"
             f"{headline}\n\n"
-            f"<i>Match registered! Ready for another round?</i>"
+            f"<i>Match registered! Ready for a rematch?</i>"
         )
-        return text, [[{"text": "🔄 Play Again", "callback_data": f"c4_new:{game['p1_id']}"}]]
+        if not game["is_vs_ai"] and game["p2_id"] and game["p2_id"] > 0:
+            return text, [[{"text": "🔄 Rematch (Swap Colors!)", "callback_data": f"c4_rematch:{game_id}"}]]
+        else:
+            return text, [[{"text": "🔄 Play Again", "callback_data": f"c4_new:{game['p1_id']}"}]]
         
     turn_name = p1 if game["turn"] == 1 else p2
     turn_color = "🔴" if game["turn"] == 1 else "🟡"
     text = (
-        f"🔴 <b>CONNECT 4: {p1} vs {p2}</b> 🟡\n"
+        f"🔴 <b>CONNECT 4: {p1} vs {p2}{mode_tag}</b> 🟡\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"{board_str}\n\n"
         f"🎯 <b>Turn:</b> {turn_color} <b>{turn_name}</b>\n"
@@ -568,6 +641,16 @@ def render_c4_view(game_id: str) -> Tuple[str, List[List[Dict[str, str]]]]:
     )
     
     valid_cols = _get_c4_valid_cols(game["board"])
+    col_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣"]
+    btn_row = []
+    for c in range(7):
+        if c in valid_cols:
+            btn_row.append({"text": col_emojis[c], "callback_data": f"c4_drop:{game_id}:{c}"})
+        else:
+            btn_row.append({"text": "✖️", "callback_data": "noop"})
+            
+    keyboard = [btn_row, [{"text": "🔄 Refresh Grid", "callback_data": f"c4_refresh:{game_id}"}]]
+    return text, keyboard
     col_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣"]
     btn_row = []
     for c in range(7):

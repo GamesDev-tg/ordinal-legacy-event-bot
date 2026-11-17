@@ -1833,7 +1833,56 @@ async def handle_bot_message(message: Dict[str, Any]):
 
     elif text.startswith(("/c4", "/connect4")):
         from app.arcade_engine import start_c4_game, render_c4_view
-        game = start_c4_game(user_id, first_name)
+        
+        reply_msg = message.get("reply_to_message")
+        reply_from = reply_msg.get("from", {}) if reply_msg else {}
+        reply_to_id = reply_from.get("id") if reply_msg else None
+        
+        target_uid = None
+        target_name = None
+        
+        if reply_to_id:
+            if reply_from.get("is_bot"):
+                await send_telegram_message(chat_id, "❌ <b>Cannot Duel Bots</b>: Reply to a fellow group member, or run /c4 in private DM to play solo vs AI!")
+                return
+            if reply_to_id == user_id:
+                await send_telegram_message(chat_id, "❌ <b>Invalid Opponent</b>: You cannot play Connect 4 against yourself! Reply to another player.")
+                return
+            target_uid = reply_to_id
+            target_name = reply_from.get("first_name", f"Player_{target_uid}")
+        else:
+            # Check if username or numeric ID argument was passed: e.g. /c4 @username
+            parts = text.split()
+            if len(parts) > 1:
+                arg = parts[1].strip()
+                conn = get_db_connection()
+                try:
+                    if arg.startswith("@"):
+                        clean_un = arg.lstrip("@").lower()
+                        u_row = conn.execute("SELECT telegram_id, first_name FROM users WHERE LOWER(username) = ?", (clean_un,)).fetchone()
+                    elif arg.isdigit():
+                        u_row = conn.execute("SELECT telegram_id, first_name FROM users WHERE telegram_id = ?", (int(arg),)).fetchone()
+                    else:
+                        u_row = None
+                    if u_row:
+                        if u_row["telegram_id"] == user_id:
+                            await send_telegram_message(chat_id, "❌ You cannot duel yourself!")
+                            return
+                        target_uid = u_row["telegram_id"]
+                        target_name = u_row["first_name"] or f"Player_{target_uid}"
+                finally:
+                    conn.close()
+
+        # In private DM with no target: start solo vs AI immediately
+        if is_private and not target_uid:
+            game = start_c4_game(p1_id=user_id, p1_name=first_name, is_vs_ai=True)
+        elif target_uid:
+            # Direct PvP challenge against the replied/targeted human player!
+            game = start_c4_game(p1_id=user_id, p1_name=first_name, p2_id=target_uid, p2_name=target_name, is_vs_ai=False)
+        else:
+            # In group chat without replying to someone: open challenge lobby
+            game = start_c4_game(p1_id=user_id, p1_name=first_name, is_vs_ai=False)
+
         msg_text, kb = render_c4_view(game["id"])
         reply_kb = {"inline_keyboard": kb} if kb else None
         await send_telegram_message(chat_id, msg_text, reply_kb)
@@ -3549,7 +3598,7 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
         "accept_duel", "switch_fest", "cmd_fest_menu",
         "play_dice_ai", "play_rps_ai", "rps_ai", "play_coin_ai", "coin_ai", "menu_pvp",
         "ludo_prompt", "ludo_create", "ludo_join", "ludo_ai", "ludo_start", "ludo_roll", "ludo_move", "ludo_refresh", "ludo_new",
-        "c4_prompt", "c4_drop", "c4_new", "c4_refresh",
+        "c4_prompt", "c4_drop", "c4_new", "c4_refresh", "c4_join", "c4_ai", "c4_rematch",
         "2048_start", "2048_move", "2048_new",
         "wordle_start", "wordle_guess", "wordle_new"
     }
@@ -3859,7 +3908,9 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
     elif action == "c4_prompt":
         from app.arcade_engine import start_c4_game, render_c4_view
         u_fn = from_user.get("first_name", f"Player_{user_id}")
-        game = start_c4_game(user_id, u_fn)
+        # In groups, start open lobby so another player can join; in private DM, start vs AI
+        is_ai_mode = (chat_id > 0)
+        game = start_c4_game(user_id, u_fn, is_vs_ai=is_ai_mode)
         msg_text, kb = render_c4_view(game["id"])
         reply_kb = {"inline_keyboard": kb} if kb else None
         msg_obj = callback_query.get("message")
@@ -3867,6 +3918,58 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
             await edit_telegram_message(chat_id, msg_obj["message_id"], msg_text, reply_markup=reply_kb)
         else:
             await send_telegram_message(chat_id, msg_text, reply_kb)
+        return
+
+    elif action == "c4_join":
+        if len(parts) >= 2:
+            game_id = parts[1]
+            from app.arcade_engine import join_c4_game, render_c4_view
+            u_fn = from_user.get("first_name", f"Player_{user_id}")
+            ok, resp_msg = join_c4_game(game_id, user_id, u_fn)
+            if not ok:
+                await answer_telegram_callback_query(callback_id, text=resp_msg, show_alert=True)
+                return
+            msg_text, kb = render_c4_view(game_id)
+            reply_kb = {"inline_keyboard": kb} if kb else None
+            msg_obj = callback_query.get("message")
+            if msg_obj and msg_obj.get("message_id"):
+                await edit_telegram_message(chat_id, msg_obj["message_id"], msg_text, reply_markup=reply_kb)
+        return
+
+    elif action == "c4_ai":
+        if len(parts) >= 2:
+            game_id = parts[1]
+            from app.arcade_engine import switch_c4_to_ai, render_c4_view
+            ok, resp_msg = switch_c4_to_ai(game_id, user_id)
+            if not ok:
+                await answer_telegram_callback_query(callback_id, text=resp_msg, show_alert=True)
+                return
+            msg_text, kb = render_c4_view(game_id)
+            reply_kb = {"inline_keyboard": kb} if kb else None
+            msg_obj = callback_query.get("message")
+            if msg_obj and msg_obj.get("message_id"):
+                await edit_telegram_message(chat_id, msg_obj["message_id"], msg_text, reply_markup=reply_kb)
+        return
+
+    elif action == "c4_rematch":
+        if len(parts) >= 2:
+            old_game_id = parts[1]
+            from app.arcade_engine import _ACTIVE_C4_GAMES, start_c4_game, render_c4_view
+            old_g = _ACTIVE_C4_GAMES.get(old_game_id)
+            if old_g and old_g.get("p2_id") and old_g["p2_id"] > 0:
+                # Rematch swapping colors!
+                rematch_game = start_c4_game(
+                    p1_id=old_g["p2_id"],
+                    p1_name=old_g["p2_name"],
+                    p2_id=old_g["p1_id"],
+                    p2_name=old_g["p1_name"],
+                    is_vs_ai=False
+                )
+                msg_text, kb = render_c4_view(rematch_game["id"])
+                reply_kb = {"inline_keyboard": kb} if kb else None
+                msg_obj = callback_query.get("message")
+                if msg_obj and msg_obj.get("message_id"):
+                    await edit_telegram_message(chat_id, msg_obj["message_id"], msg_text, reply_markup=reply_kb)
         return
 
     elif action == "c4_drop":

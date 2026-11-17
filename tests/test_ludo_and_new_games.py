@@ -147,6 +147,47 @@ class TestLudoAndNewGames(unittest.TestCase):
         txt, kb = render_c4_view(c4["id"])
         self.assertIn("CONNECTED 4", txt)
 
+    def test_connect4_pvp_reply_and_lobby(self):
+        """Test Connect 4 PvP targeting another user (reply/mention) and open lobby join."""
+        from app.arcade_engine import start_c4_game, join_c4_game, switch_c4_to_ai
+
+        # 1. Direct PvP (when replying to a user)
+        c4_pvp = start_c4_game(p1_id=self.u1, p1_name="Challenger", p2_id=self.u2, p2_name="Opponent", is_vs_ai=False)
+        self.assertFalse(c4_pvp["is_vs_ai"])
+        self.assertEqual(c4_pvp["p1_id"], self.u1)
+        self.assertEqual(c4_pvp["p2_id"], self.u2)
+        self.assertEqual(c4_pvp["p2_name"], "Opponent")
+        self.assertEqual(c4_pvp["status"], "playing")
+
+        # P1 plays col 0
+        res1 = play_c4_turn(c4_pvp["id"], self.u1, 0)
+        self.assertTrue(res1["success"])
+        self.assertEqual(c4_pvp["turn"], 2)
+        # Verify AI didn't take a turn: column 0 has only 1 piece
+        pieces_in_col0 = sum(1 for r in range(6) if c4_pvp["board"][r][0] != 0)
+        self.assertEqual(pieces_in_col0, 1)
+
+        # Non-turn player cannot move
+        bad_turn = play_c4_turn(c4_pvp["id"], self.u1, 1)
+        self.assertFalse(bad_turn["success"])
+
+        # P2 plays col 0
+        res2 = play_c4_turn(c4_pvp["id"], self.u2, 0)
+        self.assertTrue(res2["success"])
+        self.assertEqual(c4_pvp["turn"], 1)
+
+        # 2. Open Lobby (waiting for opponent in group)
+        c4_lobby = start_c4_game(p1_id=self.u1, p1_name="Challenger", is_vs_ai=False)
+        self.assertEqual(c4_lobby["status"], "lobby")
+        self.assertIsNone(c4_lobby["p2_id"])
+
+        # P2 joins
+        ok, msg = join_c4_game(c4_lobby["id"], self.u2, "JoiningPlayer")
+        self.assertTrue(ok)
+        self.assertEqual(c4_lobby["status"], "playing")
+        self.assertEqual(c4_lobby["p2_id"], self.u2)
+        self.assertFalse(c4_lobby["is_vs_ai"])
+
     def test_game_2048_mechanics(self):
         """Test 2048 sliding, tile merging, and view generation."""
         g = start_2048_game(self.u1)
