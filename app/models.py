@@ -41,7 +41,7 @@ class AuthResponse(BaseModel):
     gharana_boost: Optional[Dict[str, Any]] = None
 
 class GameStartRequest(BaseModel):
-    game_type: int = Field(..., ge=1, le=3, description="1: Chakri, 2: Rangoli, 3: Mithai")
+    game_type: int = Field(..., ge=1, le=10, description="1: Chakri, 2: Rangoli, 3: Mithai, 4: Ludo, 5: Connect4, 6: 2048, 7: Wordle")
 
 class GameStartResponse(BaseModel):
     session_id: str

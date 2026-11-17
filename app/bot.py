@@ -1017,6 +1017,16 @@ async def handle_bot_message(message: Dict[str, Any]):
     if not is_private and not text.startswith("/"):
         return
 
+    # In private chat: check if user is making a 5-letter Wordle guess
+    if is_private and not text.startswith("/") and len(text.strip()) == 5 and text.strip().isalpha():
+        from app.arcade_engine import _ACTIVE_WORDLE_GAMES, submit_wordle_guess, render_wordle_view
+        if user_id in _ACTIVE_WORDLE_GAMES and _ACTIVE_WORDLE_GAMES[user_id]["status"] == "playing":
+            submit_wordle_guess(user_id, text.strip())
+            msg_text, kb = render_wordle_view(user_id)
+            reply_kb = {"inline_keyboard": kb} if kb else None
+            await send_telegram_message(chat_id, msg_text, reply_kb)
+            return
+
     # Normalize group commands with bot username suffix and lower-case command token
     if text.startswith("/"):
         parts = text.split(maxsplit=1)
@@ -1043,7 +1053,8 @@ async def handle_bot_message(message: Dict[str, Any]):
             "/tiers", "/stats", "/captcha", "/testcaptcha", "/eventstatus", "/pausestatus",
             "/adminstats", "/userstats", "/playerstats", "/eventstats", "/boost",
             "/gifts", "/gift", "/clash", "/gharanaclash",
-            "/duel", "/dice", "/rps", "/flip", "/coin", "/arcade"
+            "/duel", "/dice", "/rps", "/flip", "/coin", "/arcade",
+            "/ludo", "/ludogame", "/c4", "/connect4", "/2048", "/wordle"
         }
         ADMIN_COMMANDS = {
             "/admin", "/adminhelp", "/admins", "/addadmin", "/deladmin",
@@ -1086,6 +1097,7 @@ async def handle_bot_message(message: Dict[str, Any]):
                 "/akhand", "/widget", "/verify", "/resetgate", "/testgate",
                 "/gifts", "/gift", "/clash", "/gharanaclash",
                 "/duel", "/dice", "/rps", "/flip", "/coin", "/arcade",
+                "/ludo", "/ludogame", "/c4", "/connect4", "/2048", "/wordle",
                 "/setfestival", "/switchfestival", "/festival", "/festivals"
             }
             if cmd_head not in ALL_KNOWN_BOT_COMMANDS:
@@ -1771,15 +1783,24 @@ async def handle_bot_message(message: Dict[str, Any]):
         arcade_text = (
             f"🕹️ <b>ORDINAL LEGACY ARCADE ARENA</b> 🕹️\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"Welcome to the competitive mini-games hub! Play casual duels, compete vs AI, or challenge group members:\n\n"
-            f"• 🎲 <b>Dice Duel</b>: Roll against players or AI (/duel or /dice)\n"
-            f"• ⚔️ <b>Elemental Clash</b>: Rock-Paper-Scissors clash (/rps)\n"
-            f"• 🪙 <b>Satoshi Flip</b>: Heads or Tails prediction (/flip)\n"
-            f"• 🌀 <b>Classic Mini-Games</b>: /chakri, /rangoli, /mithai\n\n"
-            f"<i>Select a game below to begin playing:</i>"
+            f"Welcome to the competitive mini-games hub! Play multiplayer tournaments, casual duels, or compete vs AI:\n\n"
+            f"• 🎲 <b>Multiplayer Ludo (2–8 Players)</b>: /ludo [2-8]\n"
+            f"• 🔴 <b>Connect 4 (Gravity 4-in-a-Row)</b>: /c4 or /connect4\n"
+            f"• ⚡ <b>2048 Satoshis Merge Puzzle</b>: /2048\n"
+            f"• 🔤 <b>Crypto Wordle (5-Letter Clash)</b>: /wordle\n"
+            f"• 🎲 <b>Dice Duel & RPS Clash</b>: /duel, /rps, /flip\n\n"
+            f"<i>Tap any game button below to start:</i>"
         )
         arcade_kb = {
             "inline_keyboard": [
+                [
+                    {"text": "🎲 Play Ludo (2–8P)", "callback_data": f"ludo_prompt:{user_id}"},
+                    {"text": "🔴 Connect 4", "callback_data": f"c4_prompt:{user_id}"}
+                ],
+                [
+                    {"text": "⚡ 2048 Satoshis", "callback_data": f"2048_start:{user_id}"},
+                    {"text": "🔤 Crypto Wordle", "callback_data": f"wordle_start:{user_id}"}
+                ],
                 [
                     {"text": "🎲 Dice Duel (vs AI)", "callback_data": f"play_dice_ai:{user_id}"},
                     {"text": "⚔️ RPS Clash (vs AI)", "callback_data": f"play_rps_ai:{user_id}"}
@@ -1789,17 +1810,49 @@ async def handle_bot_message(message: Dict[str, Any]):
                     {"text": "👥 Create PvP Duel", "callback_data": f"menu_pvp:{user_id}"}
                 ],
                 [
-                    {"text": "🌀 Chakri", "callback_data": f"play_chakri:{user_id}"},
-                    {"text": "🎨 Rangoli", "callback_data": f"play_rangoli:{user_id}"},
-                    {"text": "🍬 Mithai", "callback_data": f"play_mithai:{user_id}"}
-                ],
-                [
                     {"text": "📊 My Stats & Rank", "callback_data": f"cmd_mydata:{user_id}"},
                     {"text": "🏆 Top Leaderboard", "callback_data": f"cmd_top:{user_id}"}
                 ]
             ]
         }
         await send_telegram_message(chat_id, arcade_text, arcade_kb)
+        return
+
+    elif text.startswith(("/ludo", "/ludogame")):
+        from app.ludo_engine import create_ludo_game, render_ludo_view
+        parts = text.split()
+        num_p = 4
+        if len(parts) > 1 and parts[1].isdigit():
+            val = int(parts[1])
+            num_p = max(2, min(8, val))
+        game = create_ludo_game(user_id, first_name, num_players=num_p, chat_id=chat_id)
+        msg_text, kb = render_ludo_view(game["id"])
+        reply_kb = {"inline_keyboard": kb} if kb else None
+        await send_telegram_message(chat_id, msg_text, reply_kb)
+        return
+
+    elif text.startswith(("/c4", "/connect4")):
+        from app.arcade_engine import start_c4_game, render_c4_view
+        game = start_c4_game(user_id, first_name)
+        msg_text, kb = render_c4_view(game["id"])
+        reply_kb = {"inline_keyboard": kb} if kb else None
+        await send_telegram_message(chat_id, msg_text, reply_kb)
+        return
+
+    elif text.startswith("/2048"):
+        from app.arcade_engine import start_2048_game, render_2048_view
+        start_2048_game(user_id)
+        msg_text, kb = render_2048_view(user_id)
+        reply_kb = {"inline_keyboard": kb} if kb else None
+        await send_telegram_message(chat_id, msg_text, reply_kb)
+        return
+
+    elif text.startswith("/wordle"):
+        from app.arcade_engine import start_wordle_game, render_wordle_view
+        start_wordle_game(user_id)
+        msg_text, kb = render_wordle_view(user_id)
+        reply_kb = {"inline_keyboard": kb} if kb else None
+        await send_telegram_message(chat_id, msg_text, reply_kb)
         return
 
     elif text.startswith(("/dropdiya", "/flashdiya")):
@@ -3470,7 +3523,11 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
     PUBLIC_GROUP_ACTIONS = {
         "claim_diya", "flash_diya", "trivia_ans", "open_box",
         "accept_duel", "switch_fest", "cmd_fest_menu",
-        "play_dice_ai", "play_rps_ai", "rps_ai", "play_coin_ai", "coin_ai", "menu_pvp"
+        "play_dice_ai", "play_rps_ai", "rps_ai", "play_coin_ai", "coin_ai", "menu_pvp",
+        "ludo_prompt", "ludo_create", "ludo_join", "ludo_ai", "ludo_start", "ludo_roll", "ludo_move", "ludo_refresh", "ludo_new",
+        "c4_prompt", "c4_drop", "c4_new", "c4_refresh",
+        "2048_start", "2048_move", "2048_new",
+        "wordle_start", "wordle_guess", "wordle_new"
     }
     if action not in PUBLIC_GROUP_ACTIONS:
         if owner_id is not None and owner_id != user_id:
@@ -3622,6 +3679,256 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
                 await edit_telegram_message(chat_id, msg_obj["message_id"], res["message"], reply_markup=res.get("keyboard"))
             else:
                 await send_telegram_message(chat_id, res["message"], res.get("keyboard"))
+        return
+
+    elif action == "ludo_prompt":
+        prompt_text = (
+            "🎲 <b>CHOOSE LUDO ARENA CAPACITY</b> 🎲\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Select how many players will join this showdown (2 to 8 players supported!):\n\n"
+            "• <b>2 Players</b>: 1v1 Fast Duel (Red vs Yellow)\n"
+            "• <b>4 Players</b>: Classic 4-Corner Ludo (Red, Green, Yellow, Blue)\n"
+            "• <b>6 Players</b>: Hexagonal Battle Royale\n"
+            "• <b>8 Players</b>: Massive Octagon Grand Prix\n\n"
+            "<i>Tap an option below:</i>"
+        )
+        prompt_kb = {
+            "inline_keyboard": [
+                [
+                    {"text": "⚔️ 2 Players (1v1)", "callback_data": f"ludo_create:{user_id}:2"},
+                    {"text": "🌟 4 Players (Classic)", "callback_data": f"ludo_create:{user_id}:4"}
+                ],
+                [
+                    {"text": "🔥 6 Players (Hexagon)", "callback_data": f"ludo_create:{user_id}:6"},
+                    {"text": "👑 8 Players (Octagon)", "callback_data": f"ludo_create:{user_id}:8"}
+                ],
+                [{"text": "« Back to Arcade", "callback_data": f"cmd_arcade:{user_id}"}]
+            ]
+        }
+        msg_obj = callback_query.get("message")
+        if msg_obj and msg_obj.get("message_id"):
+            await edit_telegram_message(chat_id, msg_obj["message_id"], prompt_text, reply_markup=prompt_kb)
+        else:
+            await send_telegram_message(chat_id, prompt_text, prompt_kb)
+        return
+
+    elif action == "ludo_create":
+        num_p = int(parts[2]) if len(parts) >= 3 and parts[2].isdigit() else 4
+        from app.ludo_engine import create_ludo_game, render_ludo_view
+        u_fn = from_user.get("first_name", f"Player_{user_id}")
+        game = create_ludo_game(user_id, u_fn, num_players=num_p, chat_id=chat_id)
+        msg_text, kb = render_ludo_view(game["id"])
+        reply_kb = {"inline_keyboard": kb} if kb else None
+        msg_obj = callback_query.get("message")
+        if msg_obj and msg_obj.get("message_id"):
+            await edit_telegram_message(chat_id, msg_obj["message_id"], msg_text, reply_markup=reply_kb)
+        else:
+            await send_telegram_message(chat_id, msg_text, reply_kb)
+        return
+
+    elif action == "ludo_join":
+        if len(parts) >= 2:
+            game_id = parts[1]
+            from app.ludo_engine import join_ludo_game, render_ludo_view
+            u_fn = from_user.get("first_name", f"Player_{user_id}")
+            ok, resp_msg = join_ludo_game(game_id, user_id, u_fn)
+            if not ok:
+                await answer_telegram_callback_query(callback_id, text=resp_msg, show_alert=True)
+                return
+            msg_text, kb = render_ludo_view(game_id)
+            reply_kb = {"inline_keyboard": kb} if kb else None
+            msg_obj = callback_query.get("message")
+            if msg_obj and msg_obj.get("message_id"):
+                await edit_telegram_message(chat_id, msg_obj["message_id"], msg_text, reply_markup=reply_kb)
+        return
+
+    elif action == "ludo_ai":
+        if len(parts) >= 2:
+            game_id = parts[1]
+            from app.ludo_engine import fill_ludo_with_ai, render_ludo_view, execute_ai_turn_if_needed
+            ok, resp_msg = fill_ludo_with_ai(game_id)
+            if not ok:
+                await answer_telegram_callback_query(callback_id, text=resp_msg, show_alert=True)
+                return
+            execute_ai_turn_if_needed(game_id)
+            msg_text, kb = render_ludo_view(game_id)
+            reply_kb = {"inline_keyboard": kb} if kb else None
+            msg_obj = callback_query.get("message")
+            if msg_obj and msg_obj.get("message_id"):
+                await edit_telegram_message(chat_id, msg_obj["message_id"], msg_text, reply_markup=reply_kb)
+        return
+
+    elif action == "ludo_start":
+        if len(parts) >= 2:
+            game_id = parts[1]
+            from app.ludo_engine import start_ludo_game, render_ludo_view, execute_ai_turn_if_needed
+            ok, resp_msg = start_ludo_game(game_id, user_id)
+            if not ok:
+                await answer_telegram_callback_query(callback_id, text=resp_msg, show_alert=True)
+                return
+            execute_ai_turn_if_needed(game_id)
+            msg_text, kb = render_ludo_view(game_id)
+            reply_kb = {"inline_keyboard": kb} if kb else None
+            msg_obj = callback_query.get("message")
+            if msg_obj and msg_obj.get("message_id"):
+                await edit_telegram_message(chat_id, msg_obj["message_id"], msg_text, reply_markup=reply_kb)
+        return
+
+    elif action == "ludo_roll":
+        if len(parts) >= 2:
+            game_id = parts[1]
+            from app.ludo_engine import roll_ludo_dice, render_ludo_view, execute_ai_turn_if_needed
+            res = roll_ludo_dice(game_id, user_id)
+            if not res["success"]:
+                await answer_telegram_callback_query(callback_id, text=res["error"], show_alert=True)
+                return
+            execute_ai_turn_if_needed(game_id)
+            msg_text, kb = render_ludo_view(game_id)
+            reply_kb = {"inline_keyboard": kb} if kb else None
+            msg_obj = callback_query.get("message")
+            if msg_obj and msg_obj.get("message_id"):
+                await edit_telegram_message(chat_id, msg_obj["message_id"], msg_text, reply_markup=reply_kb)
+        return
+
+    elif action == "ludo_move":
+        if len(parts) >= 3:
+            game_id = parts[1]
+            pawn_id = int(parts[2])
+            from app.ludo_engine import move_ludo_pawn, render_ludo_view, execute_ai_turn_if_needed
+            res = move_ludo_pawn(game_id, user_id, pawn_id)
+            if not res["success"]:
+                await answer_telegram_callback_query(callback_id, text=res["error"], show_alert=True)
+                return
+            execute_ai_turn_if_needed(game_id)
+            msg_text, kb = render_ludo_view(game_id)
+            reply_kb = {"inline_keyboard": kb} if kb else None
+            msg_obj = callback_query.get("message")
+            if msg_obj and msg_obj.get("message_id"):
+                await edit_telegram_message(chat_id, msg_obj["message_id"], msg_text, reply_markup=reply_kb)
+        return
+
+    elif action == "ludo_refresh":
+        if len(parts) >= 2:
+            game_id = parts[1]
+            from app.ludo_engine import render_ludo_view, execute_ai_turn_if_needed
+            execute_ai_turn_if_needed(game_id)
+            msg_text, kb = render_ludo_view(game_id)
+            reply_kb = {"inline_keyboard": kb} if kb else None
+            msg_obj = callback_query.get("message")
+            if msg_obj and msg_obj.get("message_id"):
+                await edit_telegram_message(chat_id, msg_obj["message_id"], msg_text, reply_markup=reply_kb)
+        return
+
+    elif action == "ludo_new":
+        from app.ludo_engine import create_ludo_game, render_ludo_view
+        u_fn = from_user.get("first_name", f"Player_{user_id}")
+        game = create_ludo_game(user_id, u_fn, num_players=4, chat_id=chat_id)
+        msg_text, kb = render_ludo_view(game["id"])
+        reply_kb = {"inline_keyboard": kb} if kb else None
+        msg_obj = callback_query.get("message")
+        if msg_obj and msg_obj.get("message_id"):
+            await edit_telegram_message(chat_id, msg_obj["message_id"], msg_text, reply_markup=reply_kb)
+        else:
+            await send_telegram_message(chat_id, msg_text, reply_kb)
+        return
+
+    elif action == "c4_prompt":
+        from app.arcade_engine import start_c4_game, render_c4_view
+        u_fn = from_user.get("first_name", f"Player_{user_id}")
+        game = start_c4_game(user_id, u_fn)
+        msg_text, kb = render_c4_view(game["id"])
+        reply_kb = {"inline_keyboard": kb} if kb else None
+        msg_obj = callback_query.get("message")
+        if msg_obj and msg_obj.get("message_id"):
+            await edit_telegram_message(chat_id, msg_obj["message_id"], msg_text, reply_markup=reply_kb)
+        else:
+            await send_telegram_message(chat_id, msg_text, reply_kb)
+        return
+
+    elif action == "c4_drop":
+        if len(parts) >= 3:
+            game_id = parts[1]
+            col = int(parts[2])
+            from app.arcade_engine import play_c4_turn, render_c4_view
+            res = play_c4_turn(game_id, user_id, col)
+            if not res["success"]:
+                await answer_telegram_callback_query(callback_id, text=res["error"], show_alert=True)
+                return
+            msg_text, kb = render_c4_view(game_id)
+            reply_kb = {"inline_keyboard": kb} if kb else None
+            msg_obj = callback_query.get("message")
+            if msg_obj and msg_obj.get("message_id"):
+                await edit_telegram_message(chat_id, msg_obj["message_id"], msg_text, reply_markup=reply_kb)
+        return
+
+    elif action == "c4_new":
+        from app.arcade_engine import start_c4_game, render_c4_view
+        u_fn = from_user.get("first_name", f"Player_{user_id}")
+        game = start_c4_game(user_id, u_fn)
+        msg_text, kb = render_c4_view(game["id"])
+        reply_kb = {"inline_keyboard": kb} if kb else None
+        msg_obj = callback_query.get("message")
+        if msg_obj and msg_obj.get("message_id"):
+            await edit_telegram_message(chat_id, msg_obj["message_id"], msg_text, reply_markup=reply_kb)
+        return
+
+    elif action == "c4_refresh":
+        if len(parts) >= 2:
+            game_id = parts[1]
+            from app.arcade_engine import render_c4_view
+            msg_text, kb = render_c4_view(game_id)
+            reply_kb = {"inline_keyboard": kb} if kb else None
+            msg_obj = callback_query.get("message")
+            if msg_obj and msg_obj.get("message_id"):
+                await edit_telegram_message(chat_id, msg_obj["message_id"], msg_text, reply_markup=reply_kb)
+        return
+
+    elif action == "2048_start" or action == "2048_new":
+        from app.arcade_engine import start_2048_game, render_2048_view
+        start_2048_game(user_id)
+        msg_text, kb = render_2048_view(user_id)
+        reply_kb = {"inline_keyboard": kb} if kb else None
+        msg_obj = callback_query.get("message")
+        if msg_obj and msg_obj.get("message_id"):
+            await edit_telegram_message(chat_id, msg_obj["message_id"], msg_text, reply_markup=reply_kb)
+        else:
+            await send_telegram_message(chat_id, msg_text, reply_kb)
+        return
+
+    elif action == "2048_move":
+        if len(parts) >= 3:
+            direction = parts[2]
+            from app.arcade_engine import move_2048, render_2048_view
+            move_2048(user_id, direction)
+            msg_text, kb = render_2048_view(user_id)
+            reply_kb = {"inline_keyboard": kb} if kb else None
+            msg_obj = callback_query.get("message")
+            if msg_obj and msg_obj.get("message_id"):
+                await edit_telegram_message(chat_id, msg_obj["message_id"], msg_text, reply_markup=reply_kb)
+        return
+
+    elif action == "wordle_start" or action == "wordle_new":
+        from app.arcade_engine import start_wordle_game, render_wordle_view
+        start_wordle_game(user_id)
+        msg_text, kb = render_wordle_view(user_id)
+        reply_kb = {"inline_keyboard": kb} if kb else None
+        msg_obj = callback_query.get("message")
+        if msg_obj and msg_obj.get("message_id"):
+            await edit_telegram_message(chat_id, msg_obj["message_id"], msg_text, reply_markup=reply_kb)
+        else:
+            await send_telegram_message(chat_id, msg_text, reply_kb)
+        return
+
+    elif action == "wordle_guess":
+        if len(parts) >= 3:
+            guess_word = parts[2]
+            from app.arcade_engine import submit_wordle_guess, render_wordle_view
+            submit_wordle_guess(user_id, guess_word)
+            msg_text, kb = render_wordle_view(user_id)
+            reply_kb = {"inline_keyboard": kb} if kb else None
+            msg_obj = callback_query.get("message")
+            if msg_obj and msg_obj.get("message_id"):
+                await edit_telegram_message(chat_id, msg_obj["message_id"], msg_text, reply_markup=reply_kb)
         return
 
     elif action == "open_box":

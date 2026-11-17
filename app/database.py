@@ -185,7 +185,7 @@ def init_postgres_db():
         CREATE TABLE IF NOT EXISTS game_sessions (
             id TEXT PRIMARY KEY,
             telegram_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
-            game_type INTEGER NOT NULL CHECK (game_type BETWEEN 1 AND 3),
+            game_type INTEGER NOT NULL CHECK (game_type BETWEEN 1 AND 10),
             seed TEXT NOT NULL,
             nonce TEXT UNIQUE NOT NULL,
             score_awarded INTEGER DEFAULT 0 CHECK (score_awarded BETWEEN 0 AND 3),
@@ -243,6 +243,12 @@ def init_postgres_db():
         ALTER TABLE users ADD COLUMN IF NOT EXISTS joined_groups INTEGER DEFAULT 0;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS wick_cooldown_seconds INTEGER DEFAULT 120;
         ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS bonus_multiplier INTEGER DEFAULT 1;
+
+        try:
+            conn.execute("ALTER TABLE game_sessions DROP CONSTRAINT IF EXISTS game_sessions_game_type_check;")
+            conn.execute("ALTER TABLE game_sessions ADD CONSTRAINT game_sessions_game_type_check CHECK (game_type BETWEEN 1 AND 10);")
+        except Exception:
+            pass
 
         CREATE INDEX IF NOT EXISTS idx_users_points ON users (points_total DESC);
         CREATE INDEX IF NOT EXISTS idx_users_tier ON users (tier_level);
@@ -302,7 +308,7 @@ def init_sqlite_db():
         CREATE TABLE IF NOT EXISTS game_sessions (
             id TEXT PRIMARY KEY,
             telegram_id INTEGER NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
-            game_type INTEGER NOT NULL CHECK (game_type BETWEEN 1 AND 3),
+            game_type INTEGER NOT NULL CHECK (game_type BETWEEN 1 AND 10),
             seed TEXT NOT NULL,
             nonce TEXT UNIQUE NOT NULL,
             score_awarded INTEGER DEFAULT 0 CHECK (score_awarded BETWEEN 0 AND 3),
@@ -394,6 +400,32 @@ def init_sqlite_db():
         try:
             conn.execute("ALTER TABLE game_sessions ADD COLUMN bonus_multiplier INTEGER DEFAULT 1;")
         except Exception:
+            pass
+
+        try:
+            cur = conn.cursor()
+            schema_row = cur.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='game_sessions'").fetchone()
+            if schema_row and "BETWEEN 1 AND 3" in schema_row[0]:
+                conn.execute("PRAGMA foreign_keys=off;")
+                conn.execute("ALTER TABLE game_sessions RENAME TO game_sessions_old;")
+                conn.execute('''
+                    CREATE TABLE game_sessions (
+                        id TEXT PRIMARY KEY,
+                        telegram_id INTEGER NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+                        game_type INTEGER NOT NULL CHECK (game_type BETWEEN 1 AND 10),
+                        seed TEXT NOT NULL,
+                        nonce TEXT UNIQUE NOT NULL,
+                        score_awarded INTEGER DEFAULT 0 CHECK (score_awarded BETWEEN 0 AND 3),
+                        duration_ms INTEGER NOT NULL,
+                        is_valid INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        bonus_multiplier INTEGER DEFAULT 1
+                    );
+                ''')
+                conn.execute("INSERT INTO game_sessions SELECT id, telegram_id, game_type, seed, nonce, score_awarded, duration_ms, is_valid, created_at, bonus_multiplier FROM game_sessions_old;")
+                conn.execute("DROP TABLE game_sessions_old;")
+                conn.execute("PRAGMA foreign_keys=on;")
+        except Exception as e:
             pass
     conn.close()
 

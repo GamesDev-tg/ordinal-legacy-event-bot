@@ -115,6 +115,42 @@
                 </div>
                 <button class="play-action-btn">PLAY</button>
             </div>
+
+            <div class="game-card" onclick="launchMiniGame(4)" style="border:1px solid rgba(245, 158, 11, 0.3); background:linear-gradient(135deg, #131A26 0%, #1A2234 100%);">
+                <div class="game-icon-frame">🎲</div>
+                <div class="game-info">
+                    <div class="game-name" style="color:var(--gold);">Ludo Arena (2 to 8 Players)</div>
+                    <div class="game-desc">Radial multiplayer showdown • Pass & play or vs AI</div>
+                </div>
+                <button class="play-action-btn" style="background:#F59E0B; color:#0F172A; font-weight:800;">ROLL</button>
+            </div>
+
+            <div class="game-card" onclick="launchMiniGame(5)">
+                <div class="game-icon-frame">🔴</div>
+                <div class="game-info">
+                    <div class="game-name">Connect 4 (Gravity 4-in-a-Row)</div>
+                    <div class="game-desc">7x6 vertical chip drop battle vs AI • 1 to 3 sparks</div>
+                </div>
+                <button class="play-action-btn">PLAY</button>
+            </div>
+
+            <div class="game-card" onclick="launchMiniGame(6)">
+                <div class="game-icon-frame">⚡</div>
+                <div class="game-info">
+                    <div class="game-name">2048 Satoshis Merge</div>
+                    <div class="game-desc">Slide and combine crypto satoshis to 2048 & 4096</div>
+                </div>
+                <button class="play-action-btn">PLAY</button>
+            </div>
+
+            <div class="game-card" onclick="launchMiniGame(7)">
+                <div class="game-icon-frame">🔤</div>
+                <div class="game-info">
+                    <div class="game-name">Crypto Wordle Clash</div>
+                    <div class="game-desc">Guess 5-letter blockchain term in 6 tries</div>
+                </div>
+                <button class="play-action-btn">PLAY</button>
+            </div>
         </div>
     </main>
 
@@ -309,6 +345,10 @@
     <script src="/static/js/chakri_game.js"></script>
     <script src="/static/js/rangoli_game.js"></script>
     <script src="/static/js/mithai_game.js"></script>
+    <script src="/static/js/ludo_game.js"></script>
+    <script src="/static/js/connect4_game.js"></script>
+    <script src="/static/js/game_2048.js"></script>
+    <script src="/static/js/wordle_game.js"></script>
     <script src="/static/js/app.js"></script>
 </body>
 </html>

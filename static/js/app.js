@@ -672,6 +672,26 @@ async function launchMiniGame(gameType) {
             document.getElementById('game-action-btn').style.display = 'none';
             currentGame = new window.MithaiGame(canvas, onGameFinished);
             currentGame.start();
+        } else if (gameType === 4) {
+            document.getElementById('game-modal-title').innerText = "Multiplayer Ludo (2–8 Players)";
+            document.getElementById('game-action-btn').style.display = 'none';
+            currentGame = new window.LudoGame(canvas, onGameFinished);
+            currentGame.start();
+        } else if (gameType === 5) {
+            document.getElementById('game-modal-title').innerText = "Connect 4 (Gravity 4-in-a-Row)";
+            document.getElementById('game-action-btn').style.display = 'none';
+            currentGame = new window.Connect4Game(canvas, onGameFinished);
+            currentGame.start();
+        } else if (gameType === 6) {
+            document.getElementById('game-modal-title').innerText = "2048 Satoshis Merge";
+            document.getElementById('game-action-btn').style.display = 'none';
+            currentGame = new window.Game2048(canvas, onGameFinished);
+            currentGame.start();
+        } else if (gameType === 7) {
+            document.getElementById('game-modal-title').innerText = "Crypto Wordle (5 Letters)";
+            document.getElementById('game-action-btn').style.display = 'none';
+            currentGame = new window.WordleGame(canvas, onGameFinished);
+            currentGame.start();
         }
     } catch (e) {
         console.error("Game launch error", e);

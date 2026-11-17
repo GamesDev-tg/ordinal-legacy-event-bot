@@ -1,9 +1,13 @@
 import unittest
 from app.festival_engine import get_active_festival, set_active_festival, get_festival_config, render_welcome_for_current_festival, render_festival_switch_menu
 from app.arcade_engine import play_dice_vs_ai, play_rps_vs_ai, play_coin_vs_ai, create_pvp_dice_challenge, accept_pvp_dice_challenge
-from app.database import get_db_connection
+from app.database import get_db_connection, init_db
 
 class TestFestivalAndArcade(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        init_db()
+
     def setUp(self):
         # Create a test user
         self.test_uid = 99887766
