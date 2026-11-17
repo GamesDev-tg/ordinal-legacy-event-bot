@@ -117,36 +117,40 @@ def render_welcome_for_current_festival(user: dict, first_name: str, is_verified
     if theme == "arcade":
         msg = (
             f"🕹️ <b>Welcome to Ordinal Legacy Arcade Arena, {safe_fname}!</b> 🕹️\n\n"
-            f"The festival arena is now live in <b>Arcade Season</b>! Challenge fellow players in real-time PvP, duel our Cosmic AI, and rack up Arcade Sparks!\n\n"
+            f"The festival arena is now live in <b>Retro Arcade Season</b>! Challenge fellow players in real-time PvP, duel our Cosmic AI, and conquer the leaderboards!\n\n"
             f"👤 <b>Your Dossier</b>:\n"
             f"• ⚡ <b>Arcade Sparks</b>: <code>{points:,} Pts</code>\n"
             f"• 🔋 <b>Energy Stamina</b>: <code>{wicks}/10 Wicks</code>\n\n"
             f"🎮 <b>Featured Arcade Duels & Mini-Games</b>:\n"
-            f"• 🎲 <b>Dice Duel</b>: Roll against AI or challenge players (/duel)\n"
-            f"• ⚔️ <b>Elemental Clash</b>: Rock-Paper-Scissors battle (/rps)\n"
-            f"• 🪙 <b>Satoshi Toss</b>: Heads or Tails coin duel (/flip)\n"
-            f"• 🌀 <b>Classic Hub</b>: Spin Chakri, Trace Rangoli, Catch Mithai\n\n"
-            f"<i>Tap below to enter the Arena or jump into an instant duel!</i>"
+            f"• 🎲 <b>Multiplayer Ludo (2–8 Players)</b>: Classic, Hexagon & Octagon (/ludo)\n"
+            f"• 🔴 <b>Connect 4</b>: Gravity 4-in-a-Row PvP & AI (/c4)\n"
+            f"• ⚡ <b>2048 Satoshis</b>: Slide and merge crypto blocks (/2048)\n"
+            f"• 🔤 <b>Crypto Wordle</b>: 5-letter blockchain puzzle (/wordle)\n"
+            f"• 🎲 <b>Dice Duel & Quick Duels</b>: Dice (/duel), RPS Clash (/rps), Coin Flip (/flip)\n\n"
+            f"<i>Tap below to launch a game or open the full Web Mini-App!</i>"
         )
         keyboard = {
             "inline_keyboard": [
                 [{"text": "🕹️ Open Arcade Arena (Web App)", "web_app": {"url": webapp_url}}],
+                [
+                    {"text": "🎲 Play Ludo (2–8P)", "callback_data": f"ludo_prompt:{user_id}"},
+                    {"text": "🔴 Connect 4", "callback_data": f"c4_prompt:{user_id}"}
+                ],
+                [
+                    {"text": "⚡ 2048 Satoshis", "callback_data": f"2048_start:{user_id}"},
+                    {"text": "🔤 Crypto Wordle", "callback_data": f"wordle_start:{user_id}"}
+                ],
                 [
                     {"text": "🎲 Dice Duel (vs AI)", "callback_data": f"play_dice_ai:{user_id}"},
                     {"text": "⚔️ RPS Clash (vs AI)", "callback_data": f"play_rps_ai:{user_id}"}
                 ],
                 [
                     {"text": "🪙 Satoshi Flip", "callback_data": f"play_coin_ai:{user_id}"},
-                    {"text": "👥 Create PvP Challenge", "callback_data": f"menu_pvp:{user_id}"}
-                ],
-                [
-                    {"text": "🌀 Chakri", "callback_data": f"play_chakri:{user_id}"},
-                    {"text": "🎨 Rangoli", "callback_data": f"play_rangoli:{user_id}"},
-                    {"text": "🍬 Mithai", "callback_data": f"play_mithai:{user_id}"}
+                    {"text": "👥 Create PvP Duel", "callback_data": f"menu_pvp:{user_id}"}
                 ],
                 [
                     {"text": "📊 My Stats & Rank", "callback_data": f"cmd_mydata:{user_id}"},
-                    {"text": "🏆 Top Duels Leaderboard", "callback_data": f"cmd_top:{user_id}"}
+                    {"text": "🏆 Top Leaderboard", "callback_data": f"cmd_top:{user_id}"}
                 ],
                 [
                     {"text": "🤝 Invite Friends", "callback_data": f"cmd_shagun:{user_id}"},

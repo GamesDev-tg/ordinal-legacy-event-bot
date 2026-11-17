@@ -192,8 +192,10 @@ class TestLudoAndNewGames(unittest.TestCase):
         """Test 2048 sliding, tile merging, and view generation."""
         g = start_2048_game(self.u1)
         self.assertEqual(len(g["board"]), 4)
-        # Force a mergeable row: [2, 2, 0, 0]
+        # Clear board and force a mergeable row: [2, 2, 0, 0]
+        g["board"] = [[0] * 4 for _ in range(4)]
         g["board"][0] = [2, 2, 0, 0]
+        g["score"] = 0
         res = move_2048(self.u1, "left")
         self.assertTrue(res["success"])
         self.assertTrue(res["changed"])

@@ -439,32 +439,75 @@ async def sync_telegram_bot_commands() -> bool:
     """
     Registers all player commands with Telegram BotFather API using setMyCommands.
     Keeps admin commands private so normal players only see official festival features.
+    Dynamically loads commands based on the active festival theme (arcade, diwali, christmas)
+    and registers across default, all_private_chats, and all_group_chats scopes so DM menus update immediately.
     """
     if is_mock_token():
         return True
     
-    commands = [
-        {"command": "start", "description": "Launch festival arena and start event"},
-        {"command": "play", "description": "Choose and play mini-games (Chat/App)"},
-        {"command": "chakri", "description": "Spin Chakri Whirl in chat (1-3 pts)"},
-        {"command": "rangoli", "description": "Draw Rangoli pattern in chat (1-3 pts)"},
-        {"command": "mithai", "description": "Feast on Mithai in chat (1-3 pts)"},
-        {"command": "mydata", "description": "View your stats and tier rewards"},
-        {"command": "status", "description": "View community Akhand Diya sparks"},
-        {"command": "shubh", "description": "Claim daily Shubh refill (+5 wicks & pts)"},
-        {"command": "shagun", "description": "Get companion referral invite link"},
-        {"command": "house", "description": "View your Gharana standing and rank"},
-        {"command": "boost", "description": "View 10-min 2x Gharana Surge schedule"},
-        {"command": "top", "description": "View top 10 lampbearers on leaderboard"},
-        {"command": "gharanas", "description": "View all 4 Gharana house standings"},
-        {"command": "tiers", "description": "View milestone ladder and rewards"},
-        {"command": "help", "description": "Show festival guide and commands"}
-    ]
+    from app.festival_engine import get_active_festival
+    theme = get_active_festival()
+    
+    if theme == "arcade":
+        commands = [
+            {"command": "start", "description": "Launch Arcade Arena & Mini-Apps"},
+            {"command": "play", "description": "Play Games (Ludo, C4, 2048, Wordle)"},
+            {"command": "arcade", "description": "Retro Arcade mini-games hub"},
+            {"command": "ludo", "description": "Play 2-8 Player Ludo (PvP & AI bots)"},
+            {"command": "c4", "description": "Connect 4 (Reply/DM/Group PvP or AI)"},
+            {"command": "game2048", "description": "2048 Satoshis crypto merge puzzle"},
+            {"command": "wordle", "description": "5-Letter Crypto Wordle game"},
+            {"command": "duel", "description": "Dice Duel (Roll against AI or challenge)"},
+            {"command": "rps", "description": "Rock-Paper-Scissors clash"},
+            {"command": "flip", "description": "Satoshi Coin Flip (Heads/Tails)"},
+            {"command": "mydata", "description": "View your gamer stats & tier rewards"},
+            {"command": "status", "description": "View community arcade sparks & wicks"},
+            {"command": "top", "description": "View leaderboard top champions"},
+            {"command": "tiers", "description": "View milestone rewards & badges"},
+            {"command": "help", "description": "Show Arcade game guide & rules"},
+        ]
+    elif theme == "christmas":
+        commands = [
+            {"command": "start", "description": "Launch Winter Wonderland Arena"},
+            {"command": "play", "description": "Play holiday mini-games"},
+            {"command": "snowball", "description": "Toss Snowballs for snowflakes"},
+            {"command": "carol", "description": "Sing Christmas Carols for points"},
+            {"command": "stocking", "description": "Open holiday stockings"},
+            {"command": "mydata", "description": "View your winter stats & gifts"},
+            {"command": "status", "description": "View community Snowflake total"},
+            {"command": "gift", "description": "Send holiday gift box to friends"},
+            {"command": "top", "description": "View top winter lampbearers"},
+            {"command": "tiers", "description": "View milestone rewards"},
+            {"command": "help", "description": "Show Christmas guide & commands"},
+        ]
+    else:
+        commands = [
+            {"command": "start", "description": "Launch festival arena and start event"},
+            {"command": "play", "description": "Choose and play mini-games (Chat/App)"},
+            {"command": "chakri", "description": "Spin Chakri Whirl in chat (1-3 pts)"},
+            {"command": "rangoli", "description": "Draw Rangoli pattern in chat (1-3 pts)"},
+            {"command": "mithai", "description": "Feast on Mithai in chat (1-3 pts)"},
+            {"command": "mydata", "description": "View your stats and tier rewards"},
+            {"command": "status", "description": "View community Akhand Diya sparks"},
+            {"command": "shubh", "description": "Claim daily Shubh refill (+5 wicks & pts)"},
+            {"command": "shagun", "description": "Get companion referral invite link"},
+            {"command": "house", "description": "View your Gharana standing and rank"},
+            {"command": "boost", "description": "View 10-min 2x Gharana Surge schedule"},
+            {"command": "top", "description": "View top 10 lampbearers on leaderboard"},
+            {"command": "gharanas", "description": "View all 4 Gharana house standings"},
+            {"command": "tiers", "description": "View milestone ladder and rewards"},
+            {"command": "help", "description": "Show festival guide and commands"}
+        ]
+    
     url = f"https://api.telegram.org/bot{settings.BOT_TOKEN}/setMyCommands"
+    success = True
     try:
         client = get_async_http_client()
-        resp = await client.post(url, json={"commands": commands})
-        return resp.status_code == 200 and resp.json().get("ok", False)
+        for scope in [{"type": "default"}, {"type": "all_private_chats"}, {"type": "all_group_chats"}]:
+            resp = await client.post(url, json={"commands": commands, "scope": scope})
+            if resp.status_code != 200 or not resp.json().get("ok", False):
+                success = False
+        return success
     except Exception as e:
         print(f"Failed to set bot commands: {e}")
         return False
@@ -1054,7 +1097,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             "/adminstats", "/userstats", "/playerstats", "/eventstats", "/boost",
             "/gifts", "/gift", "/clash", "/gharanaclash",
             "/duel", "/dice", "/rps", "/flip", "/coin", "/arcade",
-            "/ludo", "/ludogame", "/c4", "/connect4", "/2048", "/wordle"
+            "/ludo", "/ludogame", "/c4", "/connect4", "/2048", "/game2048", "/play2048", "/satoshis", "/satoshi2048", "/wordle"
         }
         ADMIN_COMMANDS = {
             "/admin", "/adminhelp", "/admins", "/addadmin", "/deladmin",
@@ -1072,7 +1115,7 @@ async def handle_bot_message(message: Dict[str, Any]):
             "/resetscores", "/resetpoints", "/resetshubh", "/resetallshubh",
             "/resetevent", "/cleandummy", "/purgedummy", "/syncreferrals",
             "/recoverscores", "/restorescores", "/syncscores",
-            "/resetreferrals", "/query", "/syncbot",
+            "/resetreferrals", "/query", "/syncbot", "/synccommands", "/sync",
             "/dropdiya", "/flashdiya", "/droptrivia", "/riddle",
             "/dropbox", "/luckybox", "/shubhbox",
             "/fixscores", "/rollbackscores", "/recoverextra",
@@ -1097,7 +1140,7 @@ async def handle_bot_message(message: Dict[str, Any]):
                 "/akhand", "/widget", "/verify", "/resetgate", "/testgate",
                 "/gifts", "/gift", "/clash", "/gharanaclash",
                 "/duel", "/dice", "/rps", "/flip", "/coin", "/arcade",
-                "/ludo", "/ludogame", "/c4", "/connect4", "/2048", "/wordle",
+                "/ludo", "/ludogame", "/c4", "/connect4", "/2048", "/game2048", "/play2048", "/satoshis", "/satoshi2048", "/wordle",
                 "/setfestival", "/switchfestival", "/festival", "/festivals"
             }
             if cmd_head not in ALL_KNOWN_BOT_COMMANDS:
@@ -1255,10 +1298,12 @@ async def handle_bot_message(message: Dict[str, Any]):
     cmd_head_check = text.split()[0].lower() if text else ""
     if not user.get("joined_groups", 0) and not is_admin(user_id) and cmd_head_check not in allowed_unverified and not text.startswith(("/bypassverify", "/admin")):
         if is_private:
+            from app.festival_engine import get_festival_config
+            fest_cfg = get_festival_config()
             safe_fname = escape_md(first_name)
             gate_text = (
-                f"🪔 *Welcome to Ordinal Legacy Maha Deepotsav, {safe_fname}!* 🪔\n\n"
-                f"Before entering the sacred arena, you must join our 3 official community groups:\n\n"
+                f"{fest_cfg['icon']} *Welcome to Ordinal Legacy {escape_md(fest_cfg['name'])}, {safe_fname}!* {fest_cfg['icon']}\n\n"
+                f"Before entering the arena, you must join our 3 official community groups:\n\n"
                 f"1️⃣ {settings.GROUP_NAME_1}\n"
                 f"2️⃣ {settings.GROUP_NAME_2}\n"
                 f"3️⃣ {settings.GROUP_NAME_3}\n\n"
@@ -1313,23 +1358,12 @@ async def handle_bot_message(message: Dict[str, Any]):
             conn.execute("UPDATE users SET joined_groups = 1 WHERE telegram_id = ?", (user_id,))
             u = conn.execute("SELECT * FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
         conn.close()
+        from app.festival_engine import render_welcome_for_current_festival
+        welcome_text, keyboard = render_welcome_for_current_festival(dict(u), first_name, is_verified=True)
         await send_telegram_message(
             chat_id,
-            f"✅ *Verification Confirmed! Welcome to the Deepotsav Arena!* 🎉\n\n"
-            f"Initiated into: *{settings.GHARANAS.get(u['gharana_id'], 'Surya Gharana')}*\n"
-            f"• Points: *{u['points_total']} Pts*\n"
-            f"• Wicks: *{u['diya_wicks']}/10*\n\n"
-            f"Choose how you want to play:",
-            {
-                "inline_keyboard": [
-                    [{"text": "Enter Maha Deepotsav Arena (Mini-App)", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
-                    [{"text": "Play Mini-Games in Chat", "callback_data": f"menu_play:{user_id}"}],
-                    [{"text": "Play Chakri", "callback_data": f"play_chakri:{user_id}"},
-                     {"text": "Play Rangoli", "callback_data": f"play_rangoli:{user_id}"},
-                     {"text": "Play Mithai", "callback_data": f"play_mithai:{user_id}"}],
-                    [{"text": "Claim Shubh Refill (+5 Wicks & Pts)", "callback_data": f"cmd_shubh:{user_id}"}]
-                ]
-            }
+            f"✅ <b>Verification Confirmed!</b> 🎉\n\n" + welcome_text,
+            keyboard
         )
         return
     
@@ -1354,6 +1388,48 @@ async def handle_bot_message(message: Dict[str, Any]):
         if is_user_captcha_locked(user_id):
             await send_captcha_prompt(chat_id, user_id, "Automated action prevention: Please verify human presence before entering the arena.")
             return
+
+        from app.festival_engine import get_active_festival
+        theme = get_active_festival()
+        if theme == "arcade":
+            arcade_text = (
+                f"🕹️ <b>ORDINAL LEGACY ARCADE ARENA</b> 🕹️\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"Welcome to the competitive mini-games hub! Play multiplayer tournaments, casual duels, or compete vs AI:\n\n"
+                f"• 🎲 <b>Multiplayer Ludo (2–8 Players)</b>: /ludo [2-8]\n"
+                f"• 🔴 <b>Connect 4 (Gravity 4-in-a-Row)</b>: /c4 or /connect4\n"
+                f"• ⚡ <b>2048 Satoshis Merge Puzzle</b>: /2048\n"
+                f"• 🔤 <b>Crypto Wordle (5-Letter Clash)</b>: /wordle\n"
+                f"• 🎲 <b>Dice Duel & RPS Clash</b>: /duel, /rps, /flip\n\n"
+                f"<i>Tap any game button below to start:</i>"
+            )
+            arcade_kb = {
+                "inline_keyboard": [
+                    [
+                        {"text": "🎲 Play Ludo (2–8P)", "callback_data": f"ludo_prompt:{user_id}"},
+                        {"text": "🔴 Connect 4", "callback_data": f"c4_prompt:{user_id}"}
+                    ],
+                    [
+                        {"text": "⚡ 2048 Satoshis", "callback_data": f"2048_start:{user_id}"},
+                        {"text": "🔤 Crypto Wordle", "callback_data": f"wordle_start:{user_id}"}
+                    ],
+                    [
+                        {"text": "🎲 Dice Duel (vs AI)", "callback_data": f"play_dice_ai:{user_id}"},
+                        {"text": "⚔️ RPS Clash (vs AI)", "callback_data": f"play_rps_ai:{user_id}"}
+                    ],
+                    [
+                        {"text": "🪙 Satoshi Flip", "callback_data": f"play_coin_ai:{user_id}"},
+                        {"text": "👥 Create PvP Duel", "callback_data": f"menu_pvp:{user_id}"}
+                    ],
+                    [
+                        {"text": "📊 My Stats & Rank", "callback_data": f"cmd_mydata:{user_id}"},
+                        {"text": "🏆 Top Leaderboard", "callback_data": f"cmd_top:{user_id}"}
+                    ]
+                ]
+            }
+            await send_telegram_message(chat_id, arcade_text, arcade_kb)
+            return
+
         from app.game_engine import get_gharana_boost_status
         boost = get_gharana_boost_status()
         rem_m = boost["seconds_remaining"] // 60
@@ -1684,6 +1760,8 @@ async def handle_bot_message(message: Dict[str, Any]):
             theme_choice = parts[1].lower()
             from app.festival_engine import set_active_festival, get_festival_config
             ok, resp_msg = set_active_festival(theme_choice)
+            if ok:
+                await sync_telegram_bot_commands()
             cfg = get_festival_config(theme_choice)
             await send_telegram_message(
                 chat_id,
@@ -1888,7 +1966,7 @@ async def handle_bot_message(message: Dict[str, Any]):
         await send_telegram_message(chat_id, msg_text, reply_kb)
         return
 
-    elif text.startswith("/2048"):
+    elif text.startswith(("/2048", "/game2048", "/play2048", "/satoshis", "/satoshi2048")):
         from app.arcade_engine import start_2048_game, render_2048_view
         start_2048_game(user_id)
         msg_text, kb = render_2048_view(user_id)
@@ -3116,24 +3194,42 @@ async def handle_bot_message(message: Dict[str, Any]):
             f"• Diya Companion: {comp_str}\n"
             f"• Friends Invited: *{total_refs}* ({u['referral_points_earned']}/{settings.MAX_REFERRAL_POINTS} pts)"
         )
-        kb = {
-            "inline_keyboard": [
-                [{"text": "Play Mini-Games", "callback_data": f"menu_play:{user_id}"},
-                 {"text": "Launch Mini-App", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
-                [{"text": "Invite Friends", "callback_data": f"cmd_shagun:{user_id}"},
-                 {"text": "Daily Refill", "callback_data": f"cmd_shubh:{user_id}"}]
-            ]
-        }
+        from app.festival_engine import get_active_festival
+        active_fest = get_active_festival()
+        if active_fest == "arcade":
+            kb = {
+                "inline_keyboard": [
+                    [{"text": "🕹️ Play Arcade Hub", "callback_data": f"cmd_arcade:{user_id}"},
+                     {"text": "🚀 Launch Mini-App", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
+                    [{"text": "🎲 Play Ludo (2–8P)", "callback_data": f"ludo_prompt:{user_id}"},
+                     {"text": "🔴 Connect 4", "callback_data": f"c4_prompt:{user_id}"}],
+                    [{"text": "⚡ 2048 Satoshis", "callback_data": f"2048_start:{user_id}"},
+                     {"text": "🔤 Crypto Wordle", "callback_data": f"wordle_start:{user_id}"}],
+                    [{"text": "🤝 Invite Friends", "callback_data": f"cmd_shagun:{user_id}"},
+                     {"text": "🎁 Daily Energy Refill", "callback_data": f"cmd_shubh:{user_id}"}]
+                ]
+            }
+        else:
+            kb = {
+                "inline_keyboard": [
+                    [{"text": "Play Mini-Games", "callback_data": f"menu_play:{user_id}"},
+                     {"text": "Launch Mini-App", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
+                    [{"text": "Invite Friends", "callback_data": f"cmd_shagun:{user_id}"},
+                     {"text": "Daily Refill", "callback_data": f"cmd_shubh:{user_id}"}]
+                ]
+            }
         await send_telegram_message(chat_id, mydata_msg, kb)
         return
 
-    elif text == "/syncbot":
+    elif text in ("/syncbot", "/synccommands", "/sync"):
         if not is_admin(user_id):
             await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
             return
         ok = await sync_telegram_bot_commands()
+        from app.festival_engine import get_active_festival
+        curr_fest = get_active_festival()
         if ok:
-            await send_telegram_message(chat_id, "✅ *Telegram Bot Commands Synchronized!* All player commands are now visible in the Telegram menu button.")
+            await send_telegram_message(chat_id, f"✅ *Telegram Bot Commands Synchronized!* (Theme: `{curr_fest}`)\n\nAll player commands for `{curr_fest}` season are now registered with Telegram Bot API across DM & groups.")
         else:
             await send_telegram_message(chat_id, "⚠️ Failed to sync commands. Check bot token or server logs.")
         return
@@ -3595,7 +3691,7 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
 
     PUBLIC_GROUP_ACTIONS = {
         "claim_diya", "flash_diya", "trivia_ans", "open_box",
-        "accept_duel", "switch_fest", "cmd_fest_menu",
+        "accept_duel", "switch_fest", "cmd_fest_menu", "cmd_arcade",
         "play_dice_ai", "play_rps_ai", "rps_ai", "play_coin_ai", "coin_ai", "menu_pvp",
         "ludo_prompt", "ludo_create", "ludo_join", "ludo_ai", "ludo_start", "ludo_roll", "ludo_move", "ludo_refresh", "ludo_new",
         "c4_prompt", "c4_drop", "c4_new", "c4_refresh", "c4_join", "c4_ai", "c4_rematch",
@@ -3623,6 +3719,7 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
             new_theme = parts[1]
             from app.festival_engine import set_active_festival, render_festival_switch_menu
             set_active_festival(new_theme)
+            await sync_telegram_bot_commands()
             text_menu, kb_menu = render_festival_switch_menu()
             msg_id = callback_query.get("message", {}).get("message_id", 0)
             if msg_id:
@@ -3752,6 +3849,49 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
                 await edit_telegram_message(chat_id, msg_obj["message_id"], res["message"], reply_markup=res.get("keyboard"))
             else:
                 await send_telegram_message(chat_id, res["message"], res.get("keyboard"))
+        return
+
+    elif action == "cmd_arcade":
+        arcade_text = (
+            f"🕹️ <b>ORDINAL LEGACY ARCADE ARENA</b> 🕹️\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"Welcome to the competitive mini-games hub! Play multiplayer tournaments, casual duels, or compete vs AI:\n\n"
+            f"• 🎲 <b>Multiplayer Ludo (2–8 Players)</b>: /ludo [2-8]\n"
+            f"• 🔴 <b>Connect 4 (Gravity 4-in-a-Row)</b>: /c4 or /connect4\n"
+            f"• ⚡ <b>2048 Satoshis Merge Puzzle</b>: /2048\n"
+            f"• 🔤 <b>Crypto Wordle (5-Letter Clash)</b>: /wordle\n"
+            f"• 🎲 <b>Dice Duel & RPS Clash</b>: /duel, /rps, /flip\n\n"
+            f"<i>Tap any game button below to start:</i>"
+        )
+        arcade_kb = {
+            "inline_keyboard": [
+                [
+                    {"text": "🎲 Play Ludo (2–8P)", "callback_data": f"ludo_prompt:{user_id}"},
+                    {"text": "🔴 Connect 4", "callback_data": f"c4_prompt:{user_id}"}
+                ],
+                [
+                    {"text": "⚡ 2048 Satoshis", "callback_data": f"2048_start:{user_id}"},
+                    {"text": "🔤 Crypto Wordle", "callback_data": f"wordle_start:{user_id}"}
+                ],
+                [
+                    {"text": "🎲 Dice Duel (vs AI)", "callback_data": f"play_dice_ai:{user_id}"},
+                    {"text": "⚔️ RPS Clash (vs AI)", "callback_data": f"play_rps_ai:{user_id}"}
+                ],
+                [
+                    {"text": "🪙 Satoshi Flip", "callback_data": f"play_coin_ai:{user_id}"},
+                    {"text": "👥 Create PvP Duel", "callback_data": f"menu_pvp:{user_id}"}
+                ],
+                [
+                    {"text": "📊 My Stats & Rank", "callback_data": f"cmd_mydata:{user_id}"},
+                    {"text": "🏆 Top Leaderboard", "callback_data": f"cmd_top:{user_id}"}
+                ]
+            ]
+        }
+        msg_obj = callback_query.get("message")
+        if msg_obj and msg_obj.get("message_id"):
+            await edit_telegram_message(chat_id, msg_obj["message_id"], arcade_text, reply_markup=arcade_kb)
+        else:
+            await send_telegram_message(chat_id, arcade_text, arcade_kb)
         return
 
     elif action == "ludo_prompt":
@@ -4230,24 +4370,12 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
         
         gid = u["gharana_id"] if u else 1
         g_name = settings.GHARANAS.get(gid, "Surya Gharana")
+        from app.festival_engine import render_welcome_for_current_festival
+        welcome_text, keyboard = render_welcome_for_current_festival(dict(u), from_user.get("first_name", "Player"), is_verified=True)
         await send_telegram_message(
             chat_id,
-            f"✅ *Verification Confirmed! Welcome to the Arena!* 🎉\n\n"
-            f"You are officially initiated into the *{g_name}*!\n"
-            f"• Points: *{u['points_total']} Pts*\n"
-            f"• Wicks: *{u['diya_wicks']}/10*\n\n"
-            f"Choose how you want to play:",
-            {
-                "inline_keyboard": [
-                    [{"text": "Enter Maha Deepotsav Arena (Mini-App)", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}],
-                    [{"text": "Play Mini-Games in Chat", "callback_data": f"menu_play:{user_id}"}],
-                    [{"text": "Play Chakri", "callback_data": f"play_chakri:{user_id}"},
-                     {"text": "Play Rangoli", "callback_data": f"play_rangoli:{user_id}"},
-                     {"text": "Play Mithai", "callback_data": f"play_mithai:{user_id}"}],
-                    [{"text": "Claim Shubh Refill (+5 Wicks & Pts)", "callback_data": f"cmd_shubh:{user_id}"}],
-                    [{"text": "My Shagun Invite Link", "callback_data": f"cmd_shagun:{user_id}"}]
-                ]
-            }
+            f"✅ <b>Verification Confirmed!</b> 🎉\n\n" + welcome_text,
+            keyboard
         )
         return
 

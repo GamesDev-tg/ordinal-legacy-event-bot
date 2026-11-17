@@ -48,9 +48,14 @@ def ensure_db_initialized():
             print(f"[ENSURE_DB_INITIALIZED_ERROR]: {e}")
 
 @app.on_event("startup")
-def on_startup():
+async def on_startup():
     ensure_db_initialized()
     print("Database initialized successfully.")
+    try:
+        from app.bot import sync_telegram_bot_commands
+        await sync_telegram_bot_commands()
+    except Exception as e:
+        print(f"Startup command sync error: {e}")
 
 app.include_router(auth_router)
 app.include_router(game_router)
@@ -161,7 +166,9 @@ async def api_admin_set_festival(theme: str = "arcade"):
     cfg = get_festival_config(theme)
     if ok:
         try:
-            await send_bot_log(f"🎛️ <b>[API FESTIVAL SWITCH]</b> Switched festival theme to <b>{theme}</b> ({cfg['name']}).")
+            from app.bot import sync_telegram_bot_commands
+            await sync_telegram_bot_commands()
+            await send_bot_log(f"🎛️ <b>[API FESTIVAL SWITCH]</b> Switched festival theme to <b>{theme}</b> ({cfg['name']}). Bot commands synchronized.")
         except Exception:
             pass
     return {"ok": ok, "message": msg, "active_theme": theme if ok else None, "config": cfg if ok else None}

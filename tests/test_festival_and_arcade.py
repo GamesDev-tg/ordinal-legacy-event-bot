@@ -3,10 +3,25 @@ from app.festival_engine import get_active_festival, set_active_festival, get_fe
 from app.arcade_engine import play_dice_vs_ai, play_rps_vs_ai, play_coin_vs_ai, create_pvp_dice_challenge, accept_pvp_dice_challenge
 from app.database import get_db_connection, init_db
 
+def run_coro_sync(coro):
+    while True:
+        try:
+            coro.send(None)
+        except StopIteration as e:
+            return e.value
+
 class TestFestivalAndArcade(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         init_db()
+        from app.config import settings
+        cls._orig_token = settings.BOT_TOKEN
+        settings.BOT_TOKEN = "mock_bot_token_for_dev"
+
+    @classmethod
+    def tearDownClass(cls):
+        from app.config import settings
+        settings.BOT_TOKEN = cls._orig_token
 
     def setUp(self):
         # Create a test user
@@ -72,6 +87,26 @@ class TestFestivalAndArcade(unittest.TestCase):
         set_active_festival("christmas")
         text, kb = render_welcome_for_current_festival(dummy_user, "TestHero")
         self.assertIn("Winter Wonderland", text)
+
+        set_active_festival("arcade")
+
+    def test_sync_telegram_bot_commands_themes(self):
+        from app.bot import sync_telegram_bot_commands
+
+        # Test in arcade mode
+        set_active_festival("arcade")
+        res = run_coro_sync(sync_telegram_bot_commands())
+        self.assertTrue(res)
+
+        # Test in diwali mode
+        set_active_festival("diwali")
+        res = run_coro_sync(sync_telegram_bot_commands())
+        self.assertTrue(res)
+
+        # Test in christmas mode
+        set_active_festival("christmas")
+        res = run_coro_sync(sync_telegram_bot_commands())
+        self.assertTrue(res)
 
         set_active_festival("arcade")
 
