@@ -5,7 +5,7 @@ from app.ludo_engine import (
     create_ludo_game, join_ludo_game, fill_ludo_with_ai, start_ludo_game,
     roll_ludo_dice, move_ludo_pawn, execute_ai_turn_if_needed,
     get_movable_pawns, apply_pawn_move, render_ludo_view,
-    get_track_config, get_color_sequence
+    get_track_config, get_color_sequence, forfeit_or_exit_ludo_game
 )
 from app.arcade_engine import (
     start_c4_game, play_c4_turn, _check_c4_win, render_c4_view,
@@ -123,6 +123,54 @@ class TestLudoAndNewGames(unittest.TestCase):
         txt, kb = render_ludo_view(game["id"])
         self.assertIn("ORDINAL LUDO MULTIPLAYER ARENA", txt)
         self.assertTrue(len(kb) >= 1)
+
+    def test_ludo_quit_and_forfeit_rules(self):
+        """Test exit/quit mechanics: 2-player opponent wins; multiplayer continues."""
+        # 1. Two-player match: Player 1 quits -> Opponent (Tester 2) wins immediately
+        g2 = create_ludo_game(self.u1, "Tester1", num_players=2)
+        join_ludo_game(g2["id"], self.u2, "Tester2")
+        start_ludo_game(g2["id"], self.u1)
+        self.assertEqual(g2["status"], "playing")
+
+        res_quit2 = forfeit_or_exit_ludo_game(g2["id"], self.u1)
+        self.assertTrue(res_quit2["success"])
+        self.assertTrue(res_quit2["game_over"])
+        self.assertEqual(res_quit2["winner"], "Tester2")
+        self.assertEqual(g2["status"], "finished")
+        self.assertEqual(g2["players"][0]["rank"], 2) # Quitter gets last place
+        self.assertEqual(g2["players"][1]["rank"], 1) # Opponent wins
+
+        # 2. Four-player match: Player 1 quits -> match continues among remaining 3
+        g4 = create_ludo_game(self.u1, "Tester1", num_players=4)
+        join_ludo_game(g4["id"], self.u2, "Tester2")
+        fill_ludo_with_ai(g4["id"])
+        self.assertEqual(g4["status"], "playing")
+
+        res_quit4 = forfeit_or_exit_ludo_game(g4["id"], self.u1)
+        self.assertTrue(res_quit4["success"])
+        self.assertFalse(res_quit4["game_over"])
+        self.assertEqual(g4["status"], "playing")
+        self.assertTrue(g4["players"][0]["resigned"])
+        self.assertEqual(g4["players"][0]["rank"], 4)
+
+        # Quitting again fails
+        res_dup = forfeit_or_exit_ludo_game(g4["id"], self.u1)
+        self.assertFalse(res_dup["success"])
+
+    def test_ludo_roll_auto_move_base(self):
+        """Verify rolling 6 with base pawns auto-exits base without choice lock."""
+        g = create_ludo_game(self.u1, "Tester1", num_players=2)
+        fill_ludo_with_ai(g["id"])
+        self.assertEqual(g["status"], "playing")
+
+        # Mock random.randint to return 6
+        import unittest.mock
+        with unittest.mock.patch("random.randint", return_value=6):
+            res = roll_ludo_dice(g["id"], self.u1)
+            self.assertTrue(res["success"])
+            self.assertTrue(res["auto_moved"])
+            # Pawn 0 should now be on the track at start pos
+            self.assertEqual(g["players"][0]["pawns"][0]["state"], "track")
 
     def test_connect4_gameplay_and_win(self):
         """Test Connect 4 dropping pieces and 4-in-a-row horizontal win."""

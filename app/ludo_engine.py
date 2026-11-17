@@ -350,7 +350,7 @@ def _award_ludo_rewards(game: Dict[str, Any]):
     try:
         with conn:
             for idx, p in enumerate(game["players"]):
-                if p["is_ai"] or p["id"] <= 0:
+                if p["is_ai"] or p["id"] <= 0 or p.get("resigned", False):
                     continue
                 rank = p["rank"]
                 if rank == 1:
@@ -389,12 +389,13 @@ def advance_turn(game: Dict[str, Any], bonus_turn: bool = False):
         game["logs"].append(f"🌟 {curr['color_emoji']} {curr['name']} gets a BONUS ROLL!")
         return
 
-    # Pass to next player who hasn't finished all pawns
+    # Pass to next player who hasn't finished all pawns and has not resigned
     game["consecutive_sixes"] = 0
     total = len(game["players"])
     for i in range(1, total + 1):
         next_idx = (game["turn_idx"] + i) % total
-        if game["players"][next_idx]["rank"] is None:
+        p = game["players"][next_idx]
+        if p["rank"] is None and not p.get("resigned", False):
             game["turn_idx"] = next_idx
             return
 
@@ -435,8 +436,9 @@ def roll_ludo_dice(game_id: str, user_id: int) -> Dict[str, Any]:
         advance_turn(game, bonus_turn=False)
         return {"success": True, "roll": roll, "auto_moved": False, "turn_passed": True}
         
-    if len(movable) == 1:
-        # Only 1 valid move: Auto-execute for seamless gameplay
+    all_in_yard = all(curr_player["pawns"][p]["state"] == "yard" for p in movable)
+    if len(movable) == 1 or all_in_yard:
+        # Only 1 valid move (or all movable pawns are in base so choice is identical)
         chosen_pawn = movable[0]
         res = apply_pawn_move(game, game["turn_idx"], chosen_pawn, roll)
         bonus = (roll == 6 and game["consecutive_sixes"] < 3) or res.get("captured", False)
@@ -468,6 +470,77 @@ def move_ludo_pawn(game_id: str, user_id: int, pawn_id: int) -> Dict[str, Any]:
     bonus = (roll == 6 and game["consecutive_sixes"] < 3) or res.get("captured", False)
     advance_turn(game, bonus_turn=bonus)
     return {"success": True, "bonus_turn": bonus, "game_over": res.get("game_over", False)}
+
+def forfeit_or_exit_ludo_game(game_id: str, user_id: int) -> Dict[str, Any]:
+    """
+    Handles a player quitting/exiting a Ludo game.
+    - If 2-player match: Remaining opponent wins immediately.
+    - If multiplayer match (> 2 players): The quitting player forfeits/loses,
+      and the match continues with the remaining active players.
+    """
+    game = _ACTIVE_LUDO_GAMES.get(game_id)
+    if not game:
+        return {"success": False, "error": "Game not found."}
+        
+    if game["status"] == "lobby":
+        # In lobby: remove player or cancel if host
+        if game["host_id"] == user_id:
+            game["status"] = "finished"
+            return {"success": True, "game_over": True, "message": "Host left. Lobby cancelled."}
+        else:
+            game["players"] = [p for p in game["players"] if p["id"] != user_id]
+            game["logs"].append(f"🚪 A player left the lobby.")
+            return {"success": True, "game_over": False, "message": "You left the lobby."}
+
+    if game["status"] != "playing":
+        return {"success": False, "error": "Game is not currently active."}
+
+    # Find the player quitting
+    p_idx = None
+    for idx, p in enumerate(game["players"]):
+        if p["id"] == user_id:
+            p_idx = idx
+            break
+
+    if p_idx is None:
+        return {"success": False, "error": "You are not a player in this game."}
+
+    quitter = game["players"][p_idx]
+    if quitter.get("resigned", False):
+        return {"success": False, "error": "You have already resigned from this match."}
+
+    quitter["resigned"] = True
+    quitter["rank"] = len(game["players"]) # Last place
+    game["logs"].append(f"🚪 {quitter['color_emoji']} <b>{quitter['name']} quit and forfeited!</b>")
+
+    active_players = [p for p in game["players"] if not p.get("resigned", False) and p.get("rank") is None]
+
+    # Rule: 2-player game OR only 1 player left -> opponent wins immediately!
+    if game["num_players"] == 2 or len(active_players) <= 1:
+        game["status"] = "finished"
+        winner = active_players[0] if active_players else [p for p in game["players"] if p["id"] != user_id][0]
+        winner["rank"] = 1
+        if winner["id"] not in game["winners"]:
+            game["winners"].append(winner["id"])
+        game["logs"].append(f"👑 {winner['color_emoji']} <b>{winner['name']} wins the match by forfeit!</b>")
+        _award_ludo_rewards(game)
+        return {
+            "success": True,
+            "game_over": True,
+            "winner": winner["name"],
+            "message": f"🏳️ {quitter['name']} forfeited! {winner['name']} wins!"
+        }
+    else:
+        # Multiplayer (> 2 players): The game continues!
+        # If it was the quitting player's turn, advance turn and trigger AI if needed
+        if game["turn_idx"] == p_idx:
+            advance_turn(game, bonus_turn=False)
+            execute_ai_turn_if_needed(game_id)
+        return {
+            "success": True,
+            "game_over": False,
+            "message": f"🚪 {quitter['name']} left the match. Game continues with {len(active_players)} players!"
+        }
 
 def execute_ai_turn_if_needed(game_id: str) -> List[str]:
     """Executes AI turns automatically with heuristic decision making."""
@@ -567,11 +640,12 @@ def render_ludo_view(game_id: str) -> Tuple[str, List[List[Dict[str, str]]]]:
         else:
             keyboard.append([{"text": "🚀 Launch Game Now!", "callback_data": f"ludo_start:{game_id}"}])
             
+        keyboard.append([{"text": "🚪 Leave Lobby", "callback_data": f"ludo_exit:{game_id}"}])
         return text, keyboard
         
     # Active Game or Finished
     curr_player = game["players"][game["turn_idx"]]
-    recent_logs = "\n".join(game["logs"][-3:]) if game["logs"] else "Game initialized."
+    recent_logs = "\n".join(game["logs"][-6:]) if game["logs"] else "Game initialized."
     
     text = (
         f"🎲 <b>ORDINAL LUDO SHOWDOWN ({num} Players)</b> 🎲\n"
@@ -581,8 +655,9 @@ def render_ludo_view(game_id: str) -> Tuple[str, List[List[Dict[str, str]]]]:
     if status == "finished":
         text += "🏁 <b>MATCH COMPLETED! FINAL PODIUM:</b>\n"
         for p in sorted(game["players"], key=lambda x: x["rank"] if x["rank"] else 99):
+            resigned_tag = " <i>(Forfeited)</i>" if p.get("resigned", False) else ""
             rank_str = f"#{p['rank']}" if p["rank"] else "DNF"
-            text += f"{p['color_emoji']} <b>{rank_str} - {html.escape(p['name'])}</b>\n"
+            text += f"{p['color_emoji']} <b>{rank_str} - {html.escape(p['name'])}</b>{resigned_tag}\n"
         text += f"\n🏆 Rewards distributed to all participants!\n\n"
         text += f"<i>Recent action:</i>\n{recent_logs}"
         return text, [[{"text": "🔄 Play New Game", "callback_data": "ludo_new"}]]
@@ -596,6 +671,9 @@ def render_ludo_view(game_id: str) -> Tuple[str, List[List[Dict[str, str]]]]:
     text += f"━━━━━━━━━━━━━━━━━━━━━━\n"
     text += "<b>Pawns Status:</b>\n"
     for p in game["players"]:
+        if p.get("resigned", False):
+            text += f"{p['color_emoji']} <s>{html.escape(p['name'])}</s>: <i>[Forfeited]</i>\n"
+            continue
         pawn_summary = []
         for pw in p["pawns"]:
             st = pw["state"]
@@ -627,5 +705,8 @@ def render_ludo_view(game_id: str) -> Tuple[str, List[List[Dict[str, str]]]]:
         for i in range(0, len(pawn_buttons), 2):
             keyboard.append(pawn_buttons[i:i+2])
             
-    keyboard.append([{"text": "🔄 Refresh Board", "callback_data": f"ludo_refresh:{game_id}"}])
+    keyboard.append([
+        {"text": "🔄 Refresh Board", "callback_data": f"ludo_refresh:{game_id}"},
+        {"text": "🚪 Quit / Exit Match", "callback_data": f"ludo_exit:{game_id}"}
+    ])
     return text, keyboard

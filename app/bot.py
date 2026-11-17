@@ -3693,7 +3693,7 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
         "claim_diya", "flash_diya", "trivia_ans", "open_box",
         "accept_duel", "switch_fest", "cmd_fest_menu", "cmd_arcade",
         "play_dice_ai", "play_rps_ai", "rps_ai", "play_coin_ai", "coin_ai", "menu_pvp",
-        "ludo_prompt", "ludo_create", "ludo_join", "ludo_ai", "ludo_start", "ludo_roll", "ludo_move", "ludo_refresh", "ludo_new",
+        "ludo_prompt", "ludo_create", "ludo_join", "ludo_ai", "ludo_start", "ludo_roll", "ludo_move", "ludo_refresh", "ludo_new", "ludo_exit",
         "c4_prompt", "c4_drop", "c4_new", "c4_refresh", "c4_join", "c4_ai", "c4_rematch",
         "2048_start", "2048_move", "2048_new",
         "wordle_start", "wordle_guess", "wordle_new"
@@ -3995,7 +3995,26 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
             if not res["success"]:
                 await answer_telegram_callback_query(callback_id, text=res["error"], show_alert=True)
                 return
+            roll_val = res.get("roll")
+            toast = f"🎲 You rolled a {roll_val}!" if roll_val else "🎲 Dice rolled!"
+            await answer_telegram_callback_query(callback_id, text=toast, show_alert=False)
             execute_ai_turn_if_needed(game_id)
+            msg_text, kb = render_ludo_view(game_id)
+            reply_kb = {"inline_keyboard": kb} if kb else None
+            msg_obj = callback_query.get("message")
+            if msg_obj and msg_obj.get("message_id"):
+                await edit_telegram_message(chat_id, msg_obj["message_id"], msg_text, reply_markup=reply_kb)
+        return
+
+    elif action == "ludo_exit":
+        if len(parts) >= 2:
+            game_id = parts[1]
+            from app.ludo_engine import forfeit_or_exit_ludo_game, render_ludo_view
+            res = forfeit_or_exit_ludo_game(game_id, user_id)
+            if not res["success"]:
+                await answer_telegram_callback_query(callback_id, text=res["error"], show_alert=True)
+                return
+            await answer_telegram_callback_query(callback_id, text=res["message"], show_alert=True)
             msg_text, kb = render_ludo_view(game_id)
             reply_kb = {"inline_keyboard": kb} if kb else None
             msg_obj = callback_query.get("message")

@@ -47,6 +47,7 @@ class LudoGame {
         this.selectedPlayerCount = 4;
 
         this.handleCanvasClick = this.handleCanvasClick.bind(this);
+        this.handleTouchStart = this.handleTouchStart.bind(this);
     }
 
     start() {
@@ -54,12 +55,7 @@ class LudoGame {
         this.startTime = Date.now();
         this.initGame(this.selectedPlayerCount);
         this.canvas.addEventListener('click', this.handleCanvasClick);
-        this.canvas.addEventListener('touchstart', (e) => {
-            if (e.touches && e.touches[0]) {
-                const rect = this.canvas.getBoundingClientRect();
-                this.handleClickAt(e.touches[0].clientX - rect.left, e.touches[0].clientY - rect.top);
-            }
-        }, { passive: false });
+        this.canvas.addEventListener('touchstart', this.handleTouchStart, { passive: false });
         this.animate = this.animate.bind(this);
         requestAnimationFrame(this.animate);
     }
@@ -67,6 +63,19 @@ class LudoGame {
     stop() {
         this.running = false;
         this.canvas.removeEventListener('click', this.handleCanvasClick);
+        this.canvas.removeEventListener('touchstart', this.handleTouchStart);
+    }
+
+    handleTouchStart(e) {
+        if (e.touches && e.touches[0]) {
+            e.preventDefault();
+            const rect = this.canvas.getBoundingClientRect();
+            const scaleX = this.canvas.width / rect.width;
+            const scaleY = this.canvas.height / rect.height;
+            const x = (e.touches[0].clientX - rect.left) * scaleX;
+            const y = (e.touches[0].clientY - rect.top) * scaleY;
+            this.handleClickAt(x, y);
+        }
     }
 
     initGame(numPlayers) {
@@ -176,21 +185,102 @@ class LudoGame {
 
     handleCanvasClick(e) {
         const rect = this.canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+        const scaleX = this.canvas.width / rect.width;
+        const scaleY = this.canvas.height / rect.height;
+        const x = (e.clientX - rect.left) * scaleX;
+        const y = (e.clientY - rect.top) * scaleY;
         this.handleClickAt(x, y);
+    }
+
+    getExitBounds() {
+        return {
+            x: 8,
+            y: 16,
+            w: 48,
+            h: 28
+        };
+    }
+
+    getDiceBounds() {
+        const size = 68;
+        return {
+            x: (this.canvas.width - size) / 2 - 25,
+            y: this.canvas.height - 90,
+            w: size + 50,
+            h: size + 25
+        };
+    }
+
+    confirmExit() {
+        if (this.gameOver) return;
+        const isTwoPlayer = (this.numPlayers === 2);
+        const ruleNote = isTwoPlayer
+            ? "In a 2-player match, your opponent will win immediately."
+            : "In a multiplayer match, you will forfeit/lose and the game will continue.";
+        if (confirm(`Are you sure you want to quit this Ludo match?\n\n• ${ruleNote}`)) {
+            this.forfeitOrExit();
+        }
+    }
+
+    forfeitOrExit() {
+        if (this.gameOver) return;
+        const human = this.players[0];
+        human.resigned = true;
+        human.rank = this.numPlayers;
+        this.logs.push(`🚪 ${human.name} quit and forfeited!`);
+        this.playSound('hazard');
+
+        const active = this.players.filter(p => !p.resigned && p.rank === null);
+
+        if (this.numPlayers === 2 || active.length <= 1) {
+            // In 2-player match or last standing: Opponent wins!
+            this.gameOver = true;
+            const winner = active[0] || this.players[1];
+            winner.rank = 1;
+            this.winners = [winner];
+            this.logs.push(`👑 ${winner.name} wins by forfeit!`);
+            this.playSound('win');
+            if (this.onGameOver) {
+                this.onGameOver(1, Math.max(3200, Date.now() - this.startTime));
+            }
+        } else {
+            // Multiplayer (> 2 players): The match continues!
+            this.logs.push(`⚔️ Match continues with ${active.length} remaining players!`);
+            if (this.currentTurn === 0) {
+                this.advanceTurn(false);
+            }
+        }
+    }
+
+    handleTap() {
+        if (this.gameOver) return;
+        const curr = this.players[this.currentTurn];
+        if (curr && !curr.isAi) {
+            if (!this.diceRoll && !this.isRolling) {
+                this.rollDice();
+            } else if (this.diceRoll && this.movablePawns.length > 0) {
+                this.executePawnMove(this.movablePawns[0]);
+            }
+        }
     }
 
     handleClickAt(x, y) {
         if (this.gameOver) return;
 
+        // 0. Check Exit Button Tap
+        const exitBox = this.getExitBounds();
+        if (x >= exitBox.x && x <= exitBox.x + exitBox.w && y >= exitBox.y && y <= exitBox.y + exitBox.h) {
+            this.confirmExit();
+            return;
+        }
+
         // 1. Check Capacity switcher buttons at the top
         const btnY = 16;
         const counts = [2, 4, 6, 8];
-        const btnW = 54;
-        const startX = (this.canvas.width - (counts.length * (btnW + 8))) / 2;
+        const btnW = 50;
+        const startX = this.canvas.width - (counts.length * (btnW + 6)) - 10;
         for (let i = 0; i < counts.length; i++) {
-            const bx = startX + i * (btnW + 8);
+            const bx = startX + i * (btnW + 6);
             if (x >= bx && x <= bx + btnW && y >= btnY && y <= btnY + 28) {
                 if (this.selectedPlayerCount !== counts[i]) {
                     this.selectedPlayerCount = counts[i];
@@ -208,6 +298,9 @@ class LudoGame {
         if (x >= diceBox.x && x <= diceBox.x + diceBox.w && y >= diceBox.y && y <= diceBox.y + diceBox.h) {
             if (!this.diceRoll && !this.isRolling) {
                 this.rollDice();
+            } else if (this.diceRoll && this.movablePawns.length > 0) {
+                // Tapping dice area when ready to move also moves pawn
+                this.executePawnMove(this.movablePawns[0]);
             }
             return;
         }
@@ -217,22 +310,12 @@ class LudoGame {
             for (const pId of this.movablePawns) {
                 const pawn = curr.pawns[pId];
                 const dist = Math.hypot(x - pawn.x, y - pawn.y);
-                if (dist <= 22) {
+                if (dist <= 26) {
                     this.executePawnMove(pId);
                     return;
                 }
             }
         }
-    }
-
-    getDiceBounds() {
-        const size = 56;
-        return {
-            x: (this.canvas.width - size) / 2,
-            y: this.canvas.height - 76,
-            w: size,
-            h: size
-        };
     }
 
     rollDice() {
@@ -264,14 +347,25 @@ class LudoGame {
                 if (this.movablePawns.length === 0) {
                     this.logs.push(`⏭️ No valid moves. Turn passed.`);
                     setTimeout(() => this.advanceTurn(false), 700);
-                } else if (this.movablePawns.length === 1 && curr.isAi) {
-                    setTimeout(() => this.executePawnMove(this.movablePawns[0]), 500);
+                } else if (this.movablePawns.length === 1) {
+                    const chosen = this.movablePawns[0];
+                    if (curr.isAi) {
+                        setTimeout(() => this.executePawnMove(chosen), 500);
+                    } else {
+                        setTimeout(() => this.executePawnMove(chosen), 350);
+                    }
                 } else if (curr.isAi) {
-                    // AI chooses best move
                     setTimeout(() => {
                         const chosen = this.aiChoosePawn(curr, this.movablePawns, this.diceRoll);
                         this.executePawnMove(chosen);
                     }, 650);
+                } else {
+                    const allInYard = this.movablePawns.every(pId => curr.pawns[pId].state === 'yard');
+                    if (allInYard) {
+                        setTimeout(() => this.executePawnMove(this.movablePawns[0]), 350);
+                    } else {
+                        this.logs.push(`👉 Tap glowing pawn or ROLL button to move!`);
+                    }
                 }
             }
         }, 35);
@@ -403,7 +497,7 @@ class LudoGame {
             this.winners.push(curr.id);
             this.logs.push(`🎉 <b>${curr.name} finished at Rank #${rank}!</b>`);
 
-            if (this.winners.length >= 1 || this.players.filter(p => p.rank === null).length <= 1) {
+            if (this.winners.length >= 1 || this.players.filter(p => p.rank === null && !p.resigned).length <= 1) {
                 this.gameOver = true;
                 const duration = Date.now() - this.startTime;
                 const finalScore = curr.id === 0 ? 3 : (this.winners.includes(0) ? 2 : 1);
@@ -435,7 +529,7 @@ class LudoGame {
 
         this.consecutiveSixes = 0;
         let nextTurn = (this.currentTurn + 1) % this.numPlayers;
-        while (this.players[nextTurn].rank !== null) {
+        while (this.players[nextTurn].rank !== null || this.players[nextTurn].resigned) {
             nextTurn = (nextTurn + 1) % this.numPlayers;
         }
         this.currentTurn = nextTurn;
@@ -746,14 +840,30 @@ class LudoGame {
     renderControlStrip(ctx, w, h) {
         const curr = this.players[this.currentTurn];
 
-        // Status line
+        // 1. Exit / Quit Button on top-left of canvas
+        const eb = this.getExitBounds();
+        ctx.save();
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.25)';
+        ctx.beginPath();
+        ctx.roundRect(eb.x, eb.y, eb.w, eb.h, 6);
+        ctx.fill();
+        ctx.strokeStyle = '#EF4444';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        ctx.font = 'bold 11px Inter, sans-serif';
+        ctx.fillStyle = '#FCA5A5';
+        ctx.textAlign = 'center';
+        ctx.fillText('🚪 QUIT', eb.x + eb.w / 2, eb.y + 18);
+        ctx.restore();
+
+        // 2. Status line
         ctx.font = 'bold 13px Inter, sans-serif';
         ctx.fillStyle = '#F8FAFC';
         ctx.textAlign = 'center';
         const logMsg = this.logs.length > 0 ? this.logs[this.logs.length - 1].replace(/<[^>]+>/g, '') : '';
         ctx.fillText(logMsg, w / 2, h - 90);
 
-        // Dice 3D Box
+        // 3. Dice 3D Box
         const d = this.getDiceBounds();
         ctx.save();
         ctx.shadowColor = curr.colorCfg.glow;
@@ -777,10 +887,32 @@ class LudoGame {
         if (faceVal) {
             this.drawDiceDots(ctx, d.x, d.y, d.w, faceVal);
         } else {
-            ctx.font = 'bold 11px Inter, sans-serif';
+            ctx.font = 'bold 12px Inter, sans-serif';
             ctx.fillStyle = '#CBD5E1';
             ctx.textAlign = 'center';
-            ctx.fillText(curr.isAi ? 'THINKING' : 'ROLL', d.x + d.w / 2, d.y + d.h / 2 + 4);
+            ctx.fillText(curr.isAi ? 'THINKING' : 'ROLL', d.x + d.w / 2, d.y + d.h / 2 + 5);
+        }
+
+        // 4. Update HTML Action Button
+        const actionBtn = document.getElementById('game-action-btn');
+        if (actionBtn) {
+            actionBtn.style.display = 'block';
+            if (this.gameOver) {
+                actionBtn.innerText = "🏁 MATCH OVER";
+                actionBtn.style.opacity = "0.7";
+            } else if (curr.isAi) {
+                actionBtn.innerText = `🤖 ${curr.name.toUpperCase()} THINKING...`;
+                actionBtn.style.opacity = "0.7";
+            } else if (!this.diceRoll && !this.isRolling) {
+                actionBtn.innerText = `🎲 ROLL DICE (${curr.name.toUpperCase()})`;
+                actionBtn.style.opacity = "1";
+            } else if (this.movablePawns.length > 0) {
+                actionBtn.innerText = `👉 TAP TO MOVE PAWN (${this.movablePawns.length} READY)`;
+                actionBtn.style.opacity = "1";
+            } else {
+                actionBtn.innerText = "⏭️ NO MOVES";
+                actionBtn.style.opacity = "0.7";
+            }
         }
     }
 

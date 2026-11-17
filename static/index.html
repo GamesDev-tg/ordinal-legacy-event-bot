@@ -279,7 +279,10 @@
     <div id="game-overlay" class="game-modal-overlay">
         <div class="game-modal-header">
             <div style="font-weight:700; color:var(--gold);" id="game-modal-title">Mini-Game Arena</div>
-            <button class="close-game-btn" onclick="closeGameModal()">&times;</button>
+            <div style="display:flex; align-items:center; gap:8px;">
+                <button id="header-exit-btn" onclick="confirmExitGame()" style="display:none; background:rgba(239, 68, 68, 0.25); border:1px solid #EF4444; color:#FCA5A5; border-radius:6px; font-size:0.75rem; font-weight:700; padding:6px 12px; cursor:pointer;">🚪 QUIT</button>
+                <button class="close-game-btn" onclick="confirmExitGame()">&times;</button>
+            </div>
         </div>
         <div class="canvas-container">
             <canvas id="game-canvas"></canvas>

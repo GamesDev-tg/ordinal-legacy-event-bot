@@ -674,7 +674,10 @@ async function launchMiniGame(gameType) {
             currentGame.start();
         } else if (gameType === 4) {
             document.getElementById('game-modal-title').innerText = "Multiplayer Ludo (2–8 Players)";
-            document.getElementById('game-action-btn').style.display = 'none';
+            document.getElementById('game-action-btn').style.display = 'block';
+            document.getElementById('game-action-btn').innerText = "🎲 ROLL DICE";
+            const exitBtn = document.getElementById('header-exit-btn');
+            if (exitBtn) exitBtn.style.display = 'inline-block';
             currentGame = new window.LudoGame(canvas, onGameFinished);
             currentGame.start();
         } else if (gameType === 5) {
@@ -781,7 +784,17 @@ async function onGameFinished(rawScore, durationMs) {
     }
 }
 
+function confirmExitGame() {
+    if (currentGame && currentGame.confirmExit && !currentGame.gameOver) {
+        currentGame.confirmExit();
+    } else {
+        closeGameModal();
+    }
+}
+
 function closeGameModal() {
+    const exitBtn = document.getElementById('header-exit-btn');
+    if (exitBtn) exitBtn.style.display = 'none';
     if (currentGame) {
         currentGame.stop();
         currentGame = null;
