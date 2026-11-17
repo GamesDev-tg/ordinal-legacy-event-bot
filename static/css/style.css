@@ -524,3 +524,72 @@ canvas {
     max-height: 100%;
     touch-action: none;
 }
+
+/* ==================== DYNAMIC FESTIVAL & ARCADE THEMES ==================== */
+
+/* Theme: Arcade Arena */
+body.theme-arcade {
+    --gold: #38BDF8;
+    --gold-dark: #0284C7;
+    --gold-glow: rgba(56, 189, 248, 0.35);
+    --saffron: #F59E0B;
+}
+
+body.theme-arcade .festival-header {
+    background: linear-gradient(180deg, rgba(56, 189, 248, 0.16) 0%, rgba(13, 17, 23, 0) 100%);
+    border-bottom: 1px solid rgba(56, 189, 248, 0.25);
+}
+
+body.theme-arcade .brand-title {
+    color: #38BDF8;
+    text-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+}
+
+body.theme-arcade .stamina-badge {
+    border-color: #38BDF8;
+    color: #38BDF8;
+    box-shadow: 0 0 10px rgba(56, 189, 248, 0.35);
+}
+
+body.theme-arcade .akhand-diya-card {
+    background: radial-gradient(circle at center, rgba(14, 165, 233, 0.16) 0%, rgba(22, 27, 34, 0.98) 100%);
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    box-shadow: 0 4px 25px rgba(14, 165, 233, 0.18);
+}
+
+body.theme-arcade .diya-flame-icon {
+    filter: drop-shadow(0 0 16px rgba(56, 189, 248, 0.85));
+}
+
+body.theme-arcade .game-card.featured-arcade-card {
+    border: 1px solid rgba(56, 189, 248, 0.5);
+    background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
+    box-shadow: 0 2px 14px rgba(56, 189, 248, 0.15);
+}
+
+body.theme-arcade .game-card.featured-arcade-card .game-name {
+    color: #38BDF8;
+}
+
+/* Theme: Christmas Wonderland */
+body.theme-christmas {
+    --gold: #34D399;
+    --gold-dark: #059669;
+    --gold-glow: rgba(52, 211, 153, 0.35);
+    --saffron: #EF4444;
+}
+
+body.theme-christmas .festival-header {
+    background: linear-gradient(180deg, rgba(52, 211, 153, 0.15) 0%, rgba(13, 17, 23, 0) 100%);
+    border-bottom: 1px solid rgba(52, 211, 153, 0.25);
+}
+
+body.theme-christmas .brand-title {
+    color: #34D399;
+    text-shadow: 0 0 10px rgba(52, 211, 153, 0.4);
+}
+
+body.theme-christmas .akhand-diya-card {
+    background: radial-gradient(circle at center, rgba(16, 185, 129, 0.14) 0%, rgba(22, 27, 34, 0.98) 100%);
+    border: 1px solid rgba(52, 211, 153, 0.3);
+}

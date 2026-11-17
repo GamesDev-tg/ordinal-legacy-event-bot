@@ -6,6 +6,8 @@ let wickRegenInterval = null;
 let secondsUntilNextWick = 0;
 let boostCountdownInterval = null;
 let secondsUntilBoostEnds = 0;
+let currentFestivalTheme = "arcade";
+let currentFestivalConfig = null;
 
 function getCurrentUserId() {
     if (currentUser && currentUser.telegram_id) return currentUser.telegram_id;
@@ -15,6 +17,156 @@ function getCurrentUserId() {
     const tgId = window.Telegram?.WebApp?.initDataUnsafe?.user?.id;
     if (tgId) return parseInt(tgId, 10);
     return null;
+}
+
+async function fetchAndApplyFestivalTheme() {
+    try {
+        const resp = await fetch('/api/festival/current');
+        if (resp.ok) {
+            const data = await resp.json();
+            if (data.ok && data.config) {
+                currentFestivalTheme = data.active_theme || "arcade";
+                currentFestivalConfig = data.config;
+                applyFestivalThemeToUI(data.config);
+                return data.config;
+            }
+        }
+    } catch (e) {
+        console.warn("Could not fetch current festival theme:", e);
+    }
+    return null;
+}
+
+function applyFestivalThemeToUI(cfg) {
+    if (!cfg) return;
+
+    // Body styling class
+    document.body.className = cfg.theme_class || `theme-${cfg.id}`;
+
+    // Document title
+    if (cfg.name) document.title = cfg.name;
+    const pageTitle = document.getElementById('app-page-title');
+    if (pageTitle && cfg.name) pageTitle.innerText = cfg.name;
+
+    // Header branding
+    const brandIcon = document.getElementById('app-brand-icon');
+    if (brandIcon) brandIcon.innerText = cfg.header_icon || cfg.icon || "🕹️";
+    const brandText = document.getElementById('app-brand-text');
+    if (brandText) brandText.innerText = cfg.header_title || cfg.short_name || "ORDINAL ARCADE";
+
+    // Stamina badge icon & tooltip
+    const staminaIcon = document.getElementById('stamina-icon');
+    if (staminaIcon) staminaIcon.innerText = cfg.stamina_icon || "⚡";
+    const staminaBadge = document.getElementById('stamina-badge-btn');
+    if (staminaBadge) staminaBadge.title = `Tap to refresh ${cfg.stamina_name || "stamina"}`;
+
+    // Beacon / community card
+    const beaconIcon = document.getElementById('beacon-icon');
+    if (beaconIcon) beaconIcon.innerText = cfg.beacon_icon || cfg.icon || "🕹️";
+    const beaconTitle = document.getElementById('beacon-title');
+    if (beaconTitle) beaconTitle.innerText = cfg.status_beacon || "Arcade Power Core";
+    const commLabel = document.getElementById('community-progress-label');
+    if (commLabel) {
+        commLabel.innerText = cfg.id === "arcade" ? "Global Power Core" : (cfg.id === "christmas" ? "Global Tree Progress" : "Community Progress");
+    }
+
+    // Shubh Refill / Daily Booster card
+    const refillIcon = document.getElementById('shubh-icon');
+    if (refillIcon) refillIcon.innerText = cfg.id === "arcade" ? "⚡" : (cfg.id === "christmas" ? "🎁" : "✨");
+    const refillTitle = document.getElementById('shubh-refill-title');
+    if (refillTitle) refillTitle.innerText = cfg.refill_title || "Daily Arcade Booster";
+    const refillBtn = document.getElementById('shubh-action-btn');
+    if (refillBtn && (!currentUser || currentUser.shubh_refill_available)) {
+        refillBtn.innerText = cfg.refill_btn || "CLAIM +5";
+    }
+
+    // Mini-Games Section Heading
+    const gamesHeading = document.getElementById('games-heading-title');
+    if (gamesHeading) gamesHeading.innerText = cfg.games_heading || "Retro Arcade Games (1–3 Sparks)";
+    const gamesCost = document.getElementById('games-cost-badge');
+    if (gamesCost) gamesCost.innerText = cfg.games_cost_label || "Cost: 1 Energy";
+
+    // Reorder game cards based on festival
+    const grid = document.getElementById('game-grid');
+    if (grid) {
+        const order = cfg.featured_game_ids || (cfg.id === "arcade" ? [4, 5, 6, 7, 1, 2, 3] : [1, 2, 3, 4, 5, 6, 7]);
+        const cards = Array.from(grid.querySelectorAll('.game-card'));
+        const cardMap = {};
+        cards.forEach(c => {
+            const gid = parseInt(c.getAttribute('data-game-id'), 10);
+            if (gid) cardMap[gid] = c;
+        });
+        order.forEach(gid => {
+            const c = cardMap[gid];
+            if (c) {
+                grid.appendChild(c);
+                if (cfg.id === "arcade" && [4, 5, 6, 7].includes(gid)) {
+                    c.classList.add('featured-arcade-card');
+                } else {
+                    c.classList.remove('featured-arcade-card');
+                }
+            }
+        });
+    }
+
+    // Bottom Navigation Bar
+    const navIconArena = document.getElementById('nav-icon-arena');
+    if (navIconArena) navIconArena.innerText = cfg.nav_arena_icon || "🕹️";
+    const navTextArena = document.getElementById('nav-text-arena');
+    if (navTextArena) navTextArena.innerText = cfg.nav_arena || "Arena";
+
+    const navIconComm = document.getElementById('nav-icon-community');
+    if (navIconComm) navIconComm.innerText = cfg.nav_houses_icon || "⚔️";
+    const navTextComm = document.getElementById('nav-text-community');
+    if (navTextComm) navTextComm.innerText = cfg.nav_houses || "Clans";
+
+    const navIconShagun = document.getElementById('nav-icon-shagun');
+    if (navIconShagun) navIconShagun.innerText = cfg.nav_friends_icon || "🎁";
+    const navTextShagun = document.getElementById('nav-text-shagun');
+    if (navTextShagun) navTextShagun.innerText = cfg.nav_friends || "Squad";
+
+    const navIconTiers = document.getElementById('nav-icon-tiers');
+    if (navIconTiers) navIconTiers.innerText = cfg.nav_tiers_icon || "🏆";
+    const navTextTiers = document.getElementById('nav-text-tiers');
+    if (navTextTiers) navTextTiers.innerText = cfg.nav_tiers || "Tiers";
+
+    // Community Tab
+    const commTabTitle = document.getElementById('community-tab-title');
+    if (commTabTitle) {
+        commTabTitle.innerText = cfg.id === "arcade" ? "Clan & House Leaderboards (Avg Points)" : (cfg.id === "christmas" ? "Winter House Leaderboards (Avg Points)" : "Gharana Leaderboards (Avg Points)");
+    }
+    const commTabSubtitle = document.getElementById('community-tab-subtitle');
+    if (commTabSubtitle) {
+        commTabSubtitle.innerText = `All 4 houses cooperate for the 200k ${cfg.status_beacon || "Milestone"} while competing for the highest member average!`;
+    }
+
+    // Shagun / Squad Invite Tab
+    const shagunIcon = document.getElementById('shagun-tab-icon');
+    if (shagunIcon) shagunIcon.innerText = cfg.nav_friends_icon || "🎁";
+    const shagunTitle = document.getElementById('shagun-tab-title');
+    if (shagunTitle) shagunTitle.innerText = cfg.invite_title || "Arcade Squad Invite";
+    const shagunSubtitle = document.getElementById('shagun-tab-subtitle');
+    if (shagunSubtitle) shagunSubtitle.innerText = cfg.invite_desc || "Assemble your squad!";
+    const shagunCopyBtn = document.getElementById('shagun-copy-btn');
+    if (shagunCopyBtn) shagunCopyBtn.innerText = cfg.invite_copy_btn || "📋 COPY YOUR SQUAD LINK";
+    const shagunShareBtn = document.getElementById('shagun-share-btn');
+    if (shagunShareBtn) shagunShareBtn.innerText = cfg.invite_share_btn || "📲 SHARE ON TELEGRAM";
+
+    const rulesCard = document.getElementById('shagun-rules-card');
+    if (rulesCard) {
+        rulesCard.innerHTML = `
+            <b style="color:var(--gold);">How It Works:</b><br>
+            • Your <b>first active friend</b> becomes your official <b>${cfg.companion_title || "Gaming Duo"}</b>.<br>
+            • Duos can send each other <b>1 free ${cfg.stamina_name || "Energy"} daily</b>.<br>
+            • Additional friends award <b>+1 point each</b> (minimum points) up to 15 points max.
+        `;
+    }
+
+    // Celebration modal button
+    const celebBtn = document.getElementById('celebration-btn');
+    if (celebBtn) {
+        celebBtn.innerText = cfg.id === "arcade" ? "LET'S GO! ⚡" : (cfg.id === "christmas" ? "HAPPY HOLIDAYS! 🎄" : "DIVINE BLESSINGS 🙏");
+    }
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -31,6 +183,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     setupTabs();
     setupAudioToggle();
     setupStaminaRefreshButton();
+
+    // Initialize active festival theme immediately
+    await fetchAndApplyFestivalTheme();
 
     if (isTelegramWebApp) {
         authHeader = tg.initData;
@@ -227,38 +382,49 @@ async function checkAndClaimReferral() {
 
 function updateUI(authData) {
     const u = authData.user;
+
+    if (authData.festival_theme && authData.festival_config) {
+        if (authData.festival_theme !== currentFestivalTheme || !currentFestivalConfig) {
+            currentFestivalTheme = authData.festival_theme;
+            currentFestivalConfig = authData.festival_config;
+            applyFestivalThemeToUI(authData.festival_config);
+        }
+    }
     
     document.getElementById('user-wicks').innerText = `${u.diya_wicks}/10`;
     document.getElementById('user-name').innerText = u.first_name || u.username || `Player_${u.telegram_id}`;
     document.getElementById('user-tier-label').innerText = `${u.tier_name} (Tier ${u.tier_level})`;
     document.getElementById('user-points').innerText = `${u.points_total} Pts`;
     const emblems = { 1: "☀️ Surya", 2: "🔥 Agni", 3: "🌙 Chandra", 4: "💨 Vayu" };
-    const gName = emblems[u.gharana_id] ? `${emblems[u.gharana_id]} Gharana` : (u.gharana_name || u.gharana);
+    const houseLabel = (currentFestivalConfig && currentFestivalConfig.id === "arcade") ? "House" : "Gharana";
+    const gName = emblems[u.gharana_id] ? `${emblems[u.gharana_id]} ${houseLabel}` : (u.gharana_name || u.gharana);
     document.getElementById('user-gharana').innerText = gName;
 
     const sparks = authData.community_sparks;
     const target = authData.target_sparks;
     const pct = Math.min(100, ((sparks / target) * 100)).toFixed(1);
     
-    document.getElementById('sparks-display').innerText = `${sparks.toLocaleString()} Sparks`;
+    const curName = (currentFestivalConfig && currentFestivalConfig.currency_name) ? currentFestivalConfig.currency_name : "Sparks";
+    document.getElementById('sparks-display').innerText = `${sparks.toLocaleString()} ${curName}`;
     document.getElementById('flame-progress').style.width = `${pct}%`;
     document.getElementById('progress-pct').innerText = `${pct}%`;
 
     // Community Milestone 5 Segments of 200k Sparks
     let stageDesc = authData.stage_description;
+    const beaconName = (currentFestivalConfig && currentFestivalConfig.status_beacon) ? currentFestivalConfig.status_beacon : "Maha Akhand Jyoti";
     if (!stageDesc) {
         if (sparks >= 200000) {
-            stageDesc = `Stage 5: Maha Akhand Jyoti (${sparks.toLocaleString()} Sparks • All Cleared!)`;
+            stageDesc = `Stage 5: ${beaconName} (${sparks.toLocaleString()} Sparks • All Cleared!)`;
         } else if (sparks >= 160000) {
-            stageDesc = `Stage 4: Grand Deepotsav (${sparks.toLocaleString()} / 200,000 Sparks to Jyoti)`;
+            stageDesc = `Stage 4: Grand Milestones (${sparks.toLocaleString()} / 200,000 to ${beaconName})`;
         } else if (sparks >= 120000) {
             stageDesc = `Stage 3: Celestial Harmony (${sparks.toLocaleString()} / 160,000 Sparks to Pets)`;
         } else if (sparks >= 80000) {
-            stageDesc = `Stage 2: Sacred Radiance (${sparks.toLocaleString()} / 120,000 Sparks to Tickets)`;
+            stageDesc = `Stage 2: High Energy Radiance (${sparks.toLocaleString()} / 120,000 Sparks to Tickets)`;
         } else if (sparks >= 40000) {
-            stageDesc = `Stage 1: The First Glow (${sparks.toLocaleString()} / 80,000 Sparks to Pearls)`;
+            stageDesc = `Stage 1: Core Ignition (${sparks.toLocaleString()} / 80,000 Sparks to Pearls)`;
         } else {
-            stageDesc = `Stage 0: Lighting the Wick (${sparks.toLocaleString()} / 40,000 to Coins)`;
+            stageDesc = `Stage 0: Charging Core (${sparks.toLocaleString()} / 40,000 to Coins)`;
         }
     }
     const stageBadge = document.getElementById('stage-badge');
@@ -311,20 +477,23 @@ function updateUI(authData) {
         if (gb) gb.remove();
     }
 
-    // Shubh Muhurat Refill Banner
+    // Shubh Muhurat / Daily Booster Refill Banner
     const shubhBtn = document.getElementById('shubh-action-btn');
     const shubhTxt = document.getElementById('shubh-status-txt');
+    const refillDesc = currentFestivalConfig ? currentFestivalConfig.refill_desc : "Daily +5 Diya Wicks Blessing";
+    const refillBtnTxt = currentFestivalConfig ? currentFestivalConfig.refill_btn : "CLAIM +5";
+
     if (shubhBtn && shubhTxt) {
         if (u.shubh_refill_available) {
             shubhBtn.disabled = false;
-            shubhBtn.innerText = "CLAIM +5";
+            shubhBtn.innerText = refillBtnTxt;
             shubhBtn.style.opacity = "1";
-            shubhTxt.innerText = "Daily +5 Diya Wicks Blessing (Available Now!)";
+            shubhTxt.innerText = `${refillDesc} (Available Now!)`;
         } else {
             shubhBtn.disabled = true;
             shubhBtn.innerText = "CLAIMED";
             shubhBtn.style.opacity = "0.5";
-            shubhTxt.innerText = "Blessing claimed today • Resets tomorrow";
+            shubhTxt.innerText = "Bonus claimed today • Resets tomorrow";
         }
     }
 
@@ -332,29 +501,34 @@ function updateUI(authData) {
     secondsUntilNextWick = u.seconds_until_next_wick || 0;
     startWickTimer();
 
-    // Diya Companion Card
+    // Companion / Duo Card
     const compBox = document.getElementById('companion-container');
+    const compTitle = (currentFestivalConfig && currentFestivalConfig.companion_title) ? currentFestivalConfig.companion_title : "Diya Companion";
+    const compDesc = (currentFestivalConfig && currentFestivalConfig.companion_desc) ? currentFestivalConfig.companion_desc : "Exchange 1 free Diya Wick daily with your companion!";
+    const compEmptyDesc = (currentFestivalConfig && currentFestivalConfig.companion_empty_desc) ? currentFestivalConfig.companion_empty_desc : "Your 1st active friend becomes your permanent Companion.";
+    const stamName = (currentFestivalConfig && currentFestivalConfig.stamina_name) ? currentFestivalConfig.stamina_name : "Wick";
+
     if (u.companion) {
         compBox.innerHTML = `
             <div class="companion-header">
                 <div>
-                    <div class="user-name">🤝 Diya Companion: ${u.companion.name}</div>
+                    <div class="user-name">🤝 ${compTitle}: ${u.companion.name}</div>
                     <div class="companion-status">${u.companion.tier_name} • Bonded</div>
                 </div>
-                <button class="gift-wick-btn" id="gift-wick-action-btn" onclick="sendWickGift()">🎁 Send Wick</button>
+                <button class="gift-wick-btn" id="gift-wick-action-btn" onclick="sendWickGift()">🎁 Send ${stamName}</button>
             </div>
-            <p style="font-size:0.75rem; color:#94A3B8;">Exchange 1 free Diya Wick daily with your companion!</p>
+            <p style="font-size:0.75rem; color:#94A3B8;">${compDesc}</p>
         `;
     } else {
         compBox.innerHTML = `
             <div class="companion-header">
                 <div>
-                    <div class="user-name">🤝 No Diya Companion Yet</div>
+                    <div class="user-name">🤝 No ${compTitle} Yet</div>
                     <div class="companion-status">Invite 1 friend to form your exclusive bond!</div>
                 </div>
                 <button class="gift-wick-btn" onclick="copyShagunLink()">🔗 Invite</button>
             </div>
-            <p style="font-size:0.75rem; color:#94A3B8;">Your 1st active friend becomes your permanent Companion.</p>
+            <p style="font-size:0.75rem; color:#94A3B8;">${compEmptyDesc}</p>
         `;
     }
 
@@ -368,6 +542,8 @@ function updateUI(authData) {
     }
 
     // Highlight user's unlocked tiers in the ladder
+    updateTierLadder(u.tier_level);
+}
     updateTierLadder(u.tier_level);
 }
 
@@ -731,9 +907,12 @@ async function onGameFinished(rawScore, durationMs) {
             currentUser.tier_level = resData.new_tier_level;
             currentUser.tier_name = resData.tier_name;
             
+            const curName = (currentFestivalConfig && currentFestivalConfig.currency_name) ? currentFestivalConfig.currency_name : "Sparks";
+            const beaconName = (currentFestivalConfig && currentFestivalConfig.status_beacon) ? currentFestivalConfig.status_beacon : "Maha Akhand Jyoti";
+
             document.getElementById('user-points').innerText = `${resData.new_user_total} Pts`;
             document.getElementById('user-tier-label').innerText = `${resData.tier_name} (Tier ${resData.new_tier_level})`;
-            document.getElementById('sparks-display').innerText = `${resData.community_total.toLocaleString()} Sparks`;
+            document.getElementById('sparks-display').innerText = `${resData.community_total.toLocaleString()} ${curName}`;
             const pct = Math.min(100, ((resData.community_total / 200000) * 100)).toFixed(1);
             const progressFill = document.getElementById('flame-progress');
             if (progressFill) progressFill.style.width = `${pct}%`;
@@ -757,22 +936,22 @@ async function onGameFinished(rawScore, durationMs) {
                     4: "🐾 Pet",
                     5: "All Rewards: 🪙 Coins + 🔮 Pearl + 🎟 Ticket + 🐾 Pet"
                 };
-                const rew = tierRewards[resData.new_tier_level] || "Festive Rewards";
+                const rew = tierRewards[resData.new_tier_level] || "Seasonal Rewards";
                 showCelebrationModal("TIER UNLOCKED! 🏆", `Congratulations! You ascended to ${resData.tier_name} (Tier ${resData.new_tier_level})!\n\nUnlocked Reward: ${rew}!`);
             } else if (resData.community_total >= 200000) {
                 window.festivalAudio?.playSuccessChime();
-                showCelebrationModal("MAHA AKHAND JYOTI IGNITED! 🪔🎆", "Sacred Victory! The community has achieved 200,000 Sparks! The Akhand Diya burns eternally!");
+                showCelebrationModal(`${beaconName.toUpperCase()} ACHIEVED! 🎆`, `Epic Victory! The community has achieved 200,000 Sparks! The ${beaconName} is fully powered!`);
             } else if (resData.is_boosted) {
                 window.festivalAudio?.playSuccessChime();
                 showCelebrationModal(
-                    "⚡ 2X GHARANA SURGE! 🔥",
-                    `Glorious! Your House is blessed with the 2X Surge!\n\n• Base Score: +${resData.base_score || rawScore} Sparks\n• Multiplier: ⚡ 2X DOUBLE BONUS\n• Sparks Awarded: +${resData.points_awarded} Sparks!\n\n• Your Score: ${resData.new_user_total} Pts\n• Community Total: ${resData.community_total.toLocaleString()} Sparks`
+                    "⚡ 2X TEAM SURGE! 🔥",
+                    `Glorious! Your House is blessed with the 2X Surge!\n\n• Base Score: +${resData.base_score || rawScore} ${curName}\n• Multiplier: ⚡ 2X DOUBLE BONUS\n• Points Awarded: +${resData.points_awarded} ${curName}!\n\n• Your Score: ${resData.new_user_total} Pts\n• Community Total: ${resData.community_total.toLocaleString()} ${curName}`
                 );
             } else {
                 window.festivalAudio?.playSuccessChime();
                 showCelebrationModal(
-                    "FESTIVE SPARKS EARNED! 🪔",
-                    `Awesome Run! You contributed +${resData.points_awarded || rawScore} Sparks to the Akhand Diya!\n\n• Your Score: ${resData.new_user_total} Pts\n• Community Total: ${resData.community_total.toLocaleString()} Sparks`
+                    `${curName.toUpperCase()} EARNED! ⚡`,
+                    `Awesome Run! You contributed +${resData.points_awarded || rawScore} ${curName} to the ${beaconName}!\n\n• Your Score: ${resData.new_user_total} Pts\n• Community Total: ${resData.community_total.toLocaleString()} ${curName}`
                 );
             }
         } else {
@@ -843,19 +1022,25 @@ async function sendWickGift() {
 function copyShagunLink() {
     const uid = getCurrentUserId() || (currentUser ? currentUser.telegram_id : 123456789);
     const link = `https://t.me/OrdinalLegacyEventBot?start=shagun_${uid}`;
+    const inviteTitle = (currentFestivalConfig && currentFestivalConfig.invite_title) ? currentFestivalConfig.invite_title : "Invite Link";
     if (navigator.clipboard) {
         navigator.clipboard.writeText(link);
-        alert(`🎁 Shagun Invite Link Copied!\n\n${link}`);
+        alert(`🎁 ${inviteTitle} Copied!\n\n${link}`);
     } else {
-        prompt("Copy your Diwali Shagun Link:", link);
+        prompt(`Copy your ${inviteTitle}:`, link);
     }
 }
 
 function shareShagunOnTelegram() {
     const uid = getCurrentUserId() || (currentUser ? currentUser.telegram_id : 123456789);
     const link = `https://t.me/OrdinalLegacyEventBot?start=shagun_${uid}`;
-    const text = encodeURIComponent("🪔 Join me in the Ordinal Legacy Diwali Maha Deepotsav! Awaken the 200,000 Sparks of Akhand Jyoti with me as my bonded Diya Companion!");
-    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${text}`;
+    let text = "🪔 Join me in the Ordinal Legacy Diwali Maha Deepotsav! Awaken the 200,000 Sparks of Akhand Jyoti with me as my bonded Diya Companion!";
+    if (currentFestivalTheme === "arcade") {
+        text = "🕹️ Join my squad in the Ordinal Legacy Arcade Arena! Battle in multiplayer 2–8P Ludo, Connect 4, 2048 and Wordle with me!";
+    } else if (currentFestivalTheme === "christmas") {
+        text = "🎄 Join me in the Ordinal Legacy Winter Wonderland! Decorate the Maha Christmas Tree and earn holiday snowflakes!";
+    }
+    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent(text)}`;
     if (window.Telegram?.WebApp?.openTelegramLink) {
         window.Telegram.WebApp.openTelegramLink(shareUrl);
     } else {
@@ -867,10 +1052,21 @@ async function loadCommunityLeaderboard() {
     try {
         const resp = await fetch('/api/community/state');
         const data = await resp.json();
+        
+        if (data.festival_theme && data.festival_config) {
+            if (data.festival_theme !== currentFestivalTheme || !currentFestivalConfig) {
+                currentFestivalTheme = data.festival_theme;
+                currentFestivalConfig = data.festival_config;
+                applyFestivalThemeToUI(data.festival_config);
+            }
+        }
+
         const listEl = document.getElementById('gharana-list');
         const medals = ["🥇", "🥈", "🥉", "✨"];
         const emblems = { 1: "☀️", 2: "🔥", 3: "🌙", 4: "💨" };
         const boostGid = data.active_gharana_boost ? data.active_gharana_boost.active_gharana_id : null;
+        const curName = (currentFestivalConfig && currentFestivalConfig.currency_name) ? currentFestivalConfig.currency_name : "Sparks";
+        
         listEl.innerHTML = data.top_gharanas.map((g, idx) => {
             const isBoosted = (g.gharana_id === boostGid);
             const boostBadge = isBoosted ? '<span style="background:linear-gradient(135deg, #F59E0B, #EA580C); color:#000; font-size:0.65rem; font-weight:800; padding:2px 6px; border-radius:10px; margin-left:6px; letter-spacing:0.3px; display:inline-block;">⚡ 2X BOOST</span>' : '';
@@ -878,7 +1074,7 @@ async function loadCommunityLeaderboard() {
             <div class="user-profile-strip" style="margin: 0 0 10px 0; border-left: 3px solid ${isBoosted ? '#F59E0B' : (idx === 0 ? '#F59E0B' : '#64748B')}; ${isBoosted ? 'box-shadow: 0 0 12px rgba(245, 158, 11, 0.25);' : ''}">
                 <div class="user-tag">
                     <span class="user-name">${medals[idx] || "•"} ${emblems[g.gharana_id] || ""} ${g.name} ${boostBadge}</span>
-                    <span style="font-size:0.75rem; color:#94A3B8;">${g.members} Members • ${g.total_points.toLocaleString()} Total Sparks</span>
+                    <span style="font-size:0.75rem; color:#94A3B8;">${g.members} Members • ${g.total_points.toLocaleString()} Total ${curName}</span>
                 </div>
                 <div class="user-score-box">
                     <span class="user-score-val" style="color:#F59E0B;">${g.avg_points}</span>

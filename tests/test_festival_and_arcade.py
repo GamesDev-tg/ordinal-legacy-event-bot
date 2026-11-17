@@ -147,5 +147,44 @@ class TestFestivalAndArcade(unittest.TestCase):
         res_dup = accept_pvp_dice_challenge(duel_id, self.test_opp_uid, "TestRival")
         self.assertFalse(res_dup["success"])
 
+    def test_mini_app_festival_api_and_models(self):
+        from app.main import api_get_current_festival
+        from app.routes.auth_routes import auth_demo
+        from app.routes.community_routes import api_community_state
+
+        # 1. Check /api/festival/current in arcade mode
+        set_active_festival("arcade")
+        data = api_get_current_festival()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["active_theme"], "arcade")
+        cfg = data["config"]
+        self.assertEqual(cfg["header_title"], "ORDINAL ARCADE")
+        self.assertEqual(cfg["stamina_name"], "Energy")
+        self.assertEqual(cfg["theme_class"], "theme-arcade")
+        self.assertEqual(cfg["featured_game_ids"][0], 4) # Ludo is first in arcade
+
+        # 2. Check auth returns festival theme & config
+        auth_data = auth_demo(self.test_uid)
+        self.assertTrue(auth_data.success)
+        self.assertEqual(auth_data.festival_theme, "arcade")
+        self.assertEqual(auth_data.festival_config["id"], "arcade")
+
+        # 3. Check community state returns festival theme & config
+        comm_data = api_community_state()
+        self.assertEqual(comm_data.festival_theme, "arcade")
+        self.assertEqual(comm_data.festival_config["id"], "arcade")
+
+        # 4. Switch to diwali and verify API reflects update
+        set_active_festival("diwali")
+        data_d = api_get_current_festival()
+        self.assertEqual(data_d["active_theme"], "diwali")
+        self.assertEqual(data_d["config"]["header_title"], "ORDINAL LEGACY")
+        self.assertEqual(data_d["config"]["stamina_name"], "Diya Wicks")
+        self.assertEqual(data_d["config"]["theme_class"], "theme-diwali")
+        self.assertEqual(data_d["config"]["featured_game_ids"][0], 1) # Chakri is first in diwali
+
+        # Revert back to arcade
+        set_active_festival("arcade")
+
 if __name__ == "__main__":
     unittest.main()

@@ -143,6 +143,9 @@ def auth_telegram(req: TelegramAuthRequest):
     _maybe_log_app_launch(telegram_id, username, "Mini-App")
     from app.game_engine import get_gharana_boost_status
     boost = get_gharana_boost_status()
+    from app.festival_engine import get_active_festival, get_festival_config
+    theme_key = get_active_festival()
+    fest_cfg = get_festival_config(theme_key)
 
     return AuthResponse(
         success=True,
@@ -152,7 +155,9 @@ def auth_telegram(req: TelegramAuthRequest):
         current_stage=stage_num,
         stage_description=stage_desc,
         event_paused=is_event_paused(),
-        gharana_boost=boost
+        gharana_boost=boost,
+        festival_theme=theme_key,
+        festival_config=fest_cfg
     )
 
 @router.get("/demo/{telegram_id}", response_model=AuthResponse)
@@ -167,6 +172,10 @@ def auth_demo(telegram_id: int):
     stage_num, stage_desc = get_stage_info(comm["total_sparks"])
     from app.game_engine import get_gharana_boost_status
     boost = get_gharana_boost_status()
+    from app.festival_engine import get_active_festival, get_festival_config
+    theme_key = get_active_festival()
+    fest_cfg = get_festival_config(theme_key)
+
     return AuthResponse(
         success=True,
         user=profile,
@@ -175,7 +184,9 @@ def auth_demo(telegram_id: int):
         current_stage=stage_num,
         stage_description=stage_desc,
         event_paused=is_event_paused(),
-        gharana_boost=boost
+        gharana_boost=boost,
+        festival_theme=theme_key,
+        festival_config=fest_cfg
     )
 
 @router.post("/widget", response_model=AuthResponse)
@@ -199,6 +210,9 @@ def auth_widget(data: dict):
     _maybe_log_app_launch(telegram_id, username, "via Web Login Widget")
     from app.game_engine import get_gharana_boost_status
     boost = get_gharana_boost_status()
+    from app.festival_engine import get_active_festival, get_festival_config
+    theme_key = get_active_festival()
+    fest_cfg = get_festival_config(theme_key)
 
     return AuthResponse(
         success=True,
@@ -208,5 +222,7 @@ def auth_widget(data: dict):
         current_stage=stage_num,
         stage_description=stage_desc,
         event_paused=is_event_paused(),
-        gharana_boost=boost
+        gharana_boost=boost,
+        festival_theme=theme_key,
+        festival_config=fest_cfg
     )

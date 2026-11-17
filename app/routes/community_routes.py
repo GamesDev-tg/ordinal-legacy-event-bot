@@ -68,6 +68,9 @@ def api_community_state():
     paused = is_event_paused()
     
     boost = get_gharana_boost_status()
+    from app.festival_engine import get_active_festival, get_festival_config
+    theme_key = get_active_festival()
+    fest_cfg = get_festival_config(theme_key)
 
     resp = CommunityStateResponse(
         total_sparks=total_sparks,
@@ -78,7 +81,9 @@ def api_community_state():
         active_players_count=active_count,
         top_gharanas=top_gharanas,
         event_paused=paused,
-        active_gharana_boost=boost
+        active_gharana_boost=boost,
+        festival_theme=theme_key,
+        festival_config=fest_cfg
     )
     # Cache for 2 seconds to support high concurrency with near-real-time updates
     try:

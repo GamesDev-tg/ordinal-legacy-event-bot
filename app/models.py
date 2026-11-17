@@ -39,6 +39,8 @@ class AuthResponse(BaseModel):
     stage_description: str = ""
     event_paused: bool = False
     gharana_boost: Optional[Dict[str, Any]] = None
+    festival_theme: Optional[str] = "arcade"
+    festival_config: Optional[Dict[str, Any]] = None
 
 class GameStartRequest(BaseModel):
     game_type: int = Field(..., ge=1, le=10, description="1: Chakri, 2: Rangoli, 3: Mithai, 4: Ludo, 5: Connect4, 6: 2048, 7: Wordle")
@@ -118,6 +120,8 @@ class CommunityStateResponse(BaseModel):
     top_gharanas: List[Dict[str, Any]]
     event_paused: bool = False
     active_gharana_boost: Optional[Dict[str, Any]] = None
+    festival_theme: Optional[str] = "arcade"
+    festival_config: Optional[Dict[str, Any]] = None
 
 class RewardExportRow(BaseModel):
     rank: int
