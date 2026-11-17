@@ -1042,7 +1042,8 @@ async def handle_bot_message(message: Dict[str, Any]):
             "/top", "/tops", "/topusers", "/status", "/gharanas", "/leaderboard", 
             "/tiers", "/stats", "/captcha", "/testcaptcha", "/eventstatus", "/pausestatus",
             "/adminstats", "/userstats", "/playerstats", "/eventstats", "/boost",
-            "/gifts", "/gift", "/clash", "/gharanaclash"
+            "/gifts", "/gift", "/clash", "/gharanaclash",
+            "/duel", "/dice", "/rps", "/flip", "/coin", "/arcade"
         }
         ADMIN_COMMANDS = {
             "/admin", "/adminhelp", "/admins", "/addadmin", "/deladmin",
@@ -1063,7 +1064,8 @@ async def handle_bot_message(message: Dict[str, Any]):
             "/resetreferrals", "/query", "/syncbot",
             "/dropdiya", "/flashdiya", "/droptrivia", "/riddle",
             "/dropbox", "/luckybox", "/shubhbox",
-            "/fixscores", "/rollbackscores", "/recoverextra"
+            "/fixscores", "/rollbackscores", "/recoverextra",
+            "/setfestival", "/switchfestival", "/festival", "/festivals"
         }
         is_user_admin = is_admin(user_id)
         if cmd_head in ADMIN_COMMANDS:
@@ -1082,7 +1084,9 @@ async def handle_bot_message(message: Dict[str, Any]):
                 "/mydata", "/profile", "/data", "/shubh", "/shagun",
                 "/help", "/commands", "/menu", "/house", "/mygharana",
                 "/akhand", "/widget", "/verify", "/resetgate", "/testgate",
-                "/gifts", "/gift", "/clash", "/gharanaclash"
+                "/gifts", "/gift", "/clash", "/gharanaclash",
+                "/duel", "/dice", "/rps", "/flip", "/coin", "/arcade",
+                "/setfestival", "/switchfestival", "/festival", "/festivals"
             }
             if cmd_head not in ALL_KNOWN_BOT_COMMANDS:
                 # Silently ignore commands intended for other bots or group admins (/price, /ban, /buy, etc.)
@@ -1318,34 +1322,8 @@ async def handle_bot_message(message: Dict[str, Any]):
         return
     
     if text.startswith("/start"):
-        safe_fname = escape_md(first_name)
-        welcome_text = (
-            f"🪔 *Welcome to Ordinal Legacy Maha Deepotsav, {safe_fname}!* 🪔\n\n"
-            f"You have been initiated into the *{settings.GHARANAS[user['gharana_id']]}*!\n"
-            f"Our sacred goal is to unite and collect *{settings.GLOBAL_MILESTONE_TARGET:,} Sparks* to ignite the community *Akhand Diya*.\n\n"
-            f"• Mini-Games: /chakri, /rangoli, /mithai (1 to 3 hard points per play)\n"
-            f"• Diya Companion: /shagun (Invite 1 friend as your bonded companion for daily free wicks!)\n"
-            f"• Daily Refill: /shubh (Claim daily bonus wicks and sparks)\n"
-            f"• Profile & Rewards: /mydata\n\n"
-            f"Tap the buttons below to play:"
-        )
-        
-        webapp_url = f"{settings.MINI_APP_URL}?tg_id={user_id}"
-        keyboard = {
-            "inline_keyboard": [
-                [{"text": "Enter Maha Deepotsav Arena (Mini-App)", "web_app": {"url": webapp_url}}],
-                [{"text": "Play Mini-Games in Chat", "callback_data": f"menu_play:{user_id}"}],
-                [{"text": "Play Chakri", "callback_data": f"play_chakri:{user_id}"},
-                 {"text": "Play Rangoli", "callback_data": f"play_rangoli:{user_id}"},
-                 {"text": "Play Mithai", "callback_data": f"play_mithai:{user_id}"}],
-                [{"text": "My Dossier & Rewards", "callback_data": f"cmd_mydata:{user_id}"},
-                 {"text": "Rewards Ladder", "callback_data": f"cmd_tiers:{user_id}"}],
-                [{"text": "My Shagun Invite Link", "callback_data": f"cmd_shagun:{user_id}"},
-                 {"text": "Claim Shubh Refill", "callback_data": f"cmd_shubh:{user_id}"}],
-                [{"text": "Community Status", "callback_data": f"cmd_status:{user_id}"},
-                 {"text": "Gharanas Leaderboard", "callback_data": f"cmd_gharanas:{user_id}"}]
-            ]
-        }
+        from app.festival_engine import render_welcome_for_current_festival
+        welcome_text, keyboard = render_welcome_for_current_festival(user, first_name, is_verified=True)
         await send_telegram_message(chat_id, welcome_text, keyboard)
         return
 
@@ -1683,6 +1661,145 @@ async def handle_bot_message(message: Dict[str, Any]):
         from app.group_activities import get_gharana_clash_card
         clash_text = get_gharana_clash_card()
         await send_telegram_message(chat_id, clash_text)
+        return
+
+    elif text.startswith(("/setfestival", "/switchfestival", "/festival", "/festivals")):
+        if not is_admin(user_id):
+            await send_telegram_message(chat_id, "⛔ *Access Denied*: Admin privileges required.")
+            return
+        parts = text.split()
+        if len(parts) > 1 and parts[1].lower() in ("arcade", "diwali", "christmas"):
+            theme_choice = parts[1].lower()
+            from app.festival_engine import set_active_festival, get_festival_config
+            ok, resp_msg = set_active_festival(theme_choice)
+            cfg = get_festival_config(theme_choice)
+            await send_telegram_message(
+                chat_id,
+                f"🎛️ <b>FESTIVAL THEME SWITCHED!</b>\n\n"
+                f"• Active Festival: {cfg['icon']} <b>{cfg['name']}</b> (<code>{theme_choice}</code>)\n"
+                f"• Tagline: <i>{cfg['tagline']}</i>\n\n"
+                f"✅ Bot welcome menus, featured games, and titles have successfully transitioned!"
+            )
+            await send_bot_log(f"🎛️ Admin <code>{user_id}</code> switched active festival theme to <b>{theme_choice}</b>.")
+            return
+
+        from app.festival_engine import render_festival_switch_menu
+        fest_text, fest_kb = render_festival_switch_menu()
+        await send_telegram_message(chat_id, fest_text, fest_kb)
+        return
+
+    elif text.startswith(("/duel", "/dice")):
+        from app.arcade_engine import create_pvp_dice_challenge, play_dice_vs_ai
+        if not is_private:
+            dt, dkb = create_pvp_dice_challenge(chat_id, user_id, first_name)
+            await send_telegram_message(chat_id, dt, dkb)
+        else:
+            res = play_dice_vs_ai(user_id, first_name)
+            await send_telegram_message(chat_id, res["message"], res.get("keyboard"))
+        return
+
+    elif text.startswith(("/rps", "/clash_rps")):
+        parts = text.split()
+        from app.arcade_engine import play_rps_vs_ai
+        if len(parts) > 1 and parts[1].lower() in ("fire", "water", "grass", "earth", "rock", "paper", "scissors"):
+            raw_m = parts[1].lower()
+            mapped_m = "grass" if raw_m in ("earth", "rock", "paper", "scissors") else raw_m
+            res = play_rps_vs_ai(user_id, first_name, mapped_m)
+            await send_telegram_message(chat_id, res["message"], res.get("keyboard"))
+            return
+        
+        rps_text = (
+            f"⚔️ <b>ELEMENTAL CLASH (PvAI & PvP)</b> ⚔️\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"Select your element stance to duel the Cosmic AI:\n\n"
+            f"• 🔥 <b>Fire</b> melts Earth & beats Grass\n"
+            f"• 💧 <b>Water</b> douses & extinguishes Fire\n"
+            f"• 🌿 <b>Earth</b> absorbs & neutralizes Water\n\n"
+            f"<i>Tap an element below to strike:</i>"
+        )
+        rps_kb = {
+            "inline_keyboard": [
+                [
+                    {"text": "🔥 Summon Fire", "callback_data": f"rps_ai:{user_id}:fire"},
+                    {"text": "💧 Cast Water", "callback_data": f"rps_ai:{user_id}:water"},
+                    {"text": "🌿 Channel Earth", "callback_data": f"rps_ai:{user_id}:grass"}
+                ],
+                [
+                    {"text": "🎲 Play Dice Duel", "callback_data": f"play_dice_ai:{user_id}"},
+                    {"text": "🪙 Satoshi Flip", "callback_data": f"play_coin_ai:{user_id}"}
+                ]
+            ]
+        }
+        await send_telegram_message(chat_id, rps_text, rps_kb)
+        return
+
+    elif text.startswith(("/flip", "/coin")):
+        parts = text.split()
+        from app.arcade_engine import play_coin_vs_ai
+        choice = parts[1].lower() if len(parts) > 1 and parts[1].lower() in ("heads", "tails") else None
+        if choice:
+            res = play_coin_vs_ai(user_id, first_name, choice)
+            await send_telegram_message(chat_id, res["message"], res.get("keyboard"))
+            return
+            
+        coin_prompt = (
+            f"🪙 <b>SATOSHI COIN TOSS</b> 🪙\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"Predict the side of the golden Bitcoin coin:\n\n"
+            f"• 🪙 <b>Heads</b>: Win +3 Arcade Sparks\n"
+            f"• 🌕 <b>Tails</b>: Win +3 Arcade Sparks\n\n"
+            f"<i>Choose your side:</i>"
+        )
+        coin_kb = {
+            "inline_keyboard": [
+                [
+                    {"text": "🪙 Pick Heads", "callback_data": f"coin_ai:{user_id}:heads"},
+                    {"text": "🌕 Pick Tails", "callback_data": f"coin_ai:{user_id}:tails"}
+                ],
+                [
+                    {"text": "🎲 Dice Duel", "callback_data": f"play_dice_ai:{user_id}"},
+                    {"text": "⚔️ RPS Clash", "callback_data": f"play_rps_ai:{user_id}"}
+                ]
+            ]
+        }
+        await send_telegram_message(chat_id, coin_prompt, coin_kb)
+        return
+
+    elif text in ("/arcade", "/arcadegames", "/games"):
+        from app.festival_engine import get_active_festival, get_festival_config
+        cfg = get_festival_config()
+        arcade_text = (
+            f"🕹️ <b>ORDINAL LEGACY ARCADE ARENA</b> 🕹️\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"Welcome to the competitive mini-games hub! Play casual duels, compete vs AI, or challenge group members:\n\n"
+            f"• 🎲 <b>Dice Duel</b>: Roll against players or AI (/duel or /dice)\n"
+            f"• ⚔️ <b>Elemental Clash</b>: Rock-Paper-Scissors clash (/rps)\n"
+            f"• 🪙 <b>Satoshi Flip</b>: Heads or Tails prediction (/flip)\n"
+            f"• 🌀 <b>Classic Mini-Games</b>: /chakri, /rangoli, /mithai\n\n"
+            f"<i>Select a game below to begin playing:</i>"
+        )
+        arcade_kb = {
+            "inline_keyboard": [
+                [
+                    {"text": "🎲 Dice Duel (vs AI)", "callback_data": f"play_dice_ai:{user_id}"},
+                    {"text": "⚔️ RPS Clash (vs AI)", "callback_data": f"play_rps_ai:{user_id}"}
+                ],
+                [
+                    {"text": "🪙 Satoshi Flip", "callback_data": f"play_coin_ai:{user_id}"},
+                    {"text": "👥 Create PvP Duel", "callback_data": f"menu_pvp:{user_id}"}
+                ],
+                [
+                    {"text": "🌀 Chakri", "callback_data": f"play_chakri:{user_id}"},
+                    {"text": "🎨 Rangoli", "callback_data": f"play_rangoli:{user_id}"},
+                    {"text": "🍬 Mithai", "callback_data": f"play_mithai:{user_id}"}
+                ],
+                [
+                    {"text": "📊 My Stats & Rank", "callback_data": f"cmd_mydata:{user_id}"},
+                    {"text": "🏆 Top Leaderboard", "callback_data": f"cmd_top:{user_id}"}
+                ]
+            ]
+        }
+        await send_telegram_message(chat_id, arcade_text, arcade_kb)
         return
 
     elif text.startswith(("/dropdiya", "/flashdiya")):
@@ -3350,7 +3467,11 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
     action = parts[0]
     owner_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
 
-    PUBLIC_GROUP_ACTIONS = {"claim_diya", "flash_diya", "trivia_ans", "open_box"}
+    PUBLIC_GROUP_ACTIONS = {
+        "claim_diya", "flash_diya", "trivia_ans", "open_box",
+        "accept_duel", "switch_fest", "cmd_fest_menu",
+        "play_dice_ai", "play_rps_ai", "rps_ai", "play_coin_ai", "coin_ai", "menu_pvp"
+    }
     if action not in PUBLIC_GROUP_ACTIONS:
         if owner_id is not None and owner_id != user_id:
             await answer_telegram_callback_query(
@@ -3364,7 +3485,146 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
     await answer_telegram_callback_query(callback_id)
 
     # 4. Route action
-    if action == "open_box":
+    if action == "switch_fest":
+        if not is_admin(user_id):
+            await answer_telegram_callback_query(callback_id, text="⛔ Admin privileges required.", show_alert=True)
+            return
+        if len(parts) >= 2:
+            new_theme = parts[1]
+            from app.festival_engine import set_active_festival, render_festival_switch_menu
+            set_active_festival(new_theme)
+            text_menu, kb_menu = render_festival_switch_menu()
+            msg_id = callback_query.get("message", {}).get("message_id", 0)
+            if msg_id:
+                await edit_telegram_message(chat_id, msg_id, text_menu, reply_markup=kb_menu)
+            await answer_telegram_callback_query(callback_id, text=f"✅ Switched to {new_theme.title()} mode!", show_alert=False)
+            await send_bot_log(f"🎛️ Admin <code>{user_id}</code> switched active festival theme to <b>{new_theme}</b> via button.")
+        return
+
+    elif action == "cmd_fest_menu":
+        if not is_admin(user_id):
+            await answer_telegram_callback_query(callback_id, text="⛔ Admin privileges required.", show_alert=True)
+            return
+        from app.festival_engine import render_festival_switch_menu
+        text_menu, kb_menu = render_festival_switch_menu()
+        msg_id = callback_query.get("message", {}).get("message_id", 0)
+        if msg_id:
+            await edit_telegram_message(chat_id, msg_id, text_menu, reply_markup=kb_menu)
+        return
+
+    elif action == "play_dice_ai":
+        from app.arcade_engine import play_dice_vs_ai
+        u_fn = from_user.get("first_name", f"Player_{user_id}")
+        res = play_dice_vs_ai(user_id, u_fn)
+        msg_obj = callback_query.get("message")
+        if msg_obj and msg_obj.get("message_id"):
+            await edit_telegram_message(chat_id, msg_obj["message_id"], res["message"], reply_markup=res["keyboard"])
+        else:
+            await send_telegram_message(chat_id, res["message"], res["keyboard"])
+        return
+
+    elif action == "play_rps_ai":
+        rps_text = (
+            f"⚔️ <b>ELEMENTAL CLASH (vs AI)</b> ⚔️\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"Choose your element to strike:\n"
+            f"• 🔥 <b>Fire</b> beats 🌿 Earth\n"
+            f"• 💧 <b>Water</b> beats 🔥 Fire\n"
+            f"• 🌿 <b>Earth</b> beats 💧 Water\n\n"
+            f"<i>Tap your element below:</i>"
+        )
+        rps_kb = {
+            "inline_keyboard": [
+                [
+                    {"text": "🔥 Fire", "callback_data": f"rps_ai:{user_id}:fire"},
+                    {"text": "💧 Water", "callback_data": f"rps_ai:{user_id}:water"},
+                    {"text": "🌿 Earth", "callback_data": f"rps_ai:{user_id}:grass"}
+                ],
+                [{"text": "🎲 Play Dice Duel", "callback_data": f"play_dice_ai:{user_id}"}]
+            ]
+        }
+        msg_obj = callback_query.get("message")
+        if msg_obj and msg_obj.get("message_id"):
+            await edit_telegram_message(chat_id, msg_obj["message_id"], rps_text, reply_markup=rps_kb)
+        else:
+            await send_telegram_message(chat_id, rps_text, rps_kb)
+        return
+
+    elif action == "rps_ai":
+        if len(parts) >= 3:
+            move = parts[2]
+            from app.arcade_engine import play_rps_vs_ai
+            u_fn = from_user.get("first_name", f"Player_{user_id}")
+            res = play_rps_vs_ai(user_id, u_fn, move)
+            msg_obj = callback_query.get("message")
+            if msg_obj and msg_obj.get("message_id"):
+                await edit_telegram_message(chat_id, msg_obj["message_id"], res["message"], reply_markup=res["keyboard"])
+            else:
+                await send_telegram_message(chat_id, res["message"], res["keyboard"])
+        return
+
+    elif action == "play_coin_ai":
+        coin_text = (
+            f"🪙 <b>SATOSHI COIN FLIP</b> 🪙\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"Predict the outcome:\n"
+            f"• 🪙 <b>Heads</b> (+3 Sparks if correct)\n"
+            f"• 🌕 <b>Tails</b> (+3 Sparks if correct)\n\n"
+            f"<i>Tap below:</i>"
+        )
+        coin_kb = {
+            "inline_keyboard": [
+                [
+                    {"text": "🪙 Pick Heads", "callback_data": f"coin_ai:{user_id}:heads"},
+                    {"text": "🌕 Pick Tails", "callback_data": f"coin_ai:{user_id}:tails"}
+                ],
+                [{"text": "🎲 Play Dice Duel", "callback_data": f"play_dice_ai:{user_id}"}]
+            ]
+        }
+        msg_obj = callback_query.get("message")
+        if msg_obj and msg_obj.get("message_id"):
+            await edit_telegram_message(chat_id, msg_obj["message_id"], coin_text, reply_markup=coin_kb)
+        else:
+            await send_telegram_message(chat_id, coin_text, coin_kb)
+        return
+
+    elif action == "coin_ai":
+        if len(parts) >= 3:
+            choice = parts[2]
+            from app.arcade_engine import play_coin_vs_ai
+            u_fn = from_user.get("first_name", f"Player_{user_id}")
+            res = play_coin_vs_ai(user_id, u_fn, choice)
+            msg_obj = callback_query.get("message")
+            if msg_obj and msg_obj.get("message_id"):
+                await edit_telegram_message(chat_id, msg_obj["message_id"], res["message"], reply_markup=res["keyboard"])
+            else:
+                await send_telegram_message(chat_id, res["message"], res["keyboard"])
+        return
+
+    elif action == "menu_pvp":
+        from app.arcade_engine import create_pvp_dice_challenge
+        u_fn = from_user.get("first_name", f"Player_{user_id}")
+        t, kb = create_pvp_dice_challenge(chat_id, user_id, u_fn)
+        await send_telegram_message(chat_id, t, kb)
+        return
+
+    elif action == "accept_duel":
+        if len(parts) >= 2:
+            duel_id = parts[1]
+            from app.arcade_engine import accept_pvp_dice_challenge
+            u_fn = from_user.get("first_name", f"Player_{user_id}")
+            res = accept_pvp_dice_challenge(duel_id, user_id, u_fn)
+            if not res["success"]:
+                await answer_telegram_callback_query(callback_id, text=res["error"], show_alert=True)
+                return
+            msg_obj = callback_query.get("message")
+            if msg_obj and msg_obj.get("message_id"):
+                await edit_telegram_message(chat_id, msg_obj["message_id"], res["message"], reply_markup=res.get("keyboard"))
+            else:
+                await send_telegram_message(chat_id, res["message"], res.get("keyboard"))
+        return
+
+    elif action == "open_box":
         if len(parts) < 2 or not parts[1].isdigit():
             await answer_telegram_callback_query(callback_id, "❌ Invalid box drop.", show_alert=True)
             return

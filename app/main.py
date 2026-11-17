@@ -146,6 +146,26 @@ async def api_admin_recover_deleted_points():
         pass
     return res
 
+@app.get("/api/festival/current")
+def api_get_current_festival():
+    from app.festival_engine import get_active_festival, get_festival_config
+    curr = get_active_festival()
+    cfg = get_festival_config(curr)
+    return {"ok": True, "active_theme": curr, "config": cfg}
+
+@app.get("/api/admin/set_festival")
+async def api_admin_set_festival(theme: str = "arcade"):
+    from app.festival_engine import set_active_festival, get_festival_config
+    from app.bot import send_bot_log
+    ok, msg = set_active_festival(theme)
+    cfg = get_festival_config(theme)
+    if ok:
+        try:
+            await send_bot_log(f"🎛️ <b>[API FESTIVAL SWITCH]</b> Switched festival theme to <b>{theme}</b> ({cfg['name']}).")
+        except Exception:
+            pass
+    return {"ok": ok, "message": msg, "active_theme": theme if ok else None, "config": cfg if ok else None}
+
 @app.get("/api/cron/flash_diya")
 async def api_cron_flash_diya():
     from app.database import get_system_setting
