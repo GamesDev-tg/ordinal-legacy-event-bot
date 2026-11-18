@@ -44,8 +44,24 @@ FESTIVAL_THEMES = {
         "theme_class": "theme-arcade",
         "primary_color": "#F59E0B",
         "secondary_color": "#06B6D4",
-        "featured_game_ids": [4, 5, 6, 7, 1, 2, 3],
-        "description": "Year-round competitive and casual gaming season between major festivals."
+        "featured_game_ids": [4, 5, 6, 7],
+        "description": "Year-round competitive and casual gaming season between major festivals.",
+        "tiers": {
+            0: "Arcade Rookie",
+            1: "Pixel Warrior",
+            2: "Combo Striker",
+            3: "High Score Master",
+            4: "Cyber Grandmaster",
+            5: "Arcade Sovereign"
+        },
+        "stage_names": {
+            0: "Power Core Booting Up",
+            1: "Grid Initialized",
+            2: "Overclock Active",
+            3: "Cyber Nexus Engaged",
+            4: "Hyperdrive Chamber",
+            5: "Arcade Power Core 100% Fully Powered!"
+        }
     },
     "diwali": {
         "id": "diwali",
@@ -86,7 +102,23 @@ FESTIVAL_THEMES = {
         "primary_color": "#F59E0B",
         "secondary_color": "#EA580C",
         "featured_game_ids": [1, 2, 3, 4, 5, 6, 7],
-        "description": "Sacred Festival of Lights, Diyas, Gharana Clash, and Sovereign Titles."
+        "description": "Sacred Festival of Lights, Diyas, Gharana Clash, and Sovereign Titles.",
+        "tiers": {
+            0: "Diya Spark",
+            1: "Diya Sevak",
+            2: "Rangoli Artisan",
+            3: "Spark Master",
+            4: "Deep Mahant",
+            5: "Akhand Sovereign"
+        },
+        "stage_names": {
+            0: "Lighting the Wick",
+            1: "The First Glow",
+            2: "Sacred Radiance",
+            3: "Celestial Harmony",
+            4: "Grand Deepotsav",
+            5: "Maha Akhand Jyoti Fully Ignited!"
+        }
     },
     "christmas": {
         "id": "christmas",
@@ -127,7 +159,23 @@ FESTIVAL_THEMES = {
         "primary_color": "#10B981",
         "secondary_color": "#EF4444",
         "featured_game_ids": [4, 5, 6, 7, 1, 2, 3],
-        "description": "Christmas & New Year winter extravaganza with seasonal drops and holiday gifts."
+        "description": "Christmas & New Year winter extravaganza with seasonal drops and holiday gifts.",
+        "tiers": {
+            0: "Snow Cadet",
+            1: "Frost Guardian",
+            2: "Blizzard Ranger",
+            3: "Ice Champion",
+            4: "Polar Grandmaster",
+            5: "Winter Sovereign"
+        },
+        "stage_names": {
+            0: "Tree Seedling Planted",
+            1: "Tinsel & Ornaments",
+            2: "Starlight Garland",
+            3: "Northern Aurora",
+            4: "Crystal Snowdrift",
+            5: "Maha Christmas Tree Fully Decorated!"
+        }
     }
 }
 

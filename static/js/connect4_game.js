@@ -25,13 +25,17 @@ class Connect4Game {
         this.running = true;
         this.startTime = Date.now();
         this.initBoard();
-        this.canvas.addEventListener('click', this.handleCanvasClick);
-        this.canvas.addEventListener('touchstart', (e) => {
+        this.handleTouchStart = (e) => {
             if (e.touches && e.touches[0]) {
+                e.preventDefault();
                 const rect = this.canvas.getBoundingClientRect();
-                this.handleClickAt(e.touches[0].clientX - rect.left, e.touches[0].clientY - rect.top);
+                const scaleX = this.canvas.width / rect.width;
+                const scaleY = this.canvas.height / rect.height;
+                this.handleClickAt((e.touches[0].clientX - rect.left) * scaleX, (e.touches[0].clientY - rect.top) * scaleY);
             }
-        }, { passive: false });
+        };
+        this.canvas.addEventListener('click', this.handleCanvasClick);
+        this.canvas.addEventListener('touchstart', this.handleTouchStart, { passive: false });
         this.animate = this.animate.bind(this);
         requestAnimationFrame(this.animate);
     }
@@ -39,6 +43,32 @@ class Connect4Game {
     stop() {
         this.running = false;
         this.canvas.removeEventListener('click', this.handleCanvasClick);
+        if (this.handleTouchStart) {
+            this.canvas.removeEventListener('touchstart', this.handleTouchStart);
+        }
+    }
+
+    confirmExit() {
+        if (this.gameOver) return;
+        if (confirm("Forfeit Connect 4 match? Opponent will win and you'll bank 1 participation point.")) {
+            this.gameOver = true;
+            this.running = false;
+            const duration = Date.now() - this.startTime;
+            if (this.onGameOver) this.onGameOver(1, Math.max(3500, duration));
+        }
+    }
+
+    handleTap() {
+        if (!this.running || this.gameOver || this.turn !== 1) return;
+        // Default drop in center or first valid column
+        const valid = [];
+        for (let c = 0; c < this.cols; c++) {
+            if (this.board[0][c] === 0) valid.push(c);
+        }
+        if (valid.length > 0) {
+            const preferred = valid.includes(3) ? 3 : valid[0];
+            this.dropPiece(preferred, 1);
+        }
     }
 
     initBoard() {
@@ -52,7 +82,9 @@ class Connect4Game {
 
     handleCanvasClick(e) {
         const rect = this.canvas.getBoundingClientRect();
-        this.handleClickAt(e.clientX - rect.left, e.clientY - rect.top);
+        const scaleX = this.canvas.width / rect.width;
+        const scaleY = this.canvas.height / rect.height;
+        this.handleClickAt((e.clientX - rect.left) * scaleX, (e.clientY - rect.top) * scaleY);
     }
 
     handleClickAt(x, y) {

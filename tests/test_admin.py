@@ -326,7 +326,7 @@ class TestAdmin(unittest.TestCase):
                 "text": "/status"
             }
             run_coro(handle_bot_message(msg))
-            self.assertTrue(any("Maha Deepotsav Status" in m["text"] for m in sent_messages if m["chat_id"] == group_id))
+            self.assertTrue(any("Status Report" in m["text"] for m in sent_messages if m["chat_id"] == group_id))
 
             # 5. Admin running /stopevent and /resumeevent in group chat
             sent_messages.clear()

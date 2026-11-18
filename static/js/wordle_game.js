@@ -27,6 +27,7 @@ class WordleGame {
 
         this.handleKeyDown = this.handleKeyDown.bind(this);
         this.handleCanvasClick = this.handleCanvasClick.bind(this);
+        this.handleTouchStart = this.handleTouchStart.bind(this);
     }
 
     start() {
@@ -35,12 +36,7 @@ class WordleGame {
         this.initGame();
         window.addEventListener('keydown', this.handleKeyDown);
         this.canvas.addEventListener('click', this.handleCanvasClick);
-        this.canvas.addEventListener('touchstart', (e) => {
-            if (e.touches && e.touches[0]) {
-                const rect = this.canvas.getBoundingClientRect();
-                this.handleClickAt(e.touches[0].clientX - rect.left, e.touches[0].clientY - rect.top);
-            }
-        }, { passive: false });
+        this.canvas.addEventListener('touchstart', this.handleTouchStart, { passive: false });
         this.animate = this.animate.bind(this);
         requestAnimationFrame(this.animate);
     }
@@ -49,32 +45,49 @@ class WordleGame {
         this.running = false;
         window.removeEventListener('keydown', this.handleKeyDown);
         this.canvas.removeEventListener('click', this.handleCanvasClick);
+        this.canvas.removeEventListener('touchstart', this.handleTouchStart);
     }
 
-    initGame() {
-        const eligible = this.dictionary.filter(w => w.length === 5);
-        this.secret = eligible[Math.floor(Math.random() * eligible.length)];
-        this.guesses = [];
-        this.currentInput = "";
-        this.gameOver = false;
-        this.won = false;
-        this.keyStates = {};
-    }
-
-    handleKeyDown(e) {
-        if (!this.running || this.gameOver) return;
-        if (e.key === 'Enter') {
-            this.submitGuess();
-        } else if (e.key === 'Backspace') {
-            this.currentInput = this.currentInput.slice(0, -1);
-        } else if (/^[a-zA-Z]$/.test(e.key) && this.currentInput.length < 5) {
-            this.currentInput += e.key.toUpperCase();
-        }
+    handleTouchStart(e) {
+        if (!e.touches || !e.touches[0]) return;
+        if (e.cancelable) e.preventDefault();
+        const rect = this.canvas.getBoundingClientRect();
+        const scaleX = this.canvas.width / rect.width;
+        const scaleY = this.canvas.height / rect.height;
+        const x = (e.touches[0].clientX - rect.left) * scaleX;
+        const y = (e.touches[0].clientY - rect.top) * scaleY;
+        this.handleClickAt(x, y);
     }
 
     handleCanvasClick(e) {
         const rect = this.canvas.getBoundingClientRect();
-        this.handleClickAt(e.clientX - rect.left, e.clientY - rect.top);
+        const scaleX = this.canvas.width / rect.width;
+        const scaleY = this.canvas.height / rect.height;
+        const x = (e.clientX - rect.left) * scaleX;
+        const y = (e.clientY - rect.top) * scaleY;
+        this.handleClickAt(x, y);
+    }
+
+    handleTap() {
+        // Wired to action button below canvas
+        if (this.currentInput.length === 5) {
+            this.submitGuess();
+        } else {
+            this.confirmExit();
+        }
+    }
+
+    confirmExit() {
+        if (!this.running || this.gameOver) return;
+        const confirmQuit = window.confirm("Give up on this crypto word and exit? You will still bank 1 Sparks participation bonus.");
+        if (confirmQuit) {
+            this.gameOver = true;
+            this.running = false;
+            if (this.onGameOver) {
+                const duration = Math.max(3000, Date.now() - this.startTime);
+                this.onGameOver(1, duration);
+            }
+        }
     }
 
     handleClickAt(x, y) {

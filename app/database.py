@@ -441,7 +441,15 @@ def calculate_tier(points: int) -> int:
             return tier
     return 0
 
-def get_tier_name(tier: int) -> str:
+def get_tier_name(tier: int, theme: Optional[str] = None) -> str:
+    try:
+        from app.festival_engine import get_active_festival, FESTIVAL_THEMES
+        fest = theme if theme else get_active_festival()
+        fest_tiers = FESTIVAL_THEMES.get(fest, {}).get("tiers")
+        if fest_tiers and tier in fest_tiers:
+            return fest_tiers[tier]
+    except Exception:
+        pass
     names = {
         0: "Diya Spark",
         1: "Diya Sevak",
@@ -455,18 +463,44 @@ def get_tier_name(tier: int) -> str:
 def get_tier_reward(tier: int) -> str:
     return settings.TIER_REWARDS.get(tier, "Welcome Badge")
 
-def get_stage_info(sparks: int) -> tuple[int, str]:
+def get_stage_info(sparks: int, theme: Optional[str] = None) -> tuple[int, str]:
+    try:
+        from app.festival_engine import get_active_festival, FESTIVAL_THEMES
+        fest = theme if theme else get_active_festival()
+        cfg = FESTIVAL_THEMES.get(fest, {})
+        stages = cfg.get("stage_names", {})
+        beacon = cfg.get("status_beacon", "Maha Akhand Jyoti")
+    except Exception:
+        stages = {}
+        beacon = "Maha Akhand Jyoti"
+
+    cur_name = "Sparks"
+
     if sparks >= 200000:
-        return 5, f"Stage 5: Maha Akhand Jyoti Fully Ignited! ({sparks:,} Sparks • All Milestones Cleared!)"
+        stg = 5
+        lbl = stages.get(5, "Maha Akhand Jyoti Fully Ignited!")
+        desc = f"Stage 5: {lbl} ({sparks:,} {cur_name} • All Milestones Cleared!)"
     elif sparks >= 160000:
-        return 4, f"Stage 4: Grand Deepotsav ({sparks:,} / 200,000 Sparks to Ignite 🪔 Maha Akhand Jyoti)"
+        stg = 4
+        lbl = stages.get(4, "Grand Deepotsav")
+        desc = f"Stage 4: {lbl} ({sparks:,} / 200,000 {cur_name} to Complete {beacon})"
     elif sparks >= 120000:
-        return 3, f"Stage 3: Celestial Harmony ({sparks:,} / 160,000 Sparks to Clear 🐾 Pets)"
+        stg = 3
+        lbl = stages.get(3, "Celestial Harmony")
+        desc = f"Stage 3: {lbl} ({sparks:,} / 160,000 {cur_name} to Clear 🐾 Pets)"
     elif sparks >= 80000:
-        return 2, f"Stage 2: Sacred Radiance ({sparks:,} / 120,000 Sparks to Clear 🎟 Tickets)"
+        stg = 2
+        lbl = stages.get(2, "Sacred Radiance")
+        desc = f"Stage 2: {lbl} ({sparks:,} / 120,000 {cur_name} to Clear 🎟 Tickets)"
     elif sparks >= 40000:
-        return 1, f"Stage 1: The First Glow ({sparks:,} / 80,000 Sparks to Clear 🔮 Pearls)"
-    return 0, f"Stage 0: Lighting the Wick ({sparks:,} / 40,000 Sparks to Clear 🪙 Coins)"
+        stg = 1
+        lbl = stages.get(1, "The First Glow")
+        desc = f"Stage 1: {lbl} ({sparks:,} / 80,000 {cur_name} to Clear 🔮 Pearls)"
+    else:
+        stg = 0
+        lbl = stages.get(0, "Lighting the Wick")
+        desc = f"Stage 0: {lbl} ({sparks:,} / 40,000 {cur_name} to Clear 🪙 Coins)"
+    return stg, desc
 
 def generate_full_backup() -> dict:
     conn = get_db_connection()

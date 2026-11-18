@@ -75,6 +75,8 @@ function applyFestivalThemeToUI(cfg) {
     if (refillIcon) refillIcon.innerText = cfg.id === "arcade" ? "⚡" : (cfg.id === "christmas" ? "🎁" : "✨");
     const refillTitle = document.getElementById('shubh-refill-title');
     if (refillTitle) refillTitle.innerText = cfg.refill_title || "Daily Arcade Booster";
+    const refillSub = document.getElementById('shubh-status-txt');
+    if (refillSub) refillSub.innerText = cfg.refill_desc || (cfg.id === "arcade" ? "Daily +5 Energy Power-Up Charge" : "Daily +5 Diya Wicks Blessing");
     const refillBtn = document.getElementById('shubh-action-btn');
     if (refillBtn && (!currentUser || currentUser.shubh_refill_available)) {
         refillBtn.innerText = cfg.refill_btn || "CLAIM +5";
@@ -86,28 +88,46 @@ function applyFestivalThemeToUI(cfg) {
     const gamesCost = document.getElementById('games-cost-badge');
     if (gamesCost) gamesCost.innerText = cfg.games_cost_label || "Cost: 1 Energy";
 
-    // Reorder game cards based on festival
+    // Manage game cards visibility & ordering based on festival
     const grid = document.getElementById('game-grid');
     if (grid) {
-        const order = cfg.featured_game_ids || (cfg.id === "arcade" ? [4, 5, 6, 7, 1, 2, 3] : [1, 2, 3, 4, 5, 6, 7]);
         const cards = Array.from(grid.querySelectorAll('.game-card'));
-        const cardMap = {};
         cards.forEach(c => {
             const gid = parseInt(c.getAttribute('data-game-id'), 10);
-            if (gid) cardMap[gid] = c;
-        });
-        order.forEach(gid => {
-            const c = cardMap[gid];
-            if (c) {
-                grid.appendChild(c);
-                if (cfg.id === "arcade" && [4, 5, 6, 7].includes(gid)) {
-                    c.classList.add('featured-arcade-card');
-                } else {
+            if (cfg.id === "arcade") {
+                // In pure arcade mode, completely remove/hide Diwali-specific games
+                if ([1, 2, 3].includes(gid)) {
+                    c.style.display = 'none';
                     c.classList.remove('featured-arcade-card');
+                } else {
+                    c.style.display = 'flex';
+                    c.classList.add('featured-arcade-card');
+                    grid.appendChild(c);
                 }
+            } else {
+                // Festival modes (Diwali, Christmas)
+                c.style.display = 'flex';
+                c.classList.remove('featured-arcade-card');
             }
         });
+        if (cfg.id !== "arcade") {
+            const order = cfg.featured_game_ids || [1, 2, 3, 4, 5, 6, 7];
+            const cardMap = {};
+            cards.forEach(c => cardMap[parseInt(c.getAttribute('data-game-id'), 10)] = c);
+            order.forEach(gid => {
+                if (cardMap[gid]) grid.appendChild(cardMap[gid]);
+            });
+        }
     }
+
+    // Gharana / Clan surge title
+    const boostTitle = document.getElementById('boost-gharana-title');
+    if (boostTitle) {
+        boostTitle.innerText = cfg.id === "arcade" ? "Clan Surge 2X Multiplier" : (cfg.id === "christmas" ? "Winter House 2X Multiplier" : "Surya Gharana 2X Surge");
+    }
+
+    // Update Tier Milestone Ladder labels based on festival
+    renderTierLadderCards(cfg);
 
     // Bottom Navigation Bar
     const navIconArena = document.getElementById('nav-icon-arena');
@@ -604,7 +624,49 @@ function startBoostTimer() {
     boostCountdownInterval = setInterval(renderBoostTime, 1000);
 }
 
+const FESTIVAL_TIER_CONFIGS = {
+    "arcade": [
+        { tier: 0, title: "🌟 Tier 0: Arcade Rookie (0–499 Pts)", reward: "Welcome Badge • Initiation Completed" },
+        { tier: 1, title: "🕹️ Tier 1: Pixel Warrior (500 Pts)", reward: "🪙 Coins" },
+        { tier: 2, title: "🎯 Tier 2: Combo Striker (1,500 Pts)", reward: "🔮 Pearl" },
+        { tier: 3, title: "⚡ Tier 3: High Score Master (2,750 Pts)", reward: "🎟 Ticket" },
+        { tier: 4, title: "💎 Tier 4: Cyber Grandmaster (4,000 Pts)", reward: "🐾 Pet" },
+        { tier: 5, title: "👑 Tier 5: Arcade Sovereign (5,000+ Pts)", reward: "All Rewards: 🪙 Coins + 🔮 Pearl + 🎟 Ticket + 🐾 Pet" }
+    ],
+    "christmas": [
+        { tier: 0, title: "🌟 Tier 0: Snow Cadet (0–499 Pts)", reward: "Welcome Badge • Initiation Completed" },
+        { tier: 1, title: "⛄ Tier 1: Frost Guardian (500 Pts)", reward: "🪙 Coins" },
+        { tier: 2, title: "🌨️ Tier 2: Blizzard Ranger (1,500 Pts)", reward: "🔮 Pearl" },
+        { tier: 3, title: "❄️ Tier 3: Ice Champion (2,750 Pts)", reward: "🎟 Ticket" },
+        { tier: 4, title: "💎 Tier 4: Polar Grandmaster (4,000 Pts)", reward: "🐾 Pet" },
+        { tier: 5, title: "👑 Tier 5: Winter Sovereign (5,000+ Pts)", reward: "All Rewards: 🪙 Coins + 🔮 Pearl + 🎟 Ticket + 🐾 Pet" }
+    ],
+    "diwali": [
+        { tier: 0, title: "🌟 Tier 0: Diya Spark (0–499 Pts)", reward: "Welcome Badge • Initiation Completed" },
+        { tier: 1, title: "🪔 Tier 1: Diya Sevak (500 Pts)", reward: "🪙 Coins" },
+        { tier: 2, title: "🌸 Tier 2: Rangoli Artisan (1,500 Pts)", reward: "🔮 Pearl" },
+        { tier: 3, title: "✨ Tier 3: Spark Master (2,750 Pts)", reward: "🎟 Ticket" },
+        { tier: 4, title: "💎 Tier 4: Deep Mahant (4,000 Pts)", reward: "🐾 Pet" },
+        { tier: 5, title: "👑 Tier 5: Akhand Sovereign (5,000+ Pts)", reward: "All Rewards: 🪙 Coins + 🔮 Pearl + 🎟 Ticket + 🐾 Pet" }
+    ]
+};
+
+function renderTierLadderCards(cfg) {
+    const fId = (cfg && cfg.id) || currentFestivalTheme || "arcade";
+    const tiers = FESTIVAL_TIER_CONFIGS[fId] || FESTIVAL_TIER_CONFIGS["arcade"];
+    tiers.forEach(item => {
+        const card = document.querySelector(`.tier-item-card[data-tier="${item.tier}"]`);
+        if (card) {
+            const titleEl = card.querySelector('.user-name');
+            if (titleEl) titleEl.innerText = item.title;
+            const rewEl = card.querySelector('span[style*="font-size:0.75rem"]');
+            if (rewEl) rewEl.innerText = item.reward;
+        }
+    });
+}
+
 function updateTierLadder(currentTierLevel) {
+    renderTierLadderCards(currentFestivalConfig);
     for (let t = 0; t <= 5; t++) {
         const card = document.querySelector(`.tier-item-card[data-tier="${t}"]`);
         const pill = document.getElementById(`tier-pill-${t}`);
@@ -832,43 +894,59 @@ async function launchMiniGame(gameType) {
         canvas.width = Math.min(window.innerWidth, 450);
         canvas.height = Math.min(window.innerHeight - 120, 550);
 
+        // Always show top-header Exit / Quit button for immediate exit & point banking
+        const exitBtn = document.getElementById('header-exit-btn');
+        if (exitBtn) exitBtn.style.display = 'inline-block';
+        const actionBtn = document.getElementById('game-action-btn');
+
         if (gameType === 1) {
             document.getElementById('game-modal-title').innerText = "Chakri Whirl & Rocket";
-            document.getElementById('game-action-btn').style.display = 'block';
-            document.getElementById('game-action-btn').innerText = "🚀 IGNITE!";
+            if (actionBtn) {
+                actionBtn.style.display = 'block';
+                actionBtn.innerText = "🚀 IGNITE!";
+            }
             currentGame = new window.ChakriGame(canvas, onGameFinished);
             currentGame.start();
         } else if (gameType === 2) {
             document.getElementById('game-modal-title').innerText = "Rangoli Color Symphony";
-            document.getElementById('game-action-btn').style.display = 'none';
+            if (actionBtn) actionBtn.style.display = 'none';
             currentGame = new window.RangoliGame(canvas, onGameFinished);
             currentGame.start();
         } else if (gameType === 3) {
             document.getElementById('game-modal-title').innerText = "Mithai Drop Catcher";
-            document.getElementById('game-action-btn').style.display = 'none';
+            if (actionBtn) actionBtn.style.display = 'none';
             currentGame = new window.MithaiGame(canvas, onGameFinished);
             currentGame.start();
         } else if (gameType === 4) {
             document.getElementById('game-modal-title').innerText = "Multiplayer Ludo (2–8 Players)";
-            document.getElementById('game-action-btn').style.display = 'block';
-            document.getElementById('game-action-btn').innerText = "🎲 ROLL DICE";
-            const exitBtn = document.getElementById('header-exit-btn');
-            if (exitBtn) exitBtn.style.display = 'inline-block';
+            if (actionBtn) {
+                actionBtn.style.display = 'block';
+                actionBtn.innerText = "🎲 ROLL DICE";
+            }
             currentGame = new window.LudoGame(canvas, onGameFinished);
             currentGame.start();
         } else if (gameType === 5) {
             document.getElementById('game-modal-title').innerText = "Connect 4 (Gravity 4-in-a-Row)";
-            document.getElementById('game-action-btn').style.display = 'none';
+            if (actionBtn) {
+                actionBtn.style.display = 'block';
+                actionBtn.innerText = "🏳️ FORFEIT / EXIT";
+            }
             currentGame = new window.Connect4Game(canvas, onGameFinished);
             currentGame.start();
         } else if (gameType === 6) {
             document.getElementById('game-modal-title').innerText = "2048 Satoshis Merge";
-            document.getElementById('game-action-btn').style.display = 'none';
+            if (actionBtn) {
+                actionBtn.style.display = 'block';
+                actionBtn.innerText = "💾 BANK SCORE & EXIT";
+            }
             currentGame = new window.Game2048(canvas, onGameFinished);
             currentGame.start();
         } else if (gameType === 7) {
             document.getElementById('game-modal-title').innerText = "Crypto Wordle (5 Letters)";
-            document.getElementById('game-action-btn').style.display = 'none';
+            if (actionBtn) {
+                actionBtn.style.display = 'block';
+                actionBtn.innerText = "✅ SUBMIT GUESS / EXIT";
+            }
             currentGame = new window.WordleGame(canvas, onGameFinished);
             currentGame.start();
         }

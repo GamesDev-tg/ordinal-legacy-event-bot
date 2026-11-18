@@ -294,9 +294,16 @@ def claim_shubh_refill(telegram_id: int) -> dict:
                 raise HTTPException(status_code=404, detail="User not found")
                 
             from app.database import get_all_admin_ids
+            from app.festival_engine import get_active_festival, get_festival_config
+            active_fest = get_active_festival()
+            cfg = get_festival_config(active_fest)
+            refill_title = cfg.get("refill_title", "Daily Booster")
+            stamina_name = cfg.get("stamina_name", "Energy")
+            currency_name = cfg.get("currency_name", "Sparks")
+
             is_admin_user = (telegram_id in get_all_admin_ids())
             if not is_admin_user and user["shubh_refill_date"] == today_str:
-                raise HTTPException(status_code=400, detail="You have already claimed today's Shubh Muhurat refill! Come back tomorrow.")
+                raise HTTPException(status_code=400, detail=f"You have already claimed today's {refill_title}! Come back tomorrow.")
                 
             current_wicks = user["diya_wicks"]
             new_wicks = min(settings.STAMINA_BANK_CAP, current_wicks + 5)
@@ -313,11 +320,12 @@ def claim_shubh_refill(telegram_id: int) -> dict:
             conn.execute("UPDATE community_state SET total_sparks = total_sparks + ? WHERE id = 1", (bonus_points,))
             comm = conn.execute("SELECT total_sparks FROM community_state WHERE id = 1").fetchone()
             comm_total = comm["total_sparks"] if comm else 0
-            new_stage, _ = get_stage_info(comm_total)
+            new_stage, _ = get_stage_info(comm_total, active_fest)
             conn.execute("UPDATE community_state SET current_stage = ? WHERE id = 1", (new_stage,))
     finally:
         conn.close()
     
+    msg_icon = "⚡" if active_fest == "arcade" else ("🎄" if active_fest == "christmas" else "✨")
     return {
         "success": True,
         "wicks_added": added_wicks,
@@ -325,7 +333,7 @@ def claim_shubh_refill(telegram_id: int) -> dict:
         "points_added": bonus_points,
         "points_total": new_points,
         "tier_level": new_tier,
-        "message": f"✨ Shubh Muhurat Blessing! Received +{added_wicks} Diya Wicks and +{bonus_points} Festive Sparks! Score: {new_points} Pts."
+        "message": f"{msg_icon} {refill_title}! Received +{added_wicks} {stamina_name} and +{bonus_points} {currency_name}! Score: {new_points} Pts."
     }
 
 def start_game_session(telegram_id: int, game_type: int) -> dict:

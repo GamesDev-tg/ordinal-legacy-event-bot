@@ -1406,6 +1406,9 @@ async def handle_bot_message(message: Dict[str, Any]):
             arcade_kb = {
                 "inline_keyboard": [
                     [
+                        {"text": "🚀 Open Arcade Arena (Mini-App)", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}
+                    ],
+                    [
                         {"text": "🎲 Play Ludo (2–8P)", "callback_data": f"ludo_prompt:{user_id}"},
                         {"text": "🔴 Connect 4", "callback_data": f"c4_prompt:{user_id}"}
                     ],
@@ -1419,10 +1422,10 @@ async def handle_bot_message(message: Dict[str, Any]):
                     ],
                     [
                         {"text": "🪙 Satoshi Flip", "callback_data": f"play_coin_ai:{user_id}"},
-                        {"text": "👥 Create PvP Duel", "callback_data": f"menu_pvp:{user_id}"}
+                        {"text": "⚡ Daily Booster", "callback_data": f"cmd_shubh:{user_id}"}
                     ],
                     [
-                        {"text": "📊 My Stats & Rank", "callback_data": f"cmd_mydata:{user_id}"},
+                        {"text": "👥 Squad Invite Link", "callback_data": f"cmd_shagun:{user_id}"},
                         {"text": "🏆 Top Leaderboard", "callback_data": f"cmd_top:{user_id}"}
                     ]
                 ]
@@ -1540,34 +1543,61 @@ async def handle_bot_message(message: Dict[str, Any]):
             ).fetchone()
         conn.close()
         
+        from app.festival_engine import get_active_festival, get_festival_config
+        active_fest = get_active_festival()
         sparks_total = comm["total_sparks"] if comm else 0
-        stage_num, stage_name = get_stage_info(sparks_total)
+        stage_num, stage_name = get_stage_info(sparks_total, active_fest)
         pts = u["points_total"] if u else 0
         t_lvl = u["tier_level"] if u else 0
         wicks = u["diya_wicks"] if u else 10
         ref_pts = u["referral_points_earned"] if u else 0
-        tier_name = get_tier_name(t_lvl)
+        tier_name = get_tier_name(t_lvl, active_fest)
         if comp_row:
             comp_display = comp_row.get('first_name') or comp_row.get('username') or f"Player {comp_row.get('telegram_id', '')}"
-            companion_text = f"*{escape_md(comp_display)}* ({get_tier_name(comp_row['tier_level'])})"
+            companion_text = f"*{escape_md(comp_display)}* ({get_tier_name(comp_row['tier_level'], active_fest)})"
         else:
             companion_text = "_None yet (Invite 1 friend!)_"
         
-        status_msg = (
-            f"🪔 *Maha Deepotsav Status Report*\n\n"
-            f"🔥 *Community Sparks*: `{sparks_total:,}` / `{settings.GLOBAL_MILESTONE_TARGET:,}`\n"
-            f"🌟 *Current Stage*: {stage_name}\n\n"
-            f"👤 *Your Profile*:\n"
-            f"• Points: *{pts}*\n"
-            f"• Tier: *{tier_name}* (Tier {t_lvl})\n"
-            f"• Diya Wicks: *{wicks}/10*\n"
-            f"• Diya Companion: {companion_text}\n"
-            f"• Shagun Points: *{ref_pts}/{settings.MAX_REFERRAL_POINTS}*"
-        )
+        if active_fest == "arcade":
+            status_msg = (
+                f"🕹️ *Ordinal Legacy Arcade Power Core Status Report*\n\n"
+                f"⚡ *Global Power Core*: `{sparks_total:,}` / `{settings.GLOBAL_MILESTONE_TARGET:,}` Energy\n"
+                f"🌟 *Core Status*: {stage_name}\n\n"
+                f"👤 *Your Dossier*:\n"
+                f"• Sparks Earned: *{pts}*\n"
+                f"• Rank Tier: *{tier_name}* (Tier {t_lvl})\n"
+                f"• Energy Stamina: *{wicks}/10*\n"
+                f"• Gaming Duo: {companion_text}\n"
+                f"• Squad Recruits: *{ref_pts}/{settings.MAX_REFERRAL_POINTS}*"
+            )
+        elif active_fest == "christmas":
+            status_msg = (
+                f"🎄 *Winter Wonderland Tree Status*\n\n"
+                f"❄️ *Tree Snowflakes*: `{sparks_total:,}` / `{settings.GLOBAL_MILESTONE_TARGET:,}`\n"
+                f"🌟 *Current Stage*: {stage_name}\n\n"
+                f"👤 *Your Profile*:\n"
+                f"• Points: *{pts}*\n"
+                f"• Tier: *{tier_name}* (Tier {t_lvl})\n"
+                f"• Snow Energy: *{wicks}/10*\n"
+                f"• Holiday Partner: {companion_text}\n"
+                f"• Gift Points: *{ref_pts}/{settings.MAX_REFERRAL_POINTS}*"
+            )
+        else:
+            status_msg = (
+                f"🪔 *Maha Deepotsav Status Report*\n\n"
+                f"🔥 *Community Sparks*: `{sparks_total:,}` / `{settings.GLOBAL_MILESTONE_TARGET:,}`\n"
+                f"🌟 *Current Stage*: {stage_name}\n\n"
+                f"👤 *Your Profile*:\n"
+                f"• Points: *{pts}*\n"
+                f"• Tier: *{tier_name}* (Tier {t_lvl})\n"
+                f"• Diya Wicks: *{wicks}/10*\n"
+                f"• Diya Companion: {companion_text}\n"
+                f"• Shagun Points: *{ref_pts}/{settings.MAX_REFERRAL_POINTS}*"
+            )
         await send_telegram_message(chat_id, status_msg)
         return
 
-    elif text.startswith("/shagun"):
+    elif text.startswith(("/shagun", "/squad", "/invite")):
         invite_link = f"https://t.me/{settings.BOT_USERNAME}?start=shagun_{user_id}"
         conn = get_db_connection()
         u = conn.execute("SELECT points_total, referral_points_earned FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
@@ -1580,7 +1610,31 @@ async def handle_bot_message(message: Dict[str, Any]):
         total_friends_count = conn.execute("SELECT COUNT(id) as c FROM referrals WHERE referrer_id = ?", (user_id,)).fetchone()["c"]
         conn.close()
 
+        from app.festival_engine import get_active_festival
+        active_fest = get_active_festival()
         ref_points = u["referral_points_earned"] if u else 0
+
+        if active_fest == "arcade":
+            if comp_row:
+                c_name = f"@{comp_row['username']}" if comp_row['username'] else (comp_row['first_name'] or f"Player {comp_row['telegram_id']}")
+                comp_status = f"👥 *Gaming Duo*: *{escape_md(c_name)}* (Bonded & Active)"
+            else:
+                comp_status = "👥 *Gaming Duo*: _None yet_ (Invite your 1st friend to form Duo!)"
+
+            shagun_msg = (
+                f"🎁 *Your Arcade Squad Invite Link:*\n`{invite_link}`\n\n"
+                f"{comp_status}\n"
+                f"• *Squad Recruits*: *{total_friends_count}* joined\n"
+                f"• *Referral Points*: *{ref_points}/{settings.MAX_REFERRAL_POINTS} Pts* earned\n\n"
+                f"Share your link with friends! Each recruit awards you +1 point towards milestone tier rewards, and your 1st Duo partner unlocks daily free Energy transfers!"
+            )
+            kb_buttons = []
+            if comp_row:
+                kb_buttons.append([{"text": "⚡ Send Free Energy to Duo", "callback_data": f"gift_companion_wick:{user_id}"}])
+            kb_buttons.append([{"text": "📲 Share Invite on Telegram", "url": f"https://t.me/share/url?url={invite_link}&text=Join%20my%20squad%20in%20the%20Ordinal%20Legacy%20Arcade%20Arena!"}])
+            await send_telegram_message(chat_id, shagun_msg, {"inline_keyboard": kb_buttons})
+            return
+
         if comp_row:
             c_name = f"@{comp_row['username']}" if comp_row['username'] else (comp_row['first_name'] or f"Player {comp_row['telegram_id']}")
             comp_status = f"🤝 *Diya Companion*: *{escape_md(c_name)}* (Bonded & Active)"
@@ -1665,10 +1719,10 @@ async def handle_bot_message(message: Dict[str, Any]):
         await send_telegram_message(chat_id, res["message"])
         return
 
-    elif text == "/shubh":
+    elif text in ("/shubh", "/refill", "/booster"):
         try:
             res = claim_shubh_refill(user_id)
-            await send_telegram_message(chat_id, f"✨ *{res['message']}*")
+            await send_telegram_message(chat_id, f"*{res['message']}*")
         except Exception as e:
             await send_telegram_message(chat_id, f"⚠️ {getattr(e, 'detail', str(e))}")
         return
@@ -1872,6 +1926,9 @@ async def handle_bot_message(message: Dict[str, Any]):
         arcade_kb = {
             "inline_keyboard": [
                 [
+                    {"text": "🚀 Open Arcade Arena (Mini-App)", "web_app": {"url": f"{settings.MINI_APP_URL}?tg_id={user_id}"}}
+                ],
+                [
                     {"text": "🎲 Play Ludo (2–8P)", "callback_data": f"ludo_prompt:{user_id}"},
                     {"text": "🔴 Connect 4", "callback_data": f"c4_prompt:{user_id}"}
                 ],
@@ -1885,10 +1942,10 @@ async def handle_bot_message(message: Dict[str, Any]):
                 ],
                 [
                     {"text": "🪙 Satoshi Flip", "callback_data": f"play_coin_ai:{user_id}"},
-                    {"text": "👥 Create PvP Duel", "callback_data": f"menu_pvp:{user_id}"}
+                    {"text": "⚡ Daily Booster", "callback_data": f"cmd_shubh:{user_id}"}
                 ],
                 [
-                    {"text": "📊 My Stats & Rank", "callback_data": f"cmd_mydata:{user_id}"},
+                    {"text": "👥 Squad Invite Link", "callback_data": f"cmd_shagun:{user_id}"},
                     {"text": "🏆 Top Leaderboard", "callback_data": f"cmd_top:{user_id}"}
                 ]
             ]
@@ -3101,23 +3158,62 @@ async def handle_bot_message(message: Dict[str, Any]):
         return
 
     elif text == "/tiers":
-        ladder_text = (
-            f"🏆 *Maha Deepotsav Milestone Rewards Ladder*\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🌟 *Tier 0: Diya Spark (0–499 Pts)* — Welcome Badge\n"
-            f"🪙 *Tier 1: Diya Sevak (500 Pts)* — 🪙 Coins\n"
-            f"🔮 *Tier 2: Rangoli Artisan (1,500 Pts)* — 🔮 Pearl\n"
-            f"🎟 *Tier 3: Spark Master (2,750 Pts)* — 🎟 Ticket\n"
-            f"🐾 *Tier 4: Deep Mahant (4,000 Pts)* — 🐾 Pet\n"
-            f"👑 *Tier 5: Akhand Sovereign (5,000+ Pts)* — 🏆 ALL REWARDS: 🪙 Coins + 🔮 Pearl + 🎟 Ticket + 🐾 Pet!\n\n"
-            f"🔥 *Community 200,000 Sparks (5 Segments):*\n"
-            f"• 40,000 Sparks — Segment 1 Clears 🪙 Coins\n"
-            f"• 80,000 Sparks — Segment 2 Clears 🔮 Pearls\n"
-            f"• 120,000 Sparks — Segment 3 Clears 🎟 Tickets\n"
-            f"• 160,000 Sparks — Segment 4 Clears 🐾 Pets\n"
-            f"• 200,000 Sparks — Segment 5 Clears All Combined Rewards!\n\n"
-            f"_Earn 1 to 3 hard sparks per mini-game run to ascend the ladder!_"
-        )
+        from app.festival_engine import get_active_festival
+        active_fest = get_active_festival()
+        if active_fest == "arcade":
+            ladder_text = (
+                f"🏆 *Ordinal Legacy Arcade Milestone Ladder*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🌟 *Tier 0: Arcade Rookie (0–499 Pts)* — Welcome Badge\n"
+                f"🕹️ *Tier 1: Pixel Warrior (500 Pts)* — 🪙 Coins\n"
+                f"🎯 *Tier 2: Combo Striker (1,500 Pts)* — 🔮 Pearl\n"
+                f"⚡ *Tier 3: High Score Master (2,750 Pts)* — 🎟 Ticket\n"
+                f"💎 *Tier 4: Cyber Grandmaster (4,000 Pts)* — 🐾 Pet\n"
+                f"👑 *Tier 5: Arcade Sovereign (5,000+ Pts)* — 🏆 ALL REWARDS: 🪙 Coins + 🔮 Pearl + 🎟 Ticket + 🐾 Pet!\n\n"
+                f"⚡ *Global Power Core 200,000 Energy (5 Stages):*\n"
+                f"• 40,000 Energy — Stage 1 Clears 🪙 Coins\n"
+                f"• 80,000 Energy — Stage 2 Clears 🔮 Pearls\n"
+                f"• 120,000 Energy — Stage 3 Clears 🎟 Tickets\n"
+                f"• 160,000 Energy — Stage 4 Clears 🐾 Pets\n"
+                f"• 200,000 Energy — Stage 5 Clears All Combined Rewards!\n\n"
+                f"_Earn 1 to 3 hard sparks per mini-game run to ascend the ladder!_"
+            )
+        elif active_fest == "christmas":
+            ladder_text = (
+                f"🏆 *Winter Wonderland Milestone Rewards Ladder*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🌟 *Tier 0: Snow Cadet (0–499 Pts)* — Welcome Badge\n"
+                f"⛄ *Tier 1: Frost Guardian (500 Pts)* — 🪙 Coins\n"
+                f"🌨️ *Tier 2: Blizzard Ranger (1,500 Pts)* — 🔮 Pearl\n"
+                f"❄️ *Tier 3: Ice Champion (2,750 Pts)* — 🎟 Ticket\n"
+                f"💎 *Tier 4: Polar Grandmaster (4,000 Pts)* — 🐾 Pet\n"
+                f"👑 *Tier 5: Winter Sovereign (5,000+ Pts)* — 🏆 ALL REWARDS: 🪙 Coins + 🔮 Pearl + 🎟 Ticket + 🐾 Pet!\n\n"
+                f"❄️ *Community 200,000 Snowflakes (5 Stages):*\n"
+                f"• 40,000 Snowflakes — Stage 1 Clears 🪙 Coins\n"
+                f"• 80,000 Snowflakes — Stage 2 Clears 🔮 Pearls\n"
+                f"• 120,000 Snowflakes — Stage 3 Clears 🎟 Tickets\n"
+                f"• 160,000 Snowflakes — Stage 4 Clears 🐾 Pets\n"
+                f"• 200,000 Snowflakes — Stage 5 Clears All Combined Rewards!\n\n"
+                f"_Earn 1 to 3 snowflakes per mini-game run to ascend the ladder!_"
+            )
+        else:
+            ladder_text = (
+                f"🏆 *Maha Deepotsav Milestone Rewards Ladder*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🌟 *Tier 0: Diya Spark (0–499 Pts)* — Welcome Badge\n"
+                f"🪙 *Tier 1: Diya Sevak (500 Pts)* — 🪙 Coins\n"
+                f"🔮 *Tier 2: Rangoli Artisan (1,500 Pts)* — 🔮 Pearl\n"
+                f"🎟 *Tier 3: Spark Master (2,750 Pts)* — 🎟 Ticket\n"
+                f"🐾 *Tier 4: Deep Mahant (4,000 Pts)* — 🐾 Pet\n"
+                f"👑 *Tier 5: Akhand Sovereign (5,000+ Pts)* — 🏆 ALL REWARDS: 🪙 Coins + 🔮 Pearl + 🎟 Ticket + 🐾 Pet!\n\n"
+                f"🔥 *Community 200,000 Sparks (5 Segments):*\n"
+                f"• 40,000 Sparks — Segment 1 Clears 🪙 Coins\n"
+                f"• 80,000 Sparks — Segment 2 Clears 🔮 Pearls\n"
+                f"• 120,000 Sparks — Segment 3 Clears 🎟 Tickets\n"
+                f"• 160,000 Sparks — Segment 4 Clears 🐾 Pets\n"
+                f"• 200,000 Sparks — Segment 5 Clears All Combined Rewards!\n\n"
+                f"_Earn 1 to 3 hard sparks per mini-game run to ascend the ladder!_"
+            )
         await send_telegram_message(chat_id, ladder_text)
         return
 
@@ -3144,9 +3240,11 @@ async def handle_bot_message(message: Dict[str, Any]):
             one_pt = conn.execute("SELECT COUNT(*) as c FROM game_sessions WHERE telegram_id = ? AND score_awarded = 1 AND is_valid = 1", (user_id,)).fetchone()["c"]
         conn.close()
         
+        from app.festival_engine import get_active_festival
+        active_fest = get_active_festival()
         tier = u["tier_level"]
         pts = u["points_total"]
-        tier_name = get_tier_name(tier)
+        tier_name = get_tier_name(tier, active_fest)
         g_name = settings.GHARANAS.get(u["gharana_id"], "Surya Gharana")
         
         # Build reward progression
@@ -3165,35 +3263,61 @@ async def handle_bot_message(message: Dict[str, Any]):
             comp_display = comp_row['first_name'] or comp_row['username'] or f"Player {comp_row['telegram_id']}"
             comp_str = f"*{escape_md(comp_display)}*"
         else:
-            comp_str = "_None yet (Use /shagun)_"
+            comp_str = "_None yet (Use /squad)_" if active_fest == "arcade" else "_None yet (Use /shagun)_"
         today_str = datetime.date.today().isoformat()
-        shubh_status = "✅ Claimed today" if u["shubh_refill_date"] == today_str else "✨ Available now (/shubh)"
+        shubh_status = "✅ Claimed today" if u["shubh_refill_date"] == today_str else ("⚡ Available now (/refill)" if active_fest == "arcade" else "✨ Available now (/shubh)")
         
         safe_fname = escape_md(first_name)
         u_handle = f"@{username}" if username else "None"
-        mydata_msg = (
-            f"👤 *PLAYER EVENT DOSSIER: {safe_fname}*\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🆔 *Telegram ID*: `{user_id}`\n"
-            f"🏷 *Username*: {u_handle}\n"
-            f"🏰 *Initiated House*: *{g_name}*\n"
-            f"🛡 *Official Gate*: {'✅ Verified Member' if u['joined_groups'] else '⚠️ Unverified'}\n\n"
-            f"🔥 *Sparks Contributed*: *{pts:,} Sparks*\n"
-            f"🏆 *Current Rank Tier*: *{tier_name} (Tier {tier})*\n\n"
-            f"🎁 *Reward Milestones:*\n"
-            f"{rew_text}\n\n"
-            f"🪔 *Diya Wicks*: *{u['diya_wicks']}/10*\n"
-            f"⚡ *Stamina Speed*: 1 wick every 1–3 mins randomly\n"
-            f"✨ *Daily Shubh Muhurat*: {shubh_status}\n\n"
-            f"🎮 *Festival Gameplay:*\n"
-            f"• Completed Runs: *{total_runs}*\n"
-            f"  - Flawless (3 Pts): `{three_pts}`\n"
-            f"  - Skilled (2 Pts): `{two_pts}`\n"
-            f"  - Base (1 Pt): `{one_pt}`\n\n"
-            f"🤝 *Community Bonds:*\n"
-            f"• Diya Companion: {comp_str}\n"
-            f"• Friends Invited: *{total_refs}* ({u['referral_points_earned']}/{settings.MAX_REFERRAL_POINTS} pts)"
-        )
+
+        if active_fest == "arcade":
+            mydata_msg = (
+                f"👤 *PLAYER ARCADE DOSSIER: {safe_fname}*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🆔 *Telegram ID*: `{user_id}`\n"
+                f"🏷 *Username*: {u_handle}\n"
+                f"⚔️ *Affiliated Clan*: *{g_name.replace('Gharana', 'Clan')}*\n"
+                f"🛡 *Official Gate*: {'✅ Verified Gamer' if u['joined_groups'] else '⚠️ Unverified'}\n\n"
+                f"⚡ *Arcade Sparks Contributed*: *{pts:,} Pts*\n"
+                f"🏆 *Current Rank Tier*: *{tier_name} (Tier {tier})*\n\n"
+                f"🎁 *Reward Milestones:*\n"
+                f"{rew_text}\n\n"
+                f"🔋 *Energy Stamina*: *{u['diya_wicks']}/10*\n"
+                f"⚡ *Stamina Speed*: 1 energy every 1–3 mins randomly\n"
+                f"🚀 *Daily Booster*: {shubh_status}\n\n"
+                f"🎮 *Arcade Gameplay:*\n"
+                f"• Completed Runs: *{total_runs}*\n"
+                f"  - Flawless (3 Pts): `{three_pts}`\n"
+                f"  - Skilled (2 Pts): `{two_pts}`\n"
+                f"  - Base (1 Pt): `{one_pt}`\n\n"
+                f"👥 *Squad & Duo Bonds:*\n"
+                f"• Gaming Duo: {comp_str}\n"
+                f"• Squad Recruits: *{total_refs}* ({u['referral_points_earned']}/{settings.MAX_REFERRAL_POINTS} pts)"
+            )
+        else:
+            mydata_msg = (
+                f"👤 *PLAYER EVENT DOSSIER: {safe_fname}*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🆔 *Telegram ID*: `{user_id}`\n"
+                f"🏷 *Username*: {u_handle}\n"
+                f"🏰 *Initiated House*: *{g_name}*\n"
+                f"🛡 *Official Gate*: {'✅ Verified Member' if u['joined_groups'] else '⚠️ Unverified'}\n\n"
+                f"🔥 *Sparks Contributed*: *{pts:,} Sparks*\n"
+                f"🏆 *Current Rank Tier*: *{tier_name} (Tier {tier})*\n\n"
+                f"🎁 *Reward Milestones:*\n"
+                f"{rew_text}\n\n"
+                f"🪔 *Diya Wicks*: *{u['diya_wicks']}/10*\n"
+                f"⚡ *Stamina Speed*: 1 wick every 1–3 mins randomly\n"
+                f"✨ *Daily Shubh Muhurat*: {shubh_status}\n\n"
+                f"🎮 *Festival Gameplay:*\n"
+                f"• Completed Runs: *{total_runs}*\n"
+                f"  - Flawless (3 Pts): `{three_pts}`\n"
+                f"  - Skilled (2 Pts): `{two_pts}`\n"
+                f"  - Base (1 Pt): `{one_pt}`\n\n"
+                f"🤝 *Community Bonds:*\n"
+                f"• Diya Companion: {comp_str}\n"
+                f"• Friends Invited: *{total_refs}* ({u['referral_points_earned']}/{settings.MAX_REFERRAL_POINTS} pts)"
+            )
         from app.festival_engine import get_active_festival
         active_fest = get_active_festival()
         if active_fest == "arcade":
@@ -3614,39 +3738,93 @@ async def handle_bot_message(message: Dict[str, Any]):
         return
 
     elif text in ("/help", "/commands", "/menu"):
-        help_text = (
-            f"👑 <b>ORDINAL LEGACY EVENT BOT: COMMAND GUIDE</b>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"🕹️ <b>Arcade & Multiplayer Mini-Games:</b>\n"
-            f"• `/ludo [2-8]` — Play 2 to 8 Player Ludo with AI bots or friends in chat\n"
-            f"• `/c4` or `/connect4` — Play Gravity Connect 4-in-a-Row vs AI or PvP\n"
-            f"• `/2048` — Slide and merge Satoshi blocks to 2048 & 4096\n"
-            f"• `/wordle` — Guess the 5-letter crypto/blockchain word in 6 tries\n"
-            f"• `/duel` or `/dice` — Quick dice roll showdown vs AI or group challenge\n"
-            f"• `/rps` — Elemental Clash (🔥 Fire, 💧 Water, 🌿 Earth)\n"
-            f"• `/flip` or `/coin` — Satoshi Coin Flip (🪙 Heads or 🌕 Tails)\n"
-            f"• `/arcade` — View complete arcade arena & interactive shortcuts\n\n"
-            f"🎪 <b>Seasonal Festival Themes:</b>\n"
-            f"• `/festival` — Check active festival theme (Arcade, Diwali, Christmas)\n\n"
-            f"🪔 <b>Festive Mini-Games & Daily Perks:</b>\n"
-            f"• `/play` — Open festival games menu (in chat or Mini-App)\n"
-            f"• `/chakri` — Spin Chakri Whirl in chat (1 wick, 1–3 sparks)\n"
-            f"• `/rangoli` — Color Rangoli petals in chat (1 wick, 1–3 sparks)\n"
-            f"• `/mithai` — Feast on Mithai drop in chat (1 wick, 1–3 sparks)\n"
-            f"• `/shubh` — Claim daily Shubh Muhurat refill (+5 wicks)\n"
-            f"• `/gift` — Send 1 free daily Diya Wick to your companion\n"
-            f"• `/clash` — Participate in Gharana house clash\n\n"
-            f"📊 <b>Account, Tiers & Leaderboards:</b>\n"
-            f"• `/mydata` — View your points, tier rank, wicks, and unlocked rewards\n"
-            f"• `/top` — View Top 10 Lampbearers on the live leaderboard\n"
-            f"• `/status` — View Akhand Jyoti community sparks & stage progression\n"
-            f"• `/house` — View your Gharana house standing and average points\n"
-            f"• `/boost` — View rotating 2x Gharana Surge schedule and active house\n"
-            f"• `/tiers` — View milestone ladder & tier perks (Coins, Pearl, Ticket, Pet)\n"
-            f"• `/shagun` — Get your companion referral link to invite friends\n"
-            f"• `/stats` — View global event metrics and player statistics\n"
-            f"• `/help` — Display this command menu"
-        )
+        from app.festival_engine import get_active_festival
+        active_fest = get_active_festival()
+        if active_fest == "arcade":
+            help_text = (
+                f"👑 <b>ORDINAL LEGACY ARCADE: COMMAND GUIDE</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"🕹️ <b>Arcade Mini-Games & Duels:</b>\n"
+                f"• `/ludo [2-8]` — Play 2 to 8 Player Ludo with AI bots or friends in chat\n"
+                f"• `/c4` or `/connect4` — Gravity Connect 4-in-a-Row vs AI or PvP\n"
+                f"• `/2048` — Slide and merge Satoshi blocks to 2048 & 4096\n"
+                f"• `/wordle` — Guess the 5-letter crypto/blockchain word in 6 tries\n"
+                f"• `/duel` or `/dice` — Quick dice roll showdown vs AI or group challenge\n"
+                f"• `/rps` — Elemental Clash (🔥 Fire, 💧 Water, 🌿 Earth)\n"
+                f"• `/flip` or `/coin` — Satoshi Coin Flip (🪙 Heads or 🌕 Tails)\n"
+                f"• `/arcade` or `/play` — Open interactive Retro Arcade launcher\n\n"
+                f"⚡ <b>Energy Stamina & Squad Recruitment:</b>\n"
+                f"• `/refill` — Claim daily Energy Booster charge (+5 Energy)\n"
+                f"• `/squad` or `/invite` — Get your squad referral link to recruit friends\n"
+                f"• `/gift` — Send 1 free daily Energy to your bonded Gaming Duo\n\n"
+                f"📊 <b>Account, Tiers & Leaderboards:</b>\n"
+                f"• `/mydata` — View your gamer stats, tier rank, energy, and perks\n"
+                f"• `/top` — View Top 10 champions on the live leaderboard\n"
+                f"• `/status` — View Arcade Power Core progression and milestones\n"
+                f"• `/tiers` — View Arcade Milestone Ladder (Rookie to Sovereign)\n"
+                f"• `/clans` — View clan standings and average member points\n"
+                f"• `/stats` — View global event metrics and active player stats\n"
+                f"• `/festival` — Check seasonal festival theme status\n"
+                f"• `/help` — Display this command menu"
+            )
+        elif active_fest == "christmas":
+            help_text = (
+                f"🎄 <b>WINTER WONDERLAND: COMMAND GUIDE</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"❄️ <b>Winter Mini-Games & Duels:</b>\n"
+                f"• `/ludo` — 2 to 8 Player Ludo arena\n"
+                f"• `/c4` — Connect 4 snow showdown\n"
+                f"• `/2048` — Combine crypto blocks\n"
+                f"• `/wordle` — Holiday wordle puzzle\n"
+                f"• `/duel` — Snowball dice duel\n"
+                f"• `/rps` — Frost elemental clash\n"
+                f"• `/play` — Holiday wonderland game hub\n\n"
+                f"🎁 <b>Holiday Gifts & Friends:</b>\n"
+                f"• `/refill` or `/shubh` — Claim Santa's daily gift (+5 Snow Energy)\n"
+                f"• `/gift` — Send 1 free daily energy to your holiday partner\n"
+                f"• `/squad` or `/shagun` — Invite friends to decorate the Christmas tree\n\n"
+                f"📊 <b>Stats & Tiers:</b>\n"
+                f"• `/mydata` — View your holiday dossier & rewards\n"
+                f"• `/top` — Top winter champions leaderboard\n"
+                f"• `/status` — Christmas tree progress\n"
+                f"• `/tiers` — Holiday rewards ladder\n"
+                f"• `/festival` — Festival switcher\n"
+                f"• `/help` — Display this command menu"
+            )
+        else:
+            help_text = (
+                f"👑 <b>ORDINAL LEGACY EVENT BOT: COMMAND GUIDE</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                f"🕹️ <b>Arcade & Multiplayer Mini-Games:</b>\n"
+                f"• `/ludo [2-8]` — Play 2 to 8 Player Ludo with AI bots or friends in chat\n"
+                f"• `/c4` or `/connect4` — Play Gravity Connect 4-in-a-Row vs AI or PvP\n"
+                f"• `/2048` — Slide and merge Satoshi blocks to 2048 & 4096\n"
+                f"• `/wordle` — Guess the 5-letter crypto/blockchain word in 6 tries\n"
+                f"• `/duel` or `/dice` — Quick dice roll showdown vs AI or group challenge\n"
+                f"• `/rps` — Elemental Clash (🔥 Fire, 💧 Water, 🌿 Earth)\n"
+                f"• `/flip` or `/coin` — Satoshi Coin Flip (🪙 Heads or 🌕 Tails)\n"
+                f"• `/arcade` — View complete arcade arena & interactive shortcuts\n\n"
+                f"🎪 <b>Seasonal Festival Themes:</b>\n"
+                f"• `/festival` — Check active festival theme (Arcade, Diwali, Christmas)\n\n"
+                f"🪔 <b>Festive Mini-Games & Daily Perks:</b>\n"
+                f"• `/play` — Open festival games menu (in chat or Mini-App)\n"
+                f"• `/chakri` — Spin Chakri Whirl in chat (1 wick, 1–3 sparks)\n"
+                f"• `/rangoli` — Color Rangoli petals in chat (1 wick, 1–3 sparks)\n"
+                f"• `/mithai` — Feast on Mithai drop in chat (1 wick, 1–3 sparks)\n"
+                f"• `/shubh` — Claim daily Shubh Muhurat refill (+5 wicks)\n"
+                f"• `/gift` — Send 1 free daily Diya Wick to your companion\n"
+                f"• `/clash` — Participate in Gharana house clash\n\n"
+                f"📊 <b>Account, Tiers & Leaderboards:</b>\n"
+                f"• `/mydata` — View your points, tier rank, wicks, and unlocked rewards\n"
+                f"• `/top` — View Top 10 Lampbearers on the live leaderboard\n"
+                f"• `/status` — View Akhand Jyoti community sparks & stage progression\n"
+                f"• `/house` — View your Gharana house standing and average points\n"
+                f"• `/boost` — View rotating 2x Gharana Surge schedule and active house\n"
+                f"• `/tiers` — View milestone ladder & tier perks (Coins, Pearl, Ticket, Pet)\n"
+                f"• `/shagun` — Get your companion referral link to invite friends\n"
+                f"• `/stats` — View global event metrics and player statistics\n"
+                f"• `/help` — Display this command menu"
+            )
         await send_telegram_message(chat_id, help_text)
         return
 

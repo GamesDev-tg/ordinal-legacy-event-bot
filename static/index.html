@@ -3,16 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Ordinal Legacy — Maha Deepotsav</title>
+    <title id="app-page-title">Ordinal Legacy — Arcade Arena</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
-<body>
+<body class="theme-arcade">
 
     <header class="festival-header" id="festival-header">
         <div class="brand-title" id="app-brand-title">
-            <span id="app-brand-icon">🪔</span>
-            <span id="app-brand-text">ORDINAL LEGACY</span>
+            <span id="app-brand-icon">🕹️</span>
+            <span id="app-brand-text">ORDINAL ARCADE</span>
         </div>
         <div style="display:flex; align-items:center; gap:8px;">
             <div id="web-user-chip" style="display:none; align-items:center; gap:4px; background:#1E293B; border:1px solid #334155; border-radius:16px; padding:4px 10px; font-size:0.75rem; color:#F59E0B; cursor:pointer;" onclick="logoutWebUser()" title="Logged in on Web. Tap to logout/switch">
@@ -22,7 +22,7 @@
             </div>
             <button id="audio-toggle-btn" style="background:transparent; border:none; font-size:1.2rem; cursor:pointer;">🔊</button>
             <div class="stamina-badge" id="stamina-badge-btn" style="cursor:pointer;" title="Tap to refresh stamina">
-                <span id="stamina-icon">🔥</span>
+                <span id="stamina-icon">⚡</span>
                 <span id="user-wicks">10/10</span>
                 <span id="wick-regen-timer" style="font-size:0.7rem; color:#FDE047; margin-left:4px;"></span>
             </div>
@@ -31,15 +31,15 @@
 
     <main id="tab-arena" class="tab-view">
         <div class="akhand-diya-card" id="beacon-card">
-            <div class="diya-flame-icon" id="beacon-icon">🪔</div>
-            <div id="stage-badge" class="stage-badge">Stage 0: Lighting the Wick</div>
-            <div class="milestone-title" id="beacon-title">Maha Akhand Jyoti</div>
+            <div class="diya-flame-icon" id="beacon-icon">🕹️</div>
+            <div id="stage-badge" class="stage-badge">Stage 0: Power Core Booting Up</div>
+            <div class="milestone-title" id="beacon-title">Arcade Power Core</div>
             <div class="sparks-count" id="sparks-display">0 Sparks</div>
             <div class="progress-track">
                 <div class="progress-fill" id="flame-progress"></div>
             </div>
             <div class="progress-labels">
-                <span id="community-progress-label">Community Progress</span>
+                <span id="community-progress-label">Global Power Core</span>
                 <span id="progress-pct">0%</span>
                 <span id="beacon-target-label">200,000 Target</span>
             </div>
@@ -47,9 +47,9 @@
 
         <div class="gharana-boost-card" id="gharana-boost-card">
             <div class="boost-left">
-                <span class="boost-icon" id="boost-gharana-icon">☀️</span>
+                <span class="boost-icon" id="boost-gharana-icon">⚡</span>
                 <div>
-                    <div class="boost-title" id="boost-gharana-title">Surya Gharana 2X Surge</div>
+                    <div class="boost-title" id="boost-gharana-title">Clan Surge 2X Multiplier</div>
                     <div class="boost-subtitle" id="boost-gharana-subtitle">10-minute rotating team bonus</div>
                 </div>
             </div>
@@ -61,61 +61,34 @@
 
         <div class="shubh-refill-card" id="shubh-card">
             <div style="display:flex; align-items:center; gap:12px;">
-                <span id="shubh-icon" style="font-size:1.8rem;">✨</span>
+                <span id="shubh-icon" style="font-size:1.8rem;">⚡</span>
                 <div>
-                    <div style="font-weight:700; color:var(--gold); font-size:0.9rem;" id="shubh-refill-title">Shubh Muhurat Refill</div>
-                    <div style="font-size:0.75rem; color:#94A3B8;" id="shubh-status-txt">Daily +5 Diya Wicks Blessing</div>
+                    <div style="font-weight:700; color:var(--gold); font-size:0.9rem;" id="shubh-refill-title">Daily Arcade Booster</div>
+                    <div style="font-size:0.75rem; color:#94A3B8;" id="shubh-status-txt">Daily +5 Energy Power-Up Charge</div>
                 </div>
             </div>
-            <button class="play-action-btn" id="shubh-action-btn" onclick="claimShubhRefill()">CLAIM +5</button>
+            <button class="play-action-btn" id="shubh-action-btn" onclick="claimShubhRefill()">CLAIM +5 ⚡</button>
         </div>
 
         <div class="user-profile-strip">
             <div class="user-tag">
-                <span class="user-name" id="user-name">Lampbearer</span>
-                <span class="user-tier" id="user-tier-label">Diya Spark (Tier 0)</span>
+                <span class="user-name" id="user-name">Arcade Challenger</span>
+                <span class="user-tier" id="user-tier-label">Arcade Rookie (Tier 0)</span>
             </div>
             <div class="user-score-box">
                 <div class="user-score-val" id="user-points">0 Pts</div>
-                <div style="font-size:0.7rem; color:#94A3B8;" id="user-gharana">Surya Gharana</div>
+                <div style="font-size:0.7rem; color:#94A3B8;" id="user-gharana">Surya Clan</div>
             </div>
         </div>
 
         <div class="companion-card" id="companion-container"></div>
 
         <div class="section-heading" id="games-section-heading">
-            <span id="games-heading-title">Festive Mini-Games (1–3 Pts)</span>
-            <span id="games-cost-badge" style="font-size:0.75rem; color:#F59E0B;">Cost: 1 Wick</span>
+            <span id="games-heading-title">Retro Arcade Games (1–3 Sparks)</span>
+            <span id="games-cost-badge" style="font-size:0.75rem; color:#F59E0B;">Cost: 1 Energy</span>
         </div>
 
         <div class="game-grid" id="game-grid">
-            <div class="game-card" data-game-id="1" onclick="launchMiniGame(1)">
-                <div class="game-icon-frame">🚀</div>
-                <div class="game-info">
-                    <div class="game-name">Chakri Whirl & Rocket</div>
-                    <div class="game-desc">Precision timing wheel • 1 to 3 sparks</div>
-                </div>
-                <button class="play-action-btn">PLAY</button>
-            </div>
-
-            <div class="game-card" data-game-id="2" onclick="launchMiniGame(2)">
-                <div class="game-icon-frame">🌸</div>
-                <div class="game-info">
-                    <div class="game-name">Rangoli Color Symphony</div>
-                    <div class="game-desc">Sacred petal memory sequence • 1 to 3 sparks</div>
-                </div>
-                <button class="play-action-btn">PLAY</button>
-            </div>
-
-            <div class="game-card" data-game-id="3" onclick="launchMiniGame(3)">
-                <div class="game-icon-frame">🍬</div>
-                <div class="game-info">
-                    <div class="game-name">Mithai Drop Catcher</div>
-                    <div class="game-desc">20s sweet catch & hazard dodge • 1 to 3 sparks</div>
-                </div>
-                <button class="play-action-btn">PLAY</button>
-            </div>
-
             <div class="game-card" data-game-id="4" onclick="launchMiniGame(4)" style="border:1px solid rgba(245, 158, 11, 0.3); background:linear-gradient(135deg, #131A26 0%, #1A2234 100%);">
                 <div class="game-icon-frame">🎲</div>
                 <div class="game-info">
@@ -151,15 +124,42 @@
                 </div>
                 <button class="play-action-btn">PLAY</button>
             </div>
+
+            <div class="game-card" data-game-id="1" onclick="launchMiniGame(1)" style="display:none;">
+                <div class="game-icon-frame">🚀</div>
+                <div class="game-info">
+                    <div class="game-name">Chakri Whirl & Rocket</div>
+                    <div class="game-desc">Precision timing wheel • 1 to 3 sparks</div>
+                </div>
+                <button class="play-action-btn">PLAY</button>
+            </div>
+
+            <div class="game-card" data-game-id="2" onclick="launchMiniGame(2)" style="display:none;">
+                <div class="game-icon-frame">🌸</div>
+                <div class="game-info">
+                    <div class="game-name">Rangoli Color Symphony</div>
+                    <div class="game-desc">Sacred petal memory sequence • 1 to 3 sparks</div>
+                </div>
+                <button class="play-action-btn">PLAY</button>
+            </div>
+
+            <div class="game-card" data-game-id="3" onclick="launchMiniGame(3)" style="display:none;">
+                <div class="game-icon-frame">🍬</div>
+                <div class="game-info">
+                    <div class="game-name">Mithai Drop Catcher</div>
+                    <div class="game-desc">20s sweet catch & hazard dodge • 1 to 3 sparks</div>
+                </div>
+                <button class="play-action-btn">PLAY</button>
+            </div>
         </div>
     </main>
 
     <main id="tab-community" class="tab-view" style="display:none; padding:16px;">
         <div class="section-heading" style="padding-left:4px;">
-            <span id="community-tab-title">House & Clan Leaderboards (Avg Points)</span>
+            <span id="community-tab-title">Clan & House Leaderboards (Avg Points)</span>
         </div>
         <p style="font-size:0.8rem; color:#94A3B8; margin-bottom:14px; padding-left:4px;" id="community-tab-subtitle">
-            All 4 houses cooperate for the 200k Akhand Diya while competing for the highest member average!
+            All 4 clans cooperate for the 200k Power Core while competing for the highest member average!
         </p>
         <div id="gharana-list"></div>
     </main>
@@ -167,15 +167,15 @@
     <main id="tab-shagun" class="tab-view" style="display:none; padding:16px;">
         <div class="akhand-diya-card" style="margin:0 0 16px 0;">
             <div style="font-size:2.5rem;" id="shagun-tab-icon">🎁</div>
-            <div class="milestone-title" id="shagun-tab-title">Diwali Shagun Invite</div>
+            <div class="milestone-title" id="shagun-tab-title">Arcade Squad Invite</div>
             <p style="font-size:0.82rem; color:#94A3B8; margin:8px 0 16px 0;" id="shagun-tab-subtitle">
-                Invite friends to ignite the Akhand Diya!
+                Assemble your squad and dominate the arcade leaderboards!
             </p>
             <button class="play-action-btn" id="shagun-copy-btn" style="width:100%; padding:12px; margin-bottom:8px;" onclick="copyShagunLink()">
-                📋 COPY YOUR SHAGUN LINK
+                📋 COPY YOUR SQUAD LINK
             </button>
             <button class="share-tg-btn" id="shagun-share-btn" onclick="shareShagunOnTelegram()">
-                📲 SHARE ON TELEGRAM
+                📲 SHARE SQUAD LINK ON TELEGRAM
             </button>
         </div>
 
@@ -201,8 +201,8 @@
 
         <div style="background:var(--bg-card); padding:16px; border-radius:var(--radius-md); font-size:0.8rem; color:#94A3B8; line-height:1.5;" id="shagun-rules-card">
             <b style="color:var(--gold);">How It Works:</b><br>
-            • Your <b>first active friend</b> becomes your official <b>Diya Companion</b>.<br>
-            • Companions can send each other <b>1 free Diya Wick daily</b>.<br>
+            • Your <b>first active friend</b> becomes your official <b>Gaming Duo</b>.<br>
+            • Duos can send each other <b>1 free Energy daily</b>.<br>
             • Additional friends award <b>+1 point each</b> (minimum points) up to 15 points max.
         </div>
     </main>
@@ -214,42 +214,42 @@
         <div style="display:flex; flex-direction:column; gap:10px;" id="tier-ladder-container">
             <div class="tier-item-card" data-tier="5">
                 <div class="user-tag">
-                    <span class="user-name">👑 Tier 5: Akhand Sovereign (5,000+ Pts)</span>
+                    <span class="user-name">👑 Tier 5: Arcade Sovereign (5,000+ Pts)</span>
                     <span style="font-size:0.75rem; color:#F59E0B;">All Rewards: 🪙 Coins + 🔮 Pearl + 🎟 Ticket + 🐾 Pet</span>
                 </div>
                 <span class="tier-status-pill" id="tier-pill-5">🔒</span>
             </div>
             <div class="tier-item-card" data-tier="4">
                 <div class="user-tag">
-                    <span class="user-name">💎 Tier 4: Deep Mahant (4,000 Pts)</span>
+                    <span class="user-name">💎 Tier 4: Cyber Grandmaster (4,000 Pts)</span>
                     <span style="font-size:0.75rem; color:#F59E0B;">🐾 Pet</span>
                 </div>
                 <span class="tier-status-pill" id="tier-pill-4">🔒</span>
             </div>
             <div class="tier-item-card" data-tier="3">
                 <div class="user-tag">
-                    <span class="user-name">✨ Tier 3: Spark Master (2,750 Pts)</span>
+                    <span class="user-name">⚡ Tier 3: High Score Master (2,750 Pts)</span>
                     <span style="font-size:0.75rem; color:#F59E0B;">🎟 Ticket</span>
                 </div>
                 <span class="tier-status-pill" id="tier-pill-3">🔒</span>
             </div>
             <div class="tier-item-card" data-tier="2">
                 <div class="user-tag">
-                    <span class="user-name">🌸 Tier 2: Rangoli Artisan (1,500 Pts)</span>
+                    <span class="user-name">🎯 Tier 2: Combo Striker (1,500 Pts)</span>
                     <span style="font-size:0.75rem; color:#F59E0B;">🔮 Pearl</span>
                 </div>
                 <span class="tier-status-pill" id="tier-pill-2">🔒</span>
             </div>
             <div class="tier-item-card" data-tier="1">
                 <div class="user-tag">
-                    <span class="user-name">🪔 Tier 1: Diya Sevak (500 Pts)</span>
+                    <span class="user-name">🕹️ Tier 1: Pixel Warrior (500 Pts)</span>
                     <span style="font-size:0.75rem; color:#F59E0B;">🪙 Coins</span>
                 </div>
                 <span class="tier-status-pill" id="tier-pill-1">🔒</span>
             </div>
             <div class="tier-item-card" data-tier="0">
                 <div class="user-tag">
-                    <span class="user-name">🌟 Tier 0: Diya Spark (0–499 Pts)</span>
+                    <span class="user-name">🌟 Tier 0: Arcade Rookie (0–499 Pts)</span>
                     <span style="font-size:0.75rem; color:#94A3B8;">Welcome Badge • Initiation Completed</span>
                 </div>
                 <span class="tier-status-pill" id="tier-pill-0">✅</span>
@@ -259,16 +259,16 @@
 
     <nav class="bottom-nav">
         <div class="nav-item active" data-tab="arena">
-            <span class="nav-icon" id="nav-icon-arena">🪔</span>
+            <span class="nav-icon" id="nav-icon-arena">🕹️</span>
             <span id="nav-text-arena">Arena</span>
         </div>
         <div class="nav-item" data-tab="community">
-            <span class="nav-icon" id="nav-icon-community">🏰</span>
-            <span id="nav-text-community">Gharanas</span>
+            <span class="nav-icon" id="nav-icon-community">⚔️</span>
+            <span id="nav-text-community">Clans</span>
         </div>
         <div class="nav-item" data-tab="shagun">
             <span class="nav-icon" id="nav-icon-shagun">🎁</span>
-            <span id="nav-text-shagun">Shagun</span>
+            <span id="nav-text-shagun">Squad</span>
         </div>
         <div class="nav-item" data-tab="tiers">
             <span class="nav-icon" id="nav-icon-tiers">🏆</span>
@@ -326,10 +326,10 @@
     <!-- Web Browser Login Modal (Shown when opening outside Telegram WebApp) -->
     <div id="web-login-modal" class="celebration-modal" style="display:none; z-index:99998;" onclick="event.stopPropagation()">
         <div class="celebration-box" onclick="event.stopPropagation()" style="max-width:380px; text-align:center;">
-            <div style="font-size:3.5rem; margin-bottom:8px;">🪔</div>
-            <h2 style="color:var(--gold); font-size:1.25rem; margin-bottom:6px;">PLAY ON WEB BROWSER</h2>
+            <div style="font-size:3.5rem; margin-bottom:8px;">🕹️</div>
+            <h2 style="color:var(--gold); font-size:1.25rem; margin-bottom:6px;">PLAY IN ARCADE ARENA</h2>
             <p style="color:#94A3B8; font-size:0.82rem; margin-bottom:16px; line-height:1.4;">
-                Log in with your Telegram account to load your Diya Wicks, scores, and Gharana across devices!
+                Log in with your Telegram account to load your Energy, scores, and Clan across devices!
             </p>
             <div id="telegram-widget-wrapper" style="min-height:50px; display:flex; justify-content:center; align-items:center; margin-bottom:16px;">
                 <!-- Telegram Login Widget injected here -->

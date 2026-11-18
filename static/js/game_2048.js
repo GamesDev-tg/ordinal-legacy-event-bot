@@ -84,6 +84,14 @@ class Game2048 {
         if (e.touches && e.touches[0]) {
             this.touchStartX = e.touches[0].clientX;
             this.touchStartY = e.touches[0].clientY;
+
+            // Check if tapped arrow button or bank button directly on touchstart
+            const rect = this.canvas.getBoundingClientRect();
+            const scaleX = this.canvas.width / rect.width;
+            const scaleY = this.canvas.height / rect.height;
+            const x = (e.touches[0].clientX - rect.left) * scaleX;
+            const y = (e.touches[0].clientY - rect.top) * scaleY;
+            this.checkButtonTap(x, y);
         }
     }
 
@@ -94,7 +102,8 @@ class Game2048 {
         const absX = Math.abs(dx);
         const absY = Math.abs(dy);
 
-        if (Math.max(absX, absY) > 25) {
+        if (Math.max(absX, absY) > 20) {
+            e.preventDefault();
             if (absX > absY) {
                 this.move(dx > 0 ? 'right' : 'left');
             } else {
@@ -105,17 +114,49 @@ class Game2048 {
 
     handleClick(e) {
         const rect = this.canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+        const scaleX = this.canvas.width / rect.width;
+        const scaleY = this.canvas.height / rect.height;
+        const x = (e.clientX - rect.left) * scaleX;
+        const y = (e.clientY - rect.top) * scaleY;
+        this.checkButtonTap(x, y);
+    }
+
+    checkButtonTap(x, y) {
+        if (this.gameOver || !this.running) return;
 
         // Virtual Arrow Pads at the bottom
         const padY = this.canvas.height - 85;
         const cx = this.canvas.width / 2;
 
-        if (Math.hypot(x - cx, y - (padY - 25)) < 22) this.move('up');
-        else if (Math.hypot(x - cx, y - (padY + 25)) < 22) this.move('down');
-        else if (Math.hypot(x - (cx - 45), y - padY) < 22) this.move('left');
-        else if (Math.hypot(x - (cx + 45), y - padY) < 22) this.move('right');
+        if (Math.hypot(x - cx, y - (padY - 26)) < 26) { this.move('up'); return; }
+        if (Math.hypot(x - cx, y - (padY + 26)) < 26) { this.move('down'); return; }
+        if (Math.hypot(x - (cx - 48), y - padY) < 26) { this.move('left'); return; }
+        if (Math.hypot(x - (cx + 48), y - padY) < 26) { this.move('right'); return; }
+
+        // Bank score button
+        const bankW = 110;
+        const bankH = 34;
+        const bankX = this.canvas.width - bankW - 16;
+        const bankY = this.canvas.height - 52;
+        if (x >= bankX && x <= bankX + bankW && y >= bankY && y <= bankY + bankH) {
+            this.confirmExit();
+            return;
+        }
+    }
+
+    confirmExit() {
+        if (this.gameOver) return;
+        const pts = this.score >= 2048 ? 3 : (this.score >= 400 ? 2 : 1);
+        if (confirm(`Bank your score (${this.score.toLocaleString()} Sats) and exit now? You will earn ${pts} Sparks!`)) {
+            this.gameOver = true;
+            this.running = false;
+            const duration = Date.now() - this.startTime;
+            if (this.onGameOver) this.onGameOver(pts, Math.max(3500, duration));
+        }
+    }
+
+    handleTap() {
+        this.confirmExit();
     }
 
     move(dir) {

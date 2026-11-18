@@ -186,5 +186,122 @@ class TestFestivalAndArcade(unittest.TestCase):
         # Revert back to arcade
         set_active_festival("arcade")
 
+    def test_pure_arcade_bot_commands_separation(self):
+        from app.bot import handle_bot_message
+        from unittest.mock import patch, AsyncMock
+
+        def run_coro(coro):
+            try:
+                while True:
+                    sub = coro.send(None)
+                    if hasattr(sub, "send"):
+                        try:
+                            run_coro(sub)
+                        except Exception:
+                            pass
+            except StopIteration as e:
+                return e.value
+
+        sent_messages = []
+        async def mock_send(chat_id, text, reply_markup=None):
+            sent_messages.append({"chat_id": chat_id, "text": text, "reply_markup": reply_markup})
+            return {"message_id": 1234}
+
+        # 1. ARCADE MODE VERIFICATION
+        set_active_festival("arcade")
+
+        with patch("app.bot.send_telegram_message", side_effect=mock_send):
+            # Test /help in arcade mode
+            sent_messages.clear()
+            run_coro(handle_bot_message({
+                "chat": {"id": self.test_uid, "type": "private"},
+                "from": {"id": self.test_uid, "username": "test_gamer"},
+                "text": "/help"
+            }))
+            help_out = sent_messages[-1]["text"]
+            self.assertIn("ORDINAL LEGACY ARCADE: COMMAND GUIDE", help_out)
+            self.assertIn("/ludo", help_out)
+            self.assertIn("/c4", help_out)
+            self.assertIn("/2048", help_out)
+            self.assertIn("/wordle", help_out)
+            self.assertIn("/squad", help_out)
+            self.assertIn("/refill", help_out)
+            self.assertNotIn("Chakri", help_out)
+            self.assertNotIn("Rangoli", help_out)
+            self.assertNotIn("Mithai", help_out)
+            self.assertNotIn("Akhand Jyoti", help_out)
+
+            # Test /status in arcade mode
+            sent_messages.clear()
+            run_coro(handle_bot_message({
+                "chat": {"id": self.test_uid, "type": "private"},
+                "from": {"id": self.test_uid, "username": "test_gamer"},
+                "text": "/status"
+            }))
+            status_out = sent_messages[-1]["text"]
+            self.assertIn("Arcade Power Core Status Report", status_out)
+            self.assertIn("Energy Stamina", status_out)
+            self.assertIn("Gaming Duo", status_out)
+            self.assertIn("Squad Recruits", status_out)
+            self.assertNotIn("Diya Wicks", status_out)
+            self.assertNotIn("Diya Companion", status_out)
+            self.assertNotIn("Shagun Points", status_out)
+
+            # Test /tiers in arcade mode
+            sent_messages.clear()
+            run_coro(handle_bot_message({
+                "chat": {"id": self.test_uid, "type": "private"},
+                "from": {"id": self.test_uid, "username": "test_gamer"},
+                "text": "/tiers"
+            }))
+            tiers_out = sent_messages[-1]["text"]
+            self.assertIn("Ordinal Legacy Arcade Milestone Ladder", tiers_out)
+            self.assertIn("Arcade Rookie", tiers_out)
+            self.assertIn("Pixel Warrior", tiers_out)
+            self.assertIn("Combo Striker", tiers_out)
+            self.assertIn("High Score Master", tiers_out)
+            self.assertIn("Cyber Grandmaster", tiers_out)
+            self.assertIn("Arcade Sovereign", tiers_out)
+            self.assertNotIn("Diya Spark", tiers_out)
+            self.assertNotIn("Rangoli Artisan", tiers_out)
+
+            # Test /mydata in arcade mode
+            sent_messages.clear()
+            run_coro(handle_bot_message({
+                "chat": {"id": self.test_uid, "type": "private"},
+                "from": {"id": self.test_uid, "username": "test_gamer"},
+                "text": "/mydata"
+            }))
+            mydata_out = sent_messages[-1]["text"]
+            self.assertIn("PLAYER ARCADE DOSSIER", mydata_out)
+            self.assertIn("Affiliated Clan", mydata_out)
+            self.assertIn("Energy Stamina", mydata_out)
+            self.assertIn("Daily Booster", mydata_out)
+            self.assertIn("Gaming Duo", mydata_out)
+            self.assertIn("Squad Recruits", mydata_out)
+            self.assertNotIn("Initiated House", mydata_out)
+            self.assertNotIn("Diya Wicks", mydata_out)
+            self.assertNotIn("Diya Companion", mydata_out)
+
+        # 2. DIWALI MODE VERIFICATION
+        set_active_festival("diwali")
+
+        with patch("app.bot.send_telegram_message", side_effect=mock_send):
+            # Test /help in diwali mode
+            sent_messages.clear()
+            run_coro(handle_bot_message({
+                "chat": {"id": self.test_uid, "type": "private"},
+                "from": {"id": self.test_uid, "username": "test_gamer"},
+                "text": "/help"
+            }))
+            diwali_help = sent_messages[-1]["text"]
+            self.assertIn("Chakri", diwali_help)
+            self.assertIn("Rangoli", diwali_help)
+            self.assertIn("Mithai", diwali_help)
+            self.assertIn("Akhand Jyoti", diwali_help)
+
+        # Reset back to arcade
+        set_active_festival("arcade")
+
 if __name__ == "__main__":
     unittest.main()
