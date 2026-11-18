@@ -30,13 +30,14 @@ class TestFestivalAndArcade(unittest.TestCase):
         conn = get_db_connection()
         with conn:
             conn.execute(
-                "INSERT OR IGNORE INTO users (telegram_id, username, first_name, gharana_id, points_total, diya_wicks) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT OR IGNORE INTO users (telegram_id, username, first_name, gharana_id, points_total, diya_wicks, joined_groups) VALUES (?, ?, ?, ?, ?, ?, 1)",
                 (self.test_uid, "test_hero", "TestHero", 1, 100, 10)
             )
             conn.execute(
-                "INSERT OR IGNORE INTO users (telegram_id, username, first_name, gharana_id, points_total, diya_wicks) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT OR IGNORE INTO users (telegram_id, username, first_name, gharana_id, points_total, diya_wicks, joined_groups) VALUES (?, ?, ?, ?, ?, ?, 1)",
                 (self.test_opp_uid, "test_rival", "TestRival", 2, 50, 10)
             )
+            conn.execute("UPDATE users SET joined_groups = 1 WHERE telegram_id IN (?, ?)", (self.test_uid, self.test_opp_uid))
         conn.close()
 
     def test_festival_theme_switching(self):
@@ -283,6 +284,32 @@ class TestFestivalAndArcade(unittest.TestCase):
             self.assertNotIn("Diya Wicks", mydata_out)
             self.assertNotIn("Diya Companion", mydata_out)
 
+            # Test /squad in arcade mode
+            sent_messages.clear()
+            run_coro(handle_bot_message({
+                "chat": {"id": self.test_uid, "type": "private"},
+                "from": {"id": self.test_uid, "username": "test_gamer"},
+                "text": "/squad"
+            }))
+            squad_out = sent_messages[-1]["text"]
+            self.assertIn("Arcade Squad Invite Link", squad_out)
+            self.assertIn(f"start=squad_{self.test_uid}", squad_out)
+            self.assertIn("Gaming Duo", squad_out)
+
+            # Test /start with squad_ referral parameter
+            newbie_id = 99118822
+            sent_messages.clear()
+            run_coro(handle_bot_message({
+                "chat": {"id": newbie_id, "type": "private"},
+                "from": {"id": newbie_id, "username": "arcade_recruit"},
+                "text": f"/start squad_{self.test_uid}"
+            }))
+            self.assertTrue(len(sent_messages) > 0)
+            conn = get_db_connection()
+            ref_row = conn.execute("SELECT * FROM referrals WHERE referrer_id = ? AND referred_id = ?", (self.test_uid, newbie_id)).fetchone()
+            conn.close()
+            self.assertIsNotNone(ref_row)
+
         # 2. DIWALI MODE VERIFICATION
         set_active_festival("diwali")
 
@@ -299,6 +326,19 @@ class TestFestivalAndArcade(unittest.TestCase):
             self.assertIn("Rangoli", diwali_help)
             self.assertIn("Mithai", diwali_help)
             self.assertIn("Akhand Jyoti", diwali_help)
+
+        # 3. Test _award_arcade_win updates tier atomically
+        from app.arcade_engine import _award_arcade_win
+        conn = get_db_connection()
+        conn.execute("UPDATE users SET points_total = 498, tier_level = 0 WHERE telegram_id = ?", (self.test_uid,))
+        conn.commit()
+        conn.close()
+        _award_arcade_win(self.test_uid, 5) # 498 + 5 = 503 -> Tier 1 (Pixel Warrior)
+        conn = get_db_connection()
+        u_after = conn.execute("SELECT points_total, tier_level FROM users WHERE telegram_id = ?", (self.test_uid,)).fetchone()
+        conn.close()
+        self.assertEqual(u_after["points_total"], 503)
+        self.assertEqual(u_after["tier_level"], 1)
 
         # Reset back to arcade
         set_active_festival("arcade")

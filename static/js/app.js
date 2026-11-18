@@ -564,8 +564,6 @@ function updateUI(authData) {
     // Highlight user's unlocked tiers in the ladder
     updateTierLadder(u.tier_level);
 }
-    updateTierLadder(u.tier_level);
-}
 
 function updateGharanaBoostUI(boost, userGharanaId) {
     const card = document.getElementById('gharana-boost-card');
@@ -1099,7 +1097,8 @@ async function sendWickGift() {
 
 function copyShagunLink() {
     const uid = getCurrentUserId() || (currentUser ? currentUser.telegram_id : 123456789);
-    const link = `https://t.me/OrdinalLegacyEventBot?start=shagun_${uid}`;
+    const prefix = currentFestivalTheme === "arcade" ? "squad_" : (currentFestivalTheme === "christmas" ? "holiday_" : "shagun_");
+    const link = `https://t.me/OrdinalLegacyEventBot?start=${prefix}${uid}`;
     const inviteTitle = (currentFestivalConfig && currentFestivalConfig.invite_title) ? currentFestivalConfig.invite_title : "Invite Link";
     if (navigator.clipboard) {
         navigator.clipboard.writeText(link);
@@ -1111,7 +1110,8 @@ function copyShagunLink() {
 
 function shareShagunOnTelegram() {
     const uid = getCurrentUserId() || (currentUser ? currentUser.telegram_id : 123456789);
-    const link = `https://t.me/OrdinalLegacyEventBot?start=shagun_${uid}`;
+    const prefix = currentFestivalTheme === "arcade" ? "squad_" : (currentFestivalTheme === "christmas" ? "holiday_" : "shagun_");
+    const link = `https://t.me/OrdinalLegacyEventBot?start=${prefix}${uid}`;
     let text = "🪔 Join me in the Ordinal Legacy Diwali Maha Deepotsav! Awaken the 200,000 Sparks of Akhand Jyoti with me as my bonded Diya Companion!";
     if (currentFestivalTheme === "arcade") {
         text = "🕹️ Join my squad in the Ordinal Legacy Arcade Arena! Battle in multiplayer 2–8P Ludo, Connect 4, 2048 and Wordle with me!";
@@ -1125,6 +1125,7 @@ function shareShagunOnTelegram() {
         window.open(shareUrl, '_blank');
     }
 }
+window.shareShagunTelegram = shareShagunOnTelegram;
 
 async function loadCommunityLeaderboard() {
     try {
@@ -1148,10 +1149,11 @@ async function loadCommunityLeaderboard() {
         listEl.innerHTML = data.top_gharanas.map((g, idx) => {
             const isBoosted = (g.gharana_id === boostGid);
             const boostBadge = isBoosted ? '<span style="background:linear-gradient(135deg, #F59E0B, #EA580C); color:#000; font-size:0.65rem; font-weight:800; padding:2px 6px; border-radius:10px; margin-left:6px; letter-spacing:0.3px; display:inline-block;">⚡ 2X BOOST</span>' : '';
+            const gDisplayName = currentFestivalTheme === "arcade" ? g.name.replace("Gharana", "Clan") : (currentFestivalTheme === "christmas" ? g.name.replace("Gharana", "House") : g.name);
             return `
             <div class="user-profile-strip" style="margin: 0 0 10px 0; border-left: 3px solid ${isBoosted ? '#F59E0B' : (idx === 0 ? '#F59E0B' : '#64748B')}; ${isBoosted ? 'box-shadow: 0 0 12px rgba(245, 158, 11, 0.25);' : ''}">
                 <div class="user-tag">
-                    <span class="user-name">${medals[idx] || "•"} ${emblems[g.gharana_id] || ""} ${g.name} ${boostBadge}</span>
+                    <span class="user-name">${medals[idx] || "•"} ${emblems[g.gharana_id] || ""} ${gDisplayName} ${boostBadge}</span>
                     <span style="font-size:0.75rem; color:#94A3B8;">${g.members} Members • ${g.total_points.toLocaleString()} Total ${curName}</span>
                 </div>
                 <div class="user-score-box">

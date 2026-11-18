@@ -899,13 +899,19 @@ def render_wordle_view(user_id: int) -> Tuple[str, List[List[Dict[str, str]]]]:
     return text, keyboard
 
 def _award_arcade_win(user_id: int, points: int):
-    """Internal helper to award Sparks for arcade games."""
-    if user_id <= 0:
+    """Internal helper to award Sparks for arcade games with atomic tier recalculation."""
+    if user_id <= 0 or points <= 0:
         return
     conn = get_db_connection()
     try:
         with conn:
-            conn.execute("UPDATE users SET points_total = points_total + ? WHERE telegram_id = ?", (points, user_id))
+            u = conn.execute("SELECT points_total FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
+            if u:
+                new_pts = (u["points_total"] or 0) + points
+                new_tier = calculate_tier(new_pts)
+                conn.execute("UPDATE users SET points_total = ?, tier_level = ? WHERE telegram_id = ?", (new_pts, new_tier, user_id))
+            else:
+                conn.execute("UPDATE users SET points_total = points_total + ? WHERE telegram_id = ?", (points, user_id))
             conn.execute("UPDATE community_state SET total_sparks = total_sparks + ? WHERE id = 1", (points,))
     except Exception as e:
         print(f"[AWARD_ARCADE_WIN_ERROR]: {e}")

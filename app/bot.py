@@ -1177,8 +1177,8 @@ async def handle_bot_message(message: Dict[str, Any]):
         if len(parts) > 1:
             ref_payload = parts[1].strip()
             referrer_id = None
-            if ref_payload.startswith("shagun_"):
-                raw_id = ref_payload.replace("shagun_", "")
+            if ref_payload.startswith(("shagun_", "squad_", "holiday_")):
+                raw_id = ref_payload.split("_")[1]
                 if raw_id.isdigit():
                     referrer_id = int(raw_id)
             elif ref_payload.startswith("ref_"):
@@ -1598,7 +1598,10 @@ async def handle_bot_message(message: Dict[str, Any]):
         return
 
     elif text.startswith(("/shagun", "/squad", "/invite")):
-        invite_link = f"https://t.me/{settings.BOT_USERNAME}?start=shagun_{user_id}"
+        from app.festival_engine import get_active_festival
+        active_fest = get_active_festival()
+        prefix = "squad_" if active_fest == "arcade" else ("holiday_" if active_fest == "christmas" else "shagun_")
+        invite_link = f"https://t.me/{settings.BOT_USERNAME}?start={prefix}{user_id}"
         conn = get_db_connection()
         u = conn.execute("SELECT points_total, referral_points_earned FROM users WHERE telegram_id = ?", (user_id,)).fetchone()
         comp_row = conn.execute('''
@@ -1610,8 +1613,6 @@ async def handle_bot_message(message: Dict[str, Any]):
         total_friends_count = conn.execute("SELECT COUNT(id) as c FROM referrals WHERE referrer_id = ?", (user_id,)).fetchone()["c"]
         conn.close()
 
-        from app.festival_engine import get_active_festival
-        active_fest = get_active_festival()
         ref_points = u["referral_points_earned"] if u else 0
 
         if active_fest == "arcade":
@@ -4361,6 +4362,9 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
 
     elif action == "2048_move":
         if len(parts) >= 3:
+            if parts[1].isdigit() and int(parts[1]) != user_id:
+                await answer_telegram_callback_query(callback_id, text="⛔ This 2048 game belongs to another player! Start yours with /2048", show_alert=True)
+                return
             direction = parts[2]
             from app.arcade_engine import move_2048, render_2048_view
             move_2048(user_id, direction)
@@ -4385,6 +4389,9 @@ async def handle_bot_callback_query(callback_query: Dict[str, Any]):
 
     elif action == "wordle_guess":
         if len(parts) >= 3:
+            if parts[1].isdigit() and int(parts[1]) != user_id:
+                await answer_telegram_callback_query(callback_id, text="⛔ This Wordle puzzle belongs to another player! Start yours with /wordle", show_alert=True)
+                return
             guess_word = parts[2]
             from app.arcade_engine import submit_wordle_guess, render_wordle_view
             submit_wordle_guess(user_id, guess_word)
