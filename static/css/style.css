@@ -247,6 +247,10 @@ body {
     border-radius: var(--radius-md);
 }
 
+.companion-card:empty {
+    display: none !important;
+}
+
 .companion-header {
     display: flex;
     justify-content: space-between;

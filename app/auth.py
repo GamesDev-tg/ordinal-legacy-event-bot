@@ -56,23 +56,19 @@ def verify_telegram_init_data(init_data: str) -> Dict[str, Any]:
         except Exception:
             pass
 
-    if init_data.startswith("dev_user_"):
+    if init_data.startswith("dev_user_") or init_data.isdigit():
         uid = int(init_data.replace("dev_user_", ""))
+        try:
+            from app.festival_engine import get_active_festival
+            cur_fest = get_active_festival()
+        except Exception:
+            cur_fest = "arcade"
+        p_name = "ArcadePlayer" if cur_fest == "arcade" else ("HolidayPlayer" if cur_fest == "christmas" else "DiwaliPlayer")
         return {
             "user": {
                 "id": uid,
                 "username": f"player_{uid}",
-                "first_name": f"DiwaliPlayer_{uid}"
-            }
-        }
-
-    if init_data.isdigit():
-        uid = int(init_data)
-        return {
-            "user": {
-                "id": uid,
-                "username": f"player_{uid}",
-                "first_name": f"DiwaliPlayer_{uid}"
+                "first_name": f"{p_name}_{uid}"
             }
         }
         

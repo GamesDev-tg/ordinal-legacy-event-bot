@@ -212,30 +212,42 @@ document.addEventListener("DOMContentLoaded", async () => {
         await authenticateUser(authHeader);
     } else {
         // Web browser environment
-        const savedWebUser = localStorage.getItem('ordinal_web_user');
-        if (savedWebUser) {
+        const savedTelegramUser = localStorage.getItem('ordinal_web_user');
+        const savedGuestUser = localStorage.getItem('ordinal_guest_user');
+        const urlParams = new URLSearchParams(window.location.search);
+        const devTgId = urlParams.get('tg_id');
+
+        if (devTgId) {
+            authHeader = `dev_user_${devTgId}`;
+            await authenticateUser(authHeader);
+        } else if (savedTelegramUser) {
             try {
-                const userObj = JSON.parse(savedWebUser);
+                const userObj = JSON.parse(savedTelegramUser);
                 const success = await authenticateViaWidget(userObj);
                 if (success) {
-                    showWebUserChip(userObj);
+                    showWebUserChip(userObj, false);
                 } else {
                     localStorage.removeItem('ordinal_web_user');
-                    showWebLoginModal();
+                    await startGuestSession();
                 }
             } catch (e) {
                 localStorage.removeItem('ordinal_web_user');
-                showWebLoginModal();
+                await startGuestSession();
+            }
+        } else if (savedGuestUser) {
+            try {
+                const guestObj = JSON.parse(savedGuestUser);
+                authHeader = `dev_user_${guestObj.id}`;
+                await authenticateUser(authHeader);
+                showWebUserChip(guestObj, true);
+            } catch (e) {
+                await startGuestSession();
             }
         } else {
-            const urlParams = new URLSearchParams(window.location.search);
-            const devTgId = urlParams.get('tg_id');
-            if (devTgId) {
-                authHeader = `dev_user_${devTgId}`;
-                await authenticateUser(authHeader);
-            } else {
-                showWebLoginModal();
-            }
+            // First time visitor on web: start instant guest session so page is fully functional!
+            await startGuestSession();
+            // Show the welcome modal on top so they know they can play or sync Telegram
+            showWebLoginModal();
         }
     }
 
@@ -523,6 +535,7 @@ function updateUI(authData) {
 
     // Companion / Duo Card
     const compBox = document.getElementById('companion-container');
+    if (compBox) compBox.style.display = 'block';
     const compTitle = (currentFestivalConfig && currentFestivalConfig.companion_title) ? currentFestivalConfig.companion_title : "Diya Companion";
     const compDesc = (currentFestivalConfig && currentFestivalConfig.companion_desc) ? currentFestivalConfig.companion_desc : "Exchange 1 free Diya Wick daily with your companion!";
     const compEmptyDesc = (currentFestivalConfig && currentFestivalConfig.companion_empty_desc) ? currentFestivalConfig.companion_empty_desc : "Your 1st active friend becomes your permanent Companion.";
@@ -835,13 +848,14 @@ async function launchMiniGame(gameType) {
         uid = getCurrentUserId();
     }
     if (!uid) {
-        showWebLoginModal();
-        return;
+        await startGuestSession();
+        uid = getCurrentUserId();
     }
     if (!currentUser || currentUser.diya_wicks < 1) {
         await refreshUserData();
         if (!currentUser || currentUser.diya_wicks < 1) {
-            alert("Out of Diya Wicks! Stamina refills 1 wick every 1 to 3 minutes randomly.");
+            const stam = (currentFestivalConfig && currentFestivalConfig.stamina_name) ? currentFestivalConfig.stamina_name : "Energy";
+            alert(`Out of ${stam}! Stamina refills automatically over time or claim your Daily Booster.`);
             return;
         }
     }
@@ -1307,19 +1321,44 @@ function hideWebLoginModal() {
     }
 }
 
-function showWebUserChip(user) {
+async function startGuestSession() {
+    hideWebLoginModal();
+    let guestId = localStorage.getItem('ordinal_guest_id');
+    if (!guestId || !/^\d+$/.test(guestId)) {
+        guestId = '9' + Math.floor(10000000 + Math.random() * 90000000);
+        localStorage.setItem('ordinal_guest_id', guestId);
+    }
+    const guestUser = {
+        id: parseInt(guestId, 10),
+        first_name: "Arcade Guest",
+        username: `guest_${guestId.slice(-4)}`,
+        is_guest: true
+    };
+    authHeader = `dev_user_${guestId}`;
+    localStorage.setItem('ordinal_guest_user', JSON.stringify(guestUser));
+    await authenticateUser(authHeader);
+    showWebUserChip(guestUser, true);
+    return guestUser;
+}
+
+function showWebUserChip(user, isGuest = false) {
     const chip = document.getElementById('web-user-chip');
     const nameSpan = document.getElementById('web-user-name');
     if (chip && nameSpan) {
-        const tag = user.username ? `@${user.username}` : (user.first_name || `ID ${user.id}`);
+        const guestFlag = isGuest || user.is_guest;
+        const tag = guestFlag ? `Guest_${String(user.id).slice(-4)} (Guest)` : (user.username ? `@${user.username}` : (user.first_name || `ID ${user.id}`));
         nameSpan.innerText = tag;
         chip.style.display = 'flex';
+        chip.title = guestFlag ? "Playing in Guest Mode. Tap to link Telegram account" : "Logged in. Tap to switch account";
     }
 }
 
 function logoutWebUser() {
-    if (confirm("Log out of your Telegram account on this browser?")) {
+    const isGuest = !localStorage.getItem('ordinal_web_user');
+    const promptMsg = isGuest ? "Switch guest session or link your Telegram account?" : "Log out of your Telegram account on this browser?";
+    if (confirm(promptMsg)) {
         localStorage.removeItem('ordinal_web_user');
+        localStorage.removeItem('ordinal_guest_user');
         const chip = document.getElementById('web-user-chip');
         if (chip) chip.style.display = 'none';
         showWebLoginModal();
