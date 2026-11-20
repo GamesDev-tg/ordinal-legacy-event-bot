@@ -1408,3 +1408,16 @@ async function authenticateViaWidget(userObj) {
     }
     return false;
 }
+
+// Global browser window exports for inline HTML event handlers
+window.startGuestSession = startGuestSession;
+window.hideWebLoginModal = hideWebLoginModal;
+window.showWebLoginModal = showWebLoginModal;
+window.logoutWebUser = logoutWebUser;
+window.launchMiniGame = launchMiniGame;
+window.confirmExitGame = confirmExitGame;
+window.closeGameModal = closeGameModal;
+window.handleGameActionButton = handleGameActionButton;
+window.claimShubhRefill = claimShubhRefill;
+window.copyShagunLink = copyShagunLink;
+window.shareShagunOnTelegram = shareShagunOnTelegram;
